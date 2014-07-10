@@ -1,22 +1,23 @@
 package ofp4
 
 import (
+	"encoding"
 	"encoding/binary"
-	"errors"
 )
 
 type MultipartRequest struct {
 	Type  uint16
 	Flags uint16
-	Body  Any // Do type assertion with Type above
+	Body  encoding.BinaryMarshaler
 }
 
-func (obj *MultipartRequest) MarshalBinary() (data []byte, err error) {
-	var body []byte
+func (obj MultipartRequest) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
+	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
 	switch obj.Type {
 	default:
-		err = errors.New("Unknown OFPMP_")
-		return
+		return nil, Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
 	case OFPMP_DESC,
 		OFPMP_FLOW,
 		OFPMP_AGGREGATE,
@@ -31,33 +32,30 @@ func (obj *MultipartRequest) MarshalBinary() (data []byte, err error) {
 		OFPMP_METER_FEATURES,
 		OFPMP_PORT_DESC,
 		OFPMP_EXPERIMENTER:
-		if body, err = obj.Body.(Data).MarshalBinary(); err != nil {
-			return
+		if buf, err := obj.Body.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = append(data, buf...)
 		}
 	case OFPMP_TABLE_FEATURES:
-		for _, entry := range obj.Body.([]Data) {
-			var buf []byte
-			if buf, err = entry.MarshalBinary(); err != nil {
-				return
+		for _, entry := range []encoding.BinaryMarshaler(obj.Body.(Array)) {
+			if buf, err := entry.MarshalBinary(); err != nil {
+				return nil, err
+			} else {
+				data = append(data, buf...)
 			}
-			body = append(body, buf...)
 		}
 	}
-	prefix := make([]byte, 8)
-	binary.BigEndian.PutUint16(data[0:2], obj.Type)
-	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
-	data = append(prefix, body...)
-	return
+	return data, nil
 }
 
 func (obj *MultipartRequest) UnmarshalBinary(data []byte) (err error) {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.Flags = binary.BigEndian.Uint16(data[2:4])
-	var body Data
+	var body encoding.BinaryMarshaler
 	switch obj.Type {
 	default:
-		err = errors.New("Unknown OFPMP_")
-		return
+		return Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
 	case OFPMP_DESC, OFPMP_TABLE, OFPMP_GROUP_DESC, OFPMP_GROUP_FEATURES, OFPMP_METER_FEATURES, OFPMP_PORT_DESC:
 		body = nil
 	case OFPMP_FLOW:
@@ -70,10 +68,10 @@ func (obj *MultipartRequest) UnmarshalBinary(data []byte) (err error) {
 		body = new(QueueStatsRequest)
 	case OFPMP_GROUP:
 		body = new(GroupStatsRequest)
-	case OFPMP_METER:
-		body = new(MeterStatsRequest)
+	case OFPMP_METER, OFPMP_METER_CONFIG:
+		body = new(MeterMultipartRequest)
 	case OFPMP_TABLE_FEATURES:
-		var features []Data
+		var features []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			entry := new(TableFeatures)
 			length := int(binary.BigEndian.Uint16(data[cur:2]))
@@ -83,12 +81,12 @@ func (obj *MultipartRequest) UnmarshalBinary(data []byte) (err error) {
 			features = append(features, entry)
 			cur += length
 		}
-		obj.Body = features
+		obj.Body = Array(features)
 	case OFPMP_EXPERIMENTER:
 		body = new(ExperimenterMultipart)
 	}
 	if body != nil {
-		if err = body.UnmarshalBinary(data[8:]); err != nil {
+		if err = body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:]); err != nil {
 			return
 		}
 		obj.Body = body
@@ -99,21 +97,21 @@ func (obj *MultipartRequest) UnmarshalBinary(data []byte) (err error) {
 type MultipartReply struct {
 	Type  uint16
 	Flags uint16
-	Body  Any // Do type assertion with Type above
+	Body  encoding.BinaryMarshaler
 }
 
-func (obj *MultipartReply) MarshalBinary() (data []byte, err error) {
+func (obj MultipartReply) MarshalBinary() (data []byte, err error) {
 	var body []byte
 	switch obj.Type {
 	default:
-		err = errors.New("Unknown OFPMP_")
+		err = Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
 		return
 	case OFPMP_DESC,
 		OFPMP_AGGREGATE,
 		OFPMP_GROUP_FEATURES,
 		OFPMP_METER_FEATURES,
 		OFPMP_EXPERIMENTER:
-		if body, err = obj.Body.(Data).MarshalBinary(); err != nil {
+		if body, err = obj.Body.MarshalBinary(); err != nil {
 			return
 		}
 	case OFPMP_FLOW,
@@ -126,7 +124,7 @@ func (obj *MultipartReply) MarshalBinary() (data []byte, err error) {
 		OFPMP_METER_CONFIG,
 		OFPMP_TABLE_FEATURES,
 		OFPMP_PORT_DESC:
-		for _, entry := range obj.Body.([]Data) {
+		for _, entry := range []encoding.BinaryMarshaler(obj.Body.(Array)) {
 			var buf []byte
 			if buf, err = entry.MarshalBinary(); err != nil {
 				return
@@ -134,25 +132,23 @@ func (obj *MultipartReply) MarshalBinary() (data []byte, err error) {
 			body = append(body, buf...)
 		}
 	}
-	prefix := make([]byte, 8)
+	data = append(make([]byte, 8), body...)
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
-	data = append(prefix, body...)
 	return
 }
 
 func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.Flags = binary.BigEndian.Uint16(data[2:4])
-	var body Data
+	var body encoding.BinaryMarshaler
 	switch obj.Type {
 	default:
-		err = errors.New("Unknown OFPMP_")
-		return
+		return Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
 	case OFPMP_DESC:
 		body = new(Desc)
 	case OFPMP_FLOW:
-		var array []Data
+		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : 2+cur]))
 			entry := new(FlowStats)
@@ -162,11 +158,11 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			array = append(array, entry)
 			cur += length
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_AGGREGATE:
 		body = new(AggregateStatsReply)
 	case OFPMP_TABLE:
-		var array = make([]Data, (len(data)-8)/24)
+		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/24)
 		for i, _ := range array {
 			entry := new(TableStats)
 			if err = entry.UnmarshalBinary(data[8+24*i : 32+24*i]); err != nil {
@@ -174,9 +170,9 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			array[i] = entry
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_PORT_STATS:
-		var array = make([]Data, (len(data)-8)/112)
+		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/112)
 		for i, _ := range array {
 			entry := new(PortStats)
 			if err = entry.UnmarshalBinary(data[8+112*i : 120+112*i]); err != nil {
@@ -184,9 +180,9 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			array[i] = entry
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_QUEUE:
-		var array = make([]Data, (len(data)-8)/40)
+		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/40)
 		for i, _ := range array {
 			entry := new(QueueStats)
 			if err = entry.UnmarshalBinary(data[8+40*i : 48+40*i]); err != nil {
@@ -194,9 +190,9 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			array[i] = entry
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_GROUP:
-		var array []Data
+		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
 			entry := new(GroupStats)
@@ -206,9 +202,9 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			array = append(array, entry)
 			cur += length
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_GROUP_DESC:
-		var array []Data
+		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
 			entry := new(GroupDesc)
@@ -218,11 +214,11 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			array = append(array, entry)
 			cur += length
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_GROUP_FEATURES:
 		body = new(GroupFeatures)
 	case OFPMP_METER:
-		var array []Data
+		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur+4 : cur+6]))
 			entry := new(MeterStats)
@@ -231,9 +227,9 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			cur += length
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_METER_CONFIG:
-		var array []Data
+		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
 			entry := new(MeterConfig)
@@ -242,11 +238,11 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			cur += length
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_METER_FEATURES:
 		body = new(MeterFeatures)
 	case OFPMP_TABLE_FEATURES:
-		var array []Data
+		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
 			entry := new(TableFeatures)
@@ -255,9 +251,9 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			cur += length
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_PORT_DESC:
-		var array = make([]Data, (len(data)-8)/64)
+		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/64)
 		for i, _ := range array {
 			entry := new(Port)
 			if err = entry.UnmarshalBinary(data[8+112*i : 120+112*i]); err != nil {
@@ -265,12 +261,12 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {
 			}
 			array[i] = entry
 		}
-		obj.Body = array
+		obj.Body = Array(array)
 	case OFPMP_EXPERIMENTER:
 		body = new(ExperimenterMultipart)
 	}
 	if body != nil {
-		if err = body.UnmarshalBinary(data[8:]); err != nil {
+		if err = body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:]); err != nil {
 			return
 		}
 		obj.Body = body
@@ -287,7 +283,7 @@ type FlowStatsRequest struct {
 	Match      Match
 }
 
-func (obj *FlowStatsRequest) MarshalBinary() (data []byte, err error) {
+func (obj FlowStatsRequest) MarshalBinary() (data []byte, err error) {
 	var match []byte
 	if match, err = obj.Match.MarshalBinary(); err != nil {
 		return
@@ -303,7 +299,7 @@ func (obj *FlowStatsRequest) MarshalBinary() (data []byte, err error) {
 }
 
 func (obj *FlowStatsRequest) UnmarshalBinary(data []byte) (err error) {
-	if err = obj.Match.UnmarshalBinary(data[40:]); err != nil {
+	if err = obj.Match.UnmarshalBinary(data[32:]); err != nil {
 		return
 	}
 	obj.TableId = data[0]
@@ -326,10 +322,10 @@ type FlowStats struct {
 	PacketCount  uint64
 	ByteCount    uint64
 	Match        Match
-	Instructions []TypedData
+	Instructions []Instruction
 }
 
-func (obj *FlowStats) MarshalBinary() (data []byte, err error) {
+func (obj FlowStats) MarshalBinary() (data []byte, err error) {
 	var match []byte
 	if match, err = obj.Match.MarshalBinary(); err != nil {
 		return
@@ -342,22 +338,22 @@ func (obj *FlowStats) MarshalBinary() (data []byte, err error) {
 		}
 		suffix = append(suffix, buf...)
 	}
-	prefix := make([]byte, 48)
-	prefix[2] = obj.TableId
-	binary.BigEndian.PutUint32(prefix[4:8], obj.DurationSec)
-	binary.BigEndian.PutUint32(prefix[8:12], obj.DurationNsec)
-	binary.BigEndian.PutUint16(prefix[12:14], obj.Priority)
-	binary.BigEndian.PutUint16(prefix[14:16], obj.IdleTimeout)
-	binary.BigEndian.PutUint16(prefix[16:18], obj.HardTimeout)
-	binary.BigEndian.PutUint16(prefix[18:20], obj.Flags)
-	binary.BigEndian.PutUint64(prefix[24:32], obj.Cookie)
-	binary.BigEndian.PutUint64(prefix[32:40], obj.PacketCount)
-	binary.BigEndian.PutUint64(prefix[40:48], obj.ByteCount)
-	data = append(append(prefix, match...), suffix...)
+	data = append(append(make([]byte, 48), match...), suffix...)
+	binary.BigEndian.PutUint16(data[0:2], uint16(len(data)))
+	data[2] = obj.TableId
+	binary.BigEndian.PutUint32(data[4:8], obj.DurationSec)
+	binary.BigEndian.PutUint32(data[8:12], obj.DurationNsec)
+	binary.BigEndian.PutUint16(data[12:14], obj.Priority)
+	binary.BigEndian.PutUint16(data[14:16], obj.IdleTimeout)
+	binary.BigEndian.PutUint16(data[16:18], obj.HardTimeout)
+	binary.BigEndian.PutUint16(data[18:20], obj.Flags)
+	binary.BigEndian.PutUint64(data[24:32], obj.Cookie)
+	binary.BigEndian.PutUint64(data[32:40], obj.PacketCount)
+	binary.BigEndian.PutUint64(data[40:48], obj.ByteCount)
 	return
 }
 
-func (obj *FlowStats) UnmarshalBinary(data []byte) (err error) {
+func (obj *FlowStats) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint32(data[0:2]))
 
 	data[2] = obj.TableId
@@ -372,13 +368,16 @@ func (obj *FlowStats) UnmarshalBinary(data []byte) (err error) {
 	obj.ByteCount = binary.BigEndian.Uint64(data[40:48])
 
 	mLength := int(binary.BigEndian.Uint16(data[50:52]))
-	if err = obj.Match.UnmarshalBinary(data[48 : 48+mLength]); err != nil {
-		return
+	if err := obj.Match.UnmarshalBinary(data[48 : 48+mLength]); err != nil {
+		return err
 	}
-	if obj.Instructions, err = instructionsUnmarshalBinary(data[48+mLength : length]); err != nil {
-		return
+	var instructions instructionList
+	if err := instructions.UnmarshalBinary(data[48+mLength : length]); err != nil {
+		return err
+	} else {
+		obj.Instructions = []Instruction(instructions)
 	}
-	return
+	return nil
 }
 
 type AggregateStatsRequest struct {
@@ -390,7 +389,7 @@ type AggregateStatsRequest struct {
 	Match      Match
 }
 
-func (obj *AggregateStatsRequest) MarshalBinary() (data []byte, err error) {
+func (obj AggregateStatsRequest) MarshalBinary() (data []byte, err error) {
 	var match []byte
 	if match, err = obj.Match.MarshalBinary(); err != nil {
 		return
@@ -423,7 +422,7 @@ type AggregateStatsReply struct {
 	FlowCount   uint32
 }
 
-func (obj *AggregateStatsReply) MarshalBinary() (data []byte, err error) {
+func (obj AggregateStatsReply) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 24)
 	binary.BigEndian.PutUint64(data[0:8], obj.PacketCount)
 	binary.BigEndian.PutUint64(data[8:16], obj.ByteCount)
@@ -445,7 +444,7 @@ type TableStats struct {
 	MatchedCount uint64
 }
 
-func (obj *TableStats) MarshalBinary() (data []byte, err error) {
+func (obj TableStats) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 24)
 	data[0] = obj.TableId
 	binary.BigEndian.PutUint32(data[4:8], obj.ActiveCount)
@@ -466,7 +465,7 @@ type PortStatsRequest struct {
 	PortNo uint32
 }
 
-func (obj *PortStatsRequest) MarshalBinary() (data []byte, err error) {
+func (obj PortStatsRequest) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 8)
 	binary.BigEndian.PutUint32(data[0:4], obj.PortNo)
 	return
@@ -495,7 +494,7 @@ type PortStats struct {
 	DurationNsec uint32
 }
 
-func (obj *PortStats) MarshalBinary() (data []byte, err error) {
+func (obj PortStats) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 112)
 	binary.BigEndian.PutUint32(data[0:4], obj.PortNo)
 	binary.BigEndian.PutUint64(data[8:16], obj.RxPackets)
@@ -539,7 +538,7 @@ type QueueStatsRequest struct {
 	QueueId uint32
 }
 
-func (obj *QueueStatsRequest) MarshalBinary() (data []byte, err error) {
+func (obj QueueStatsRequest) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 8)
 	binary.BigEndian.PutUint32(data[0:4], obj.PortNo)
 	binary.BigEndian.PutUint32(data[4:8], obj.QueueId)
@@ -562,7 +561,7 @@ type QueueStats struct {
 	DurationNsec uint32
 }
 
-func (obj *QueueStats) MarshalBinary() (data []byte, err error) {
+func (obj QueueStats) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 40)
 	binary.BigEndian.PutUint32(data[0:4], obj.PortNo)
 	binary.BigEndian.PutUint32(data[4:8], obj.QueueId)
@@ -589,7 +588,7 @@ type GroupStatsRequest struct {
 	GroupId uint32
 }
 
-func (obj *GroupStatsRequest) MarshalBinary() (data []byte, err error) {
+func (obj GroupStatsRequest) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 8)
 	binary.BigEndian.PutUint32(data[0:4], obj.GroupId)
 	return
@@ -607,10 +606,10 @@ type GroupStats struct {
 	ByteCount    uint64
 	DurationSec  uint32
 	DurationNsec uint32
-	BucketStats  []Data
+	BucketStats  []encoding.BinaryMarshaler
 }
 
-func (obj *GroupStats) MarshalBinary() (data []byte, err error) {
+func (obj GroupStats) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 40)
 	for _, entry := range obj.BucketStats {
 		var buf []byte
@@ -639,7 +638,7 @@ func (obj *GroupStats) UnmarshalBinary(data []byte) (err error) {
 	obj.DurationSec = binary.BigEndian.Uint32(data[32:36])
 	obj.DurationNsec = binary.BigEndian.Uint32(data[36:40])
 
-	obj.BucketStats = make([]Data, (length-40)/16)
+	obj.BucketStats = make([]encoding.BinaryMarshaler, (length-40)/16)
 	for i, _ := range obj.BucketStats {
 		entry := new(BucketCounter)
 		if err = entry.UnmarshalBinary(data[40+16*i : 56+16*i]); err != nil {
@@ -655,7 +654,7 @@ type BucketCounter struct {
 	ByteCount   uint64
 }
 
-func (obj *BucketCounter) MarshalBinary() (data []byte, err error) {
+func (obj BucketCounter) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint64(data[0:8], obj.PacketCount)
 	binary.BigEndian.PutUint64(data[8:16], obj.ByteCount)
 	return
@@ -670,10 +669,10 @@ func (obj *BucketCounter) UnmarshalBinary(data []byte) (err error) {
 type GroupDesc struct {
 	Type    uint8
 	GroupId uint32
-	Buckets []Data
+	Buckets []encoding.BinaryMarshaler
 }
 
-func (obj *GroupDesc) MarshalBinary() (data []byte, err error) {
+func (obj GroupDesc) MarshalBinary() (data []byte, err error) {
 	var buckets []byte
 	for _, bucket := range obj.Buckets {
 		var buf []byte
@@ -694,8 +693,8 @@ func (obj *GroupDesc) UnmarshalBinary(data []byte) (err error) {
 	length := int(binary.BigEndian.Uint16(data[0:2]))
 	obj.Buckets = nil
 	for cur := 8; cur < length; {
+		var bucket Bucket
 		bLength := int(binary.BigEndian.Uint16(data[cur : cur+2]))
-		bucket := new(Bucket)
 		if err = bucket.UnmarshalBinary(data[cur : cur+bLength]); err != nil {
 			return
 		}
@@ -714,7 +713,7 @@ type GroupFeatures struct {
 	Actions      [4]uint32
 }
 
-func (obj *GroupFeatures) MarshalBinary() (data []byte, err error) {
+func (obj GroupFeatures) MarshalBinary() (data []byte, err error) {
 	prefix := make([]byte, 40)
 	binary.BigEndian.PutUint32(prefix[0:4], obj.Type)
 	binary.BigEndian.PutUint32(prefix[4:8], obj.Capabilities)
@@ -739,17 +738,17 @@ func (obj *GroupFeatures) UnmarshalBinary(data []byte) (err error) {
 	return
 }
 
-type MeterStatsRequest struct {
+type MeterMultipartRequest struct {
 	MeterId uint32
 }
 
-func (obj *MeterStatsRequest) MarshalBinary() (data []byte, err error) {
+func (obj MeterMultipartRequest) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 8)
 	binary.BigEndian.PutUint32(data[0:4], obj.MeterId)
 	return
 }
 
-func (obj *MeterStatsRequest) UnmarshalBinary(data []byte) (err error) {
+func (obj *MeterMultipartRequest) UnmarshalBinary(data []byte) (err error) {
 	obj.MeterId = binary.BigEndian.Uint32(data[0:4])
 	return
 }
@@ -761,10 +760,10 @@ type MeterStats struct {
 	ByteInCount   uint64
 	DurationSec   uint32
 	DurationNsec  uint32
-	BandStats     []Data
+	BandStats     []encoding.BinaryMarshaler
 }
 
-func (obj *MeterStats) MarshalBinary() (data []byte, err error) {
+func (obj MeterStats) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 40)
 	for _, entry := range obj.BandStats {
 		var buf []byte
@@ -791,7 +790,7 @@ func (obj *MeterStats) UnmarshalBinary(data []byte) (err error) {
 	obj.ByteInCount = binary.BigEndian.Uint64(data[24:32])
 	obj.DurationSec = binary.BigEndian.Uint32(data[32:36])
 	obj.DurationNsec = binary.BigEndian.Uint32(data[36:40])
-	obj.BandStats = make([]Data, (length-40)/16)
+	obj.BandStats = make([]encoding.BinaryMarshaler, (length-40)/16)
 	for i, _ := range obj.BandStats {
 		entry := new(MeterBandStats)
 		if err = entry.UnmarshalBinary(data[40+i*16 : 56*i*16]); err != nil {
@@ -807,7 +806,7 @@ type MeterBandStats struct {
 	ByteBandCount   uint64
 }
 
-func (obj *MeterBandStats) MarshalBinary() (data []byte, err error) {
+func (obj MeterBandStats) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint64(data[0:8], obj.PacketBandCount)
 	binary.BigEndian.PutUint64(data[8:16], obj.ByteBandCount)
@@ -823,33 +822,34 @@ func (obj *MeterBandStats) UnmarshalBinary(data []byte) (err error) {
 type MeterConfig struct {
 	Flags   uint16
 	MeterId uint32
-	Bands   []TypedData
+	Bands   []Band
 }
 
-func (obj *MeterConfig) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
-	for _, entry := range obj.Bands {
-		var buf []byte
-		if buf, err = entry.MarshalBinary(); err != nil {
-			return
-		}
+func (obj MeterConfig) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
+	if buf, err := bandList(obj.Bands).MarshalBinary(); err != nil {
+		return nil, err
+	} else {
 		data = append(data, buf...)
 	}
 	binary.BigEndian.PutUint16(data[0:2], uint16(len(data)))
 	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
 	binary.BigEndian.PutUint32(data[4:8], obj.MeterId)
-	return
+	return data, nil
 }
 
-func (obj *MeterConfig) UnmarshalBinary(data []byte) (err error) {
+func (obj *MeterConfig) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint16(data[0:2]))
-	if obj.Bands, err = meterBandsUnmarshalBinary(data[8:length]); err != nil {
-		return
-	}
 	obj.Flags = binary.BigEndian.Uint16(data[2:4])
 	obj.MeterId = binary.BigEndian.Uint32(data[4:8])
-	obj.Bands = nil
-	return
+
+	var bands bandList
+	if err := bands.UnmarshalBinary(data[8:length]); err != nil {
+		return err
+	} else {
+		obj.Bands = []Band(bands)
+	}
+	return nil
 }
 
 type TableFeatures struct {
@@ -859,40 +859,37 @@ type TableFeatures struct {
 	MetadataWrite uint64
 	Config        uint32
 	MaxEntries    uint32
-	Properties    []TypedData
+	Properties    []encoding.BinaryMarshaler
 }
 
-func (obj *TableFeatures) MarshalBinary() (data []byte, err error) {
-	var properties []byte
-	for _, prop := range obj.Properties {
-		var buf []byte
-		if buf, err = prop.MarshalBinary(); err != nil {
-			return
-		}
-		properties = append(properties, buf...)
+func (obj TableFeatures) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 64)
+	if buf, err := tableFeaturePropertyList(obj.Properties).MarshalBinary(); err != nil {
+		return nil, err
+	} else {
+		data = append(data, buf...)
 	}
-
-	prefix := make([]byte, 64)
-	binary.BigEndian.PutUint16(prefix[0:2], uint16(64+len(properties)))
-	prefix[2] = obj.TableId
+	binary.BigEndian.PutUint16(data[0:2], uint16(len(data)))
+	data[2] = obj.TableId
 	for i, c := range []byte(obj.Name) {
 		if i < OFP_MAX_TABLE_NAME_LEN {
-			prefix[8+i] = c
+			data[8+i] = c
 		}
 	}
-	binary.BigEndian.PutUint64(prefix[40:48], obj.MetadataMatch)
-	binary.BigEndian.PutUint64(prefix[48:56], obj.MetadataWrite)
-	binary.BigEndian.PutUint32(prefix[56:60], obj.Config)
-	binary.BigEndian.PutUint32(prefix[60:64], obj.MaxEntries)
-
-	data = append(prefix, properties...)
-	return
+	binary.BigEndian.PutUint64(data[40:48], obj.MetadataMatch)
+	binary.BigEndian.PutUint64(data[48:56], obj.MetadataWrite)
+	binary.BigEndian.PutUint32(data[56:60], obj.Config)
+	binary.BigEndian.PutUint32(data[60:64], obj.MaxEntries)
+	return data, nil
 }
 
-func (obj *TableFeatures) UnmarshalBinary(data []byte) (err error) {
+func (obj *TableFeatures) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint16(data[0:2]))
-	if obj.Properties, err = tableFeaturePropertiesUnmarshalBinary(data[64:length]); err != nil {
-		return
+	var properties tableFeaturePropertyList
+	if err := properties.UnmarshalBinary(data[64:length]); err != nil {
+		return err
+	} else {
+		obj.Properties = []encoding.BinaryMarshaler(properties)
 	}
 	data[2] = obj.TableId
 	obj.Name = string(data[8 : 8+OFP_MAX_TABLE_NAME_LEN])
@@ -900,7 +897,7 @@ func (obj *TableFeatures) UnmarshalBinary(data []byte) (err error) {
 	obj.MetadataWrite = binary.BigEndian.Uint64(data[48:56])
 	obj.Config = binary.BigEndian.Uint32(data[56:60])
 	obj.MaxEntries = binary.BigEndian.Uint32(data[60:64])
-	return
+	return nil
 }
 
 type ExperimenterMultipart struct {
@@ -909,7 +906,7 @@ type ExperimenterMultipart struct {
 	Data         []byte
 }
 
-func (obj *ExperimenterMultipart) MarshalBinary() (data []byte, err error) {
+func (obj ExperimenterMultipart) MarshalBinary() (data []byte, err error) {
 	prefix := make([]byte, 8)
 	binary.BigEndian.PutUint32(prefix[0:4], obj.Experimenter)
 	binary.BigEndian.PutUint32(prefix[4:8], obj.ExpType)
@@ -933,7 +930,7 @@ type Desc struct {
 	DpDesc    string
 }
 
-func (obj *Desc) MarshalBinary() (data []byte, err error) {
+func (obj Desc) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 1056)
 	for i, c := range []byte(obj.MfrDesc) {
 		if i < DESC_STR_LEN {
@@ -982,7 +979,7 @@ type MeterFeatures struct {
 	MaxColor     uint8
 }
 
-func (obj *MeterFeatures) MarshalBinary() (data []byte, err error) {
+func (obj MeterFeatures) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint32(data[0:4], obj.MaxMeter)
 	binary.BigEndian.PutUint32(data[4:8], obj.BandTypes)

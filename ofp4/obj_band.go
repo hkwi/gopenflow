@@ -1,19 +1,33 @@
 package ofp4
 
 import (
+	"encoding"
 	"encoding/binary"
-	"errors"
 )
 
-func meterBandsUnmarshalBinary(data []byte) (bands []TypedData, err error) {
+type bandList []Band
+
+func (obj bandList) MarshalBinary() ([]byte, error) {
+	var data []byte
+	for _, band := range []Band(obj) {
+		if buf, err := band.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = append(data, buf...)
+		}
+	}
+	return data, nil
+}
+
+func (obj *bandList) UnmarshalBinary(data []byte) error {
+	var bands []Band
 	for cur := 0; cur < len(data); {
 		bType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		bLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var band TypedData
+		var band Band
 		switch bType {
 		default:
-			err = errors.New("Unknown OFPMBT_")
-			return
+			return Error{OFPET_METER_MOD_FAILED, OFPMMFC_BAD_BAND, nil}
 		case OFPMBT_DROP:
 			band = new(MeterBandDrop)
 		case OFPMBT_DSCP_REMARK:
@@ -21,13 +35,14 @@ func meterBandsUnmarshalBinary(data []byte) (bands []TypedData, err error) {
 		case OFPMBT_EXPERIMENTER:
 			band = new(MeterBandExperimenter)
 		}
-		if err = band.UnmarshalBinary(data[cur : cur+bLen]); err != nil {
-			return
+		if err := band.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+bLen]); err != nil {
+			return err
 		}
 		bands = append(bands, band)
 		cur += bLen
 	}
-	return
+	*obj = bandList(bands)
+	return nil
 }
 
 type MeterBandDrop struct {
@@ -35,7 +50,7 @@ type MeterBandDrop struct {
 	BurstSize uint32
 }
 
-func (obj *MeterBandDrop) MarshalBinary() (data []byte, err error) {
+func (obj MeterBandDrop) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPMBT_DROP)
 	binary.BigEndian.PutUint16(data[2:4], 16)
@@ -58,7 +73,7 @@ type MeterBandDscpRemark struct {
 	PrecLevel uint8
 }
 
-func (obj *MeterBandDscpRemark) MarshalBinary() (data []byte, err error) {
+func (obj MeterBandDscpRemark) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPMBT_DSCP_REMARK)
 	binary.BigEndian.PutUint16(data[2:4], 16)
@@ -84,7 +99,7 @@ type MeterBandExperimenter struct {
 	Data         []byte
 }
 
-func (obj *MeterBandExperimenter) MarshalBinary() (data []byte, err error) {
+func (obj MeterBandExperimenter) MarshalBinary() (data []byte, err error) {
 	prefix := make([]byte, 16)
 	binary.BigEndian.PutUint16(prefix[0:2], OFPMBT_EXPERIMENTER)
 	binary.BigEndian.PutUint16(prefix[2:4], uint16(16+len(obj.Data)))

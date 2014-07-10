@@ -1,15 +1,16 @@
 package ofp4
 
 import (
+	"encoding"
 	"encoding/binary"
 	"errors"
 )
 
-func queuePropertiesUnmarshalBinary(data []byte) (properties []TypedData, err error) {
+func queuePropertiesUnmarshalBinary(data []byte) (properties []encoding.BinaryMarshaler, err error) {
 	for cur := 0; cur < len(data); {
 		pType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		pLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var property TypedData
+		var property encoding.BinaryMarshaler
 		switch pType {
 		default:
 			err = errors.New("Unknown OFPIT_")
@@ -21,7 +22,7 @@ func queuePropertiesUnmarshalBinary(data []byte) (properties []TypedData, err er
 		case OFPQT_EXPERIMENTER:
 			property = new(QueuePropExperimenter)
 		}
-		if err = property.UnmarshalBinary(data[cur : cur+pLen]); err != nil {
+		if err = property.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+pLen]); err != nil {
 			return
 		}
 		properties = append(properties, property)
@@ -37,7 +38,7 @@ type QueuePropMinRate struct {
 func (obj *QueuePropMinRate) GetType() uint16 {
 	return OFPQT_MIN_RATE
 }
-func (obj *QueuePropMinRate) MarshalBinary() (data []byte, err error) {
+func (obj QueuePropMinRate) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPQT_MIN_RATE)
 	binary.BigEndian.PutUint16(data[2:4], 16)
@@ -56,7 +57,7 @@ type QueuePropMaxRate struct {
 func (obj *QueuePropMaxRate) GetType() uint16 {
 	return OFPQT_MAX_RATE
 }
-func (obj *QueuePropMaxRate) MarshalBinary() (data []byte, err error) {
+func (obj QueuePropMaxRate) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPQT_MAX_RATE)
 	binary.BigEndian.PutUint16(data[2:4], 16)
@@ -76,7 +77,7 @@ type QueuePropExperimenter struct {
 func (obj *QueuePropExperimenter) GetType() uint16 {
 	return OFPQT_EXPERIMENTER
 }
-func (obj *QueuePropExperimenter) MarshalBinary() (data []byte, err error) {
+func (obj QueuePropExperimenter) MarshalBinary() (data []byte, err error) {
 	prefix := make([]byte, 16)
 
 	binary.BigEndian.PutUint16(prefix[0:2], OFPQT_EXPERIMENTER)
