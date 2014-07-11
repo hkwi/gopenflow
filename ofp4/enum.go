@@ -68,7 +68,7 @@ const (
 	OFPPC_NO_RECV
 	_
 	_
-	OFPPC_FWD
+	OFPPC_NO_FWD
 	OFPPC_NO_PACKET_IN
 )
 
