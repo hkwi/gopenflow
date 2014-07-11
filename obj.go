@@ -6,7 +6,6 @@ package gopenflow
 import (
 	"encoding"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 )
@@ -17,8 +16,8 @@ func Parse(data []byte) (encoding.BinaryMarshaler, error) {
 		return nil, &Error{1, 0}
 	case 4: // Openflow 1.3
 		length := int(binary.BigEndian.Uint16(data[2:4]))
-		obj = new(ofp4.Message)
-		if err = obj.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[0:length]); err != nil {
+		obj := new(ofp4.Message)
+		if err := obj.UnmarshalBinary(data[0:length]); err != nil {
 			return nil, err
 		} else {
 			return obj, nil
