@@ -1,3 +1,6 @@
+/*
+Package ofp4sw implements openflow 1.3 switch.
+*/
 package ofp4sw
 
 import (
@@ -15,7 +18,7 @@ type Pipeline struct {
 	groups   map[uint32]*group
 	meters   map[uint32]*meter
 
-	datapathId uint64
+	DatapathId uint64
 	flags      uint16 // ofp_config_flags, check capability
 }
 
@@ -26,7 +29,6 @@ func NewPipeline() *Pipeline {
 		ports:      make(map[uint32]portInternal),
 		groups:     make(map[uint32]*group),
 		meters:     make(map[uint32]*meter),
-		datapathId: 1,
 	}
 	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
 	go func() {
@@ -89,10 +91,6 @@ type packetOut struct {
 type groupOut struct {
 	groupId uint32
 	data    frame
-}
-
-func (p Pipeline) GetDatapathId() uint64 {
-	return p.datapathId
 }
 
 func (pipe Pipeline) AddPort(port Port) error {
