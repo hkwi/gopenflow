@@ -156,6 +156,7 @@ func (priority *flowPriority) rebuildIndex(flows []*flowEntry) {
 	for _, flow := range flows {
 		key := capKey(cap, flow.fields)
 		if ent, ok := priority.flows[key]; ok {
+			// XXX: reorder for longest match
 			priority.flows[key] = append(ent, flow)
 		} else {
 			priority.flows[key] = []*flowEntry{flow}
@@ -397,26 +398,30 @@ type flowStats struct {
 func (p Pipeline) filterFlows(req flowFilter) []flowStats {
 	ch := make(chan []flowStats)
 	p.commands <- func() {
-		var stats []flowStats
-		waits := 0
-		ch2 := make(chan []flowStats)
-		for i, table := range p.flows {
-			if req.tableId == ofp4.OFPTT_ALL || req.tableId == i {
-				i2 := i
-				table2 := table
-				go func() {
-					ch2 <- table2.filterFlows(req, i2)
-				}()
-				waits++
-			}
-		}
-		for i := 0; i < waits; i++ {
-			stats = append(stats, <-ch2...)
-		}
-		ch <- stats
+		ch <- p.filterFlowsInside(req)
 		close(ch)
 	}
 	return <-ch
+}
+
+func (p Pipeline) filterFlowsInside(req flowFilter) []flowStats {
+	var stats []flowStats
+	waits := 0
+	ch2 := make(chan []flowStats)
+	for i, table := range p.flows {
+		if req.tableId == ofp4.OFPTT_ALL || req.tableId == i {
+			i2 := i
+			table2 := table
+			go func() {
+				ch2 <- table2.filterFlows(req, i2)
+			}()
+			waits++
+		}
+	}
+	for i := 0; i < waits; i++ {
+		stats = append(stats, <-ch2...)
+	}
+	return stats
 }
 
 func (t flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {

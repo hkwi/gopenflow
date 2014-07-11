@@ -24,11 +24,11 @@ type Pipeline struct {
 
 func NewPipeline() *Pipeline {
 	pipe := Pipeline{
-		commands:   make(chan func(), 16),
-		flows:      make(map[uint8]*flowTable),
-		ports:      make(map[uint32]portInternal),
-		groups:     make(map[uint32]*group),
-		meters:     make(map[uint32]*meter),
+		commands: make(chan func(), 16),
+		flows:    make(map[uint8]*flowTable),
+		ports:    make(map[uint32]portInternal),
+		groups:   make(map[uint32]*group),
+		meters:   make(map[uint32]*meter),
 	}
 	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
 	go func() {
@@ -44,16 +44,18 @@ func NewPipeline() *Pipeline {
 }
 
 type portInternal interface {
+	Live() bool
 	Egress() chan<- packetOut
 }
 
 type Port interface {
 	GetPhysicalPort() uint32
+	GetPort() ofp4.Port
+	GetStats() PortStats
 	Ingress() <-chan []byte
 	Egress() chan<- []byte
-	GetName() string
-	GetDesc() string
-	GetStats() PortStats
+	SetPortNo(portNo uint32)
+	SetConfig(config uint32)
 }
 
 type PortStats struct {
@@ -93,7 +95,7 @@ type groupOut struct {
 	data    frame
 }
 
-func (pipe Pipeline) AddPort(port Port) error {
+func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 	ch := make(chan error)
 	pipe.commands <- func() {
 		ch <- func() error {
@@ -102,36 +104,58 @@ func (pipe Pipeline) AddPort(port Port) error {
 				egress:  make(chan packetOut),
 				created: time.Now(),
 			}
-			portNo := uint32(1)
-			for existingPortNo, _ := range pipe.ports {
-				if existingPortNo > ofp4.OFPP_MAX {
-					continue // skip special ports
+			if portNo != ofp4.OFPP_ANY {
+				if _, exists := pipe.ports[portNo]; exists {
+					return errors.New("portNo already used")
 				}
-				if existingPortNo >= portNo {
-					portNo = existingPortNo + 1
-				}
-				if portNo > ofp4.OFPP_MAX {
-					return errors.New("No room for port id")
+			} else {
+				portNo = uint32(1)
+				for existingPortNo, _ := range pipe.ports {
+					if existingPortNo > ofp4.OFPP_MAX {
+						continue // skip special ports
+					}
+					if existingPortNo >= portNo {
+						portNo = existingPortNo + 1
+					}
+					if portNo > ofp4.OFPP_MAX {
+						return errors.New("No room for port id")
+					}
 				}
 			}
 			pipe.ports[portNo] = portInt
+			port.SetPortNo(portNo)
 
-			results := make(chan chan []packetOut)
+			results := make(chan chan []packetOut, 8)
 			go func() {
 				for eth := range port.Ingress() {
-					eth2 := eth
+					eth := eth
 					ch2 := make(chan []packetOut)
+					results <- ch2
 					go func() {
-						f := frame{
-							inPort:    portNo,
-							phyInPort: port.GetPhysicalPort(),
-							layers:    gopacket.NewPacket(eth2, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
-						}
-						outs := f.process(pipe)
-						ch2 <- outs
+						ch2 <- func() []packetOut {
+							config := port.GetPort().Config
+							if config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
+								return nil
+							}
+							f := frame{
+								inPort:    portNo,
+								phyInPort: port.GetPhysicalPort(),
+								layers:    gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
+							}
+							pouts := f.process(pipe)
+							if config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
+								var newPouts []packetOut
+								for _, pout := range pouts {
+									if pout.outPort != ofp4.OFPP_CONTROLLER {
+										newPouts = append(newPouts, pout)
+									}
+								}
+								pouts = newPouts
+							}
+							return pouts
+						}()
 						close(ch2)
 					}()
-					results <- ch2
 				}
 				close(results)
 			}()
@@ -157,6 +181,10 @@ func (pipe Pipeline) AddPort(port Port) error {
 			go func() {
 				// XXX: need to implement queue here
 				for pout := range portInt.egress {
+					config := port.GetPort().Config
+					if config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
+						continue
+					}
 					port.Egress() <- pout.data
 				}
 			}()
@@ -207,14 +235,14 @@ func (pipe Pipeline) getFlowTables(tableId uint8) []*flowTable {
 	return <-ch
 }
 
-func (p Pipeline) getGroups(groupId uint32) []group {
-	ret := make(chan []group)
+func (p Pipeline) getGroups(groupId uint32) map[uint32]*group {
+	ret := make(chan map[uint32]*group)
 	p.commands <- func() {
-		ret <- func() []group {
-			var groups []group
+		ret <- func() map[uint32]*group {
+			groups := make(map[uint32]*group)
 			for k, g := range p.groups {
 				if groupId == ofp4.OFPG_ALL || groupId == k {
-					groups = append(groups, *g)
+					groups[k] = g
 				}
 			}
 			return groups
@@ -222,6 +250,35 @@ func (p Pipeline) getGroups(groupId uint32) []group {
 		close(ret)
 	}
 	return <-ret
+}
+
+// Call this function inside a pipeline transaction
+func (p Pipeline) watchGroup(groupId uint32) bool {
+	if group, ok := p.groups[groupId]; ok {
+		for _, b := range group.buckets {
+			if b.watchPort != ofp4.OFPP_ANY {
+				if p.watchPort(b.watchPort) {
+					return true
+				}
+			}
+			if b.watchGroup != ofp4.OFPG_ANY {
+				if p.watchGroup(b.watchGroup) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// Call this function inside a pipeline transaction
+func (p Pipeline) watchPort(portNo uint32) bool {
+	if port, ok := p.ports[portNo]; ok {
+		if port.Live() {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Pipeline) getMeters(meterId uint32) map[uint32]*meter {
@@ -258,4 +315,20 @@ func (p Pipeline) getPorts(portNo uint32) map[uint32]portInternal {
 	return <-ret
 }
 
-func (p portHelper) Egress() chan<- packetOut { return (chan<- packetOut)(p.egress) }
+func (p portHelper) Egress() chan<- packetOut {
+	return (chan<- packetOut)(p.egress)
+}
+
+func (p portHelper) Live() bool {
+	info := p.public.GetPort()
+	if info.Config&ofp4.OFPPC_PORT_DOWN != 0 {
+		return false
+	}
+	if info.State&ofp4.OFPPS_LINK_DOWN != 0 {
+		return false
+	}
+	if info.State&(ofp4.OFPPS_LIVE) != 0 {
+		return true
+	}
+	return false
+}

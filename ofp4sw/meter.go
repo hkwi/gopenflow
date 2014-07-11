@@ -51,9 +51,6 @@ func (m *meter) process(data *frame) error {
 			if m.flagPkts {
 				inc = 1
 			}
-
-			rate := (m.rate*BASE_INTERVAL + inc) / (BASE_INTERVAL + meterInterval)
-
 			if m.flagBurst {
 				for _, bi := range m.bands {
 					drain := meterInterval * float64(bi.getRate()) * 8 / 1000.0
@@ -62,17 +59,17 @@ func (m *meter) process(data *frame) error {
 					}
 					switch b := bi.(type) {
 					case *bandDrop:
-						b.bucket += inc - drain
+						b.bucket -= drain
 						if b.bucket < 0 {
 							b.bucket = 0
 						}
 					case *bandDscpRemark:
-						b.bucket += inc - drain
+						b.bucket -= drain
 						if b.bucket < 0 {
 							b.bucket = 0
 						}
 					case *bandExperimenter:
-						b.bucket += inc - drain
+						b.bucket -= drain
 						if b.bucket < 0 {
 							b.bucket = 0
 						}
@@ -83,7 +80,7 @@ func (m *meter) process(data *frame) error {
 				for _, bi := range m.bands {
 					switch b := bi.(type) {
 					case *bandDrop:
-						if b.bucket > float64(b.burstSize) {
+						if b.bucket+inc > float64(b.burstSize) {
 							if m.flagStats {
 								b.packetCount++
 								b.byteCount += uint64(length)
@@ -91,9 +88,8 @@ func (m *meter) process(data *frame) error {
 							return &packetDrop{}
 						}
 					case *bandDscpRemark:
-						if b.bucket > float64(b.burstSize) {
+						if b.bucket+inc > float64(b.burstSize) {
 							// do dscp remark
-							m.rate = rate
 							if m.flagStats {
 								b.packetCount++
 								b.byteCount += uint64(length)
@@ -101,9 +97,8 @@ func (m *meter) process(data *frame) error {
 							return nil
 						}
 					case *bandExperimenter:
-						if b.bucket > float64(b.burstSize) {
+						if b.bucket+inc > float64(b.burstSize) {
 							// do nothing
-							m.rate = rate
 							if m.flagStats {
 								b.packetCount++
 								b.byteCount += uint64(length)
@@ -114,7 +109,21 @@ func (m *meter) process(data *frame) error {
 						panic("Unexpected band")
 					}
 				}
+				for _, bi := range m.bands {
+					switch b := bi.(type) {
+					case *bandDrop:
+						b.bucket += inc
+					case *bandDscpRemark:
+						b.bucket += inc
+					case *bandExperimenter:
+						b.bucket += inc
+					default:
+						panic("Unexpected band")
+					}
+				}
 			}
+
+			rate := (m.rate*BASE_INTERVAL + inc) / (BASE_INTERVAL + meterInterval)
 			if m.highestBand != nil && rate > float64(m.highestBand.getRate()) {
 				switch b := m.highestBand.(type) {
 				case *bandDrop:
@@ -125,7 +134,6 @@ func (m *meter) process(data *frame) error {
 					return &packetDrop{}
 				case *bandDscpRemark:
 					// do dscp remark
-					m.rate = rate
 					if m.flagStats {
 						b.packetCount++
 						b.byteCount += uint64(length)
@@ -133,7 +141,6 @@ func (m *meter) process(data *frame) error {
 					return nil
 				case *bandExperimenter:
 					// do nothing
-					m.rate = rate
 					if m.flagStats {
 						b.packetCount++
 						b.byteCount += uint64(length)
@@ -248,4 +255,23 @@ func newMeter(msg ofp4.MeterMod) *meter {
 		}
 	}()
 	return &m
+}
+
+func (pipe *Pipeline) deleteMeterInside(meterId uint32) error {
+	if meter, exists := pipe.meters[meterId]; exists {
+		meter.commands <- nil
+		delete(pipe.meters, meterId)
+		pipe.filterFlowsInside(flowFilter{
+			opUnregister: true,
+			outPort:      ofp4.OFPP_ANY,
+			outGroup:     ofp4.OFPG_ANY,
+			meterId:      meterId,
+		})
+	} else {
+		return &ofp4.Error{
+			Type: ofp4.OFPET_METER_MOD_FAILED,
+			Code: ofp4.OFPMMFC_UNKNOWN_METER,
+		}
+	}
+	return nil
 }

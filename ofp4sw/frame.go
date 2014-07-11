@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	"hash/fnv"
 	"net"
 )
 
@@ -124,6 +125,48 @@ func (f frame) clone() *frame {
 		return &d
 	}
 	return nil
+}
+
+func (f frame) hash() uint32 {
+	hashKeys := [...]uint64{ofp4.OFPXMT_OFB_ETH_DST,
+		ofp4.OFPXMT_OFB_ETH_SRC,
+		ofp4.OFPXMT_OFB_ETH_TYPE,
+		ofp4.OFPXMT_OFB_VLAN_VID,
+		ofp4.OFPXMT_OFB_VLAN_PCP,
+		ofp4.OFPXMT_OFB_IP_DSCP,
+		ofp4.OFPXMT_OFB_IP_ECN,
+		ofp4.OFPXMT_OFB_IP_PROTO,
+		ofp4.OFPXMT_OFB_IPV4_SRC,
+		ofp4.OFPXMT_OFB_IPV4_DST,
+		ofp4.OFPXMT_OFB_TCP_SRC,
+		ofp4.OFPXMT_OFB_TCP_DST,
+		ofp4.OFPXMT_OFB_UDP_SRC,
+		ofp4.OFPXMT_OFB_UDP_DST,
+		ofp4.OFPXMT_OFB_SCTP_SRC,
+		ofp4.OFPXMT_OFB_SCTP_DST,
+		ofp4.OFPXMT_OFB_ICMPV4_TYPE,
+		ofp4.OFPXMT_OFB_ICMPV4_CODE,
+		ofp4.OFPXMT_OFB_ARP_OP,
+		ofp4.OFPXMT_OFB_ARP_SPA,
+		ofp4.OFPXMT_OFB_ARP_TPA,
+		ofp4.OFPXMT_OFB_ARP_SHA,
+		ofp4.OFPXMT_OFB_ARP_THA,
+		ofp4.OFPXMT_OFB_IPV6_SRC,
+		ofp4.OFPXMT_OFB_IPV6_DST,
+		ofp4.OFPXMT_OFB_IPV6_FLABEL,
+		ofp4.OFPXMT_OFB_ICMPV6_TYPE,
+		ofp4.OFPXMT_OFB_ICMPV6_CODE,
+		ofp4.OFPXMT_OFB_MPLS_LABEL,
+		ofp4.OFPXMT_OFB_MPLS_TC,
+		ofp4.OFPXMT_OFB_MPLS_BOS,
+		ofp4.OFPXMT_OFB_PBB_ISID}
+	hasher := fnv.New32()
+	for _, k := range hashKeys {
+		if buf, err := f.getValue(match{field: k}); err == nil {
+			hasher.Write(buf)
+		}
+	}
+	return hasher.Sum32()
 }
 
 func (data frame) getValue(m match) ([]byte, error) {

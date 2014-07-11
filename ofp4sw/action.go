@@ -446,7 +446,7 @@ func (a *actionSet) fromMessage(msg []ofp4.Action) error {
 	for _, mact := range msg {
 		switch act := mact.(type) {
 		default:
-			return ofp4.Error{ofp4.OFPET_BAD_ACTION,ofp4.OFPBAC_BAD_TYPE,nil}
+			return ofp4.Error{ofp4.OFPET_BAD_ACTION, ofp4.OFPBAC_BAD_TYPE, nil}
 		case *ofp4.ActionGeneric:
 			actions[act.Type] = (*actionGeneric)(act)
 		case *ofp4.ActionOutput:
@@ -479,7 +479,7 @@ func (a actionSet) toMessage() (actions []ofp4.Action, err error) {
 	for _, mact := range map[uint16]action(a) {
 		switch act := mact.(type) {
 		default:
-			err = ofp4.Error{ofp4.OFPET_BAD_ACTION,ofp4.OFPBAC_BAD_TYPE,nil}
+			err = ofp4.Error{ofp4.OFPET_BAD_ACTION, ofp4.OFPBAC_BAD_TYPE, nil}
 			return
 		case *actionGeneric:
 			actions[i] = (*ofp4.ActionGeneric)(act)

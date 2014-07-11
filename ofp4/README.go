@@ -1,7 +1,7 @@
 /*
 Package ofp4 implements openflow 1.3 protocol structures.
 
-ofp4 structs implement encoding.BinaryMarshaler and encoding.BinaryUnmarshaler 
+ofp4 structs implement encoding.BinaryMarshaler and encoding.BinaryUnmarshaler
 interfaces.
 
 Examples:

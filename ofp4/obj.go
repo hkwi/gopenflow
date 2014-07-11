@@ -242,7 +242,7 @@ func (obj *HelloElementVersionbitmap) UnmarshalBinary(data []byte) (err error) {
 	return
 }
 
-// Please not that Error can be used as error. 
+// Please not that Error can be used as error.
 type Error struct {
 	Type uint16
 	Code uint16

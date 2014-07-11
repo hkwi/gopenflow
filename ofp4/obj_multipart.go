@@ -707,7 +707,7 @@ func (obj *GroupDesc) UnmarshalBinary(data []byte) (err error) {
 }
 
 type GroupFeatures struct {
-	Type         uint32
+	Types        uint32
 	Capabilities uint32
 	MaxGroups    [4]uint32
 	Actions      [4]uint32
@@ -715,7 +715,7 @@ type GroupFeatures struct {
 
 func (obj GroupFeatures) MarshalBinary() (data []byte, err error) {
 	prefix := make([]byte, 40)
-	binary.BigEndian.PutUint32(prefix[0:4], obj.Type)
+	binary.BigEndian.PutUint32(prefix[0:4], obj.Types)
 	binary.BigEndian.PutUint32(prefix[4:8], obj.Capabilities)
 	for i, n := range obj.MaxGroups {
 		binary.BigEndian.PutUint32(prefix[8+4*i:12+4*i], n)
@@ -727,7 +727,7 @@ func (obj GroupFeatures) MarshalBinary() (data []byte, err error) {
 }
 
 func (obj *GroupFeatures) UnmarshalBinary(data []byte) (err error) {
-	obj.Type = binary.BigEndian.Uint32(data[0:4])
+	obj.Types = binary.BigEndian.Uint32(data[0:4])
 	obj.Capabilities = binary.BigEndian.Uint32(data[4:8])
 	for i, _ := range obj.MaxGroups {
 		obj.MaxGroups[i] = binary.BigEndian.Uint32(data[8+4*i : 12+4*i])

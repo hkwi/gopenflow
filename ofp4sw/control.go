@@ -127,6 +127,7 @@ func newController() controller {
 	return port
 }
 func (c controller) Egress() chan<- packetOut { return c.egress }
+func (c controller) Live() bool               { return true }
 
 func (c controller) addControlChannel(con ControlChannel, pipe Pipeline) error {
 	ch := make(chan ControlChannel)
@@ -498,7 +499,20 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 		case ofp4.OFPGC_MODIFY:
 			// XXX:
 		case ofp4.OFPGC_DELETE:
-			err = pipe.deleteGroup(*req)
+			ch := make(chan error)
+			pipe.commands <- func() {
+				ch <- func() error {
+					if req.GroupId == ofp4.OFPG_ALL {
+						for groupId, _ := range pipe.groups {
+							pipe.deleteGroupInside(groupId)
+						}
+					} else {
+						return pipe.deleteGroupInside(req.GroupId)
+					}
+					return nil
+				}()
+			}
+			err = <-ch
 		}
 	case ofp4.OFPT_MULTIPART_REQUEST:
 		req := ofm.Body.(*ofp4.MultipartRequest)
@@ -629,6 +643,50 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					panic("portHelper cast error")
 				}
 			}
+		case ofp4.OFPMP_GROUP_DESC:
+			err = func() error {
+				for i, g := range pipe.getGroups(ofp4.OFPG_ALL) {
+					var buckets []encoding.BinaryMarshaler
+					for _, b := range g.buckets {
+						if bucket, e := b.toMessage(); e != nil {
+							return e
+						} else {
+							buckets = append(buckets, bucket)
+						}
+					}
+					multiRes = append(multiRes, &ofp4.GroupDesc{
+						Type:    g.groupType,
+						GroupId: i,
+						Buckets: buckets,
+					})
+				}
+				return nil
+			}()
+		case ofp4.OFPMP_GROUP_FEATURES:
+			actionBits := uint32(0)
+			actionBits |= 1 << ofp4.OFPAT_OUTPUT
+			actionBits |= 1 << ofp4.OFPAT_COPY_TTL_OUT
+			actionBits |= 1 << ofp4.OFPAT_COPY_TTL_IN
+			actionBits |= 1 << ofp4.OFPAT_SET_MPLS_TTL
+			actionBits |= 1 << ofp4.OFPAT_DEC_MPLS_TTL
+			actionBits |= 1 << ofp4.OFPAT_PUSH_VLAN
+			actionBits |= 1 << ofp4.OFPAT_POP_VLAN
+			actionBits |= 1 << ofp4.OFPAT_PUSH_MPLS
+			actionBits |= 1 << ofp4.OFPAT_POP_MPLS
+			actionBits |= 1 << ofp4.OFPAT_SET_QUEUE
+			actionBits |= 1 << ofp4.OFPAT_GROUP
+			actionBits |= 1 << ofp4.OFPAT_SET_NW_TTL
+			actionBits |= 1 << ofp4.OFPAT_DEC_NW_TTL
+			actionBits |= 1 << ofp4.OFPAT_SET_FIELD
+			actionBits |= 1 << ofp4.OFPAT_PUSH_PBB
+			actionBits |= 1 << ofp4.OFPAT_POP_PBB
+			// OFPAT_EXPERIMENTER overflows
+			multiRes = append(multiRes, &ofp4.GroupFeatures{
+				Types:        1<<ofp4.OFPGT_ALL | 1<<ofp4.OFPGT_SELECT | 1<<ofp4.OFPGT_INDIRECT | 1<<ofp4.OFPGT_FF,
+				Capabilities: ofp4.OFPGFC_SELECT_WEIGHT | ofp4.OFPGFC_SELECT_LIVENESS | ofp4.OFPGFC_CHAINING | ofp4.OFPGFC_CHAINING_CHECKS,
+				MaxGroups:    [...]uint32{ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX},
+				Actions:      [...]uint32{actionBits, actionBits, actionBits, actionBits},
+			})
 		case ofp4.OFPMP_METER:
 			for meterId, meter := range pipe.getMeters(req.Body.(*ofp4.MeterMultipartRequest).MeterId) {
 				duration := time.Now().Sub(meter.created)
@@ -788,59 +846,48 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 		req := ofm.Body.(*ofp4.MeterMod)
 		switch req.Command {
 		case ofp4.OFPMC_ADD:
-			meter := newMeter(*req)
-			ch := make(chan error)
-			pipe.commands <- func() {
-				ch <- func() error {
-					if req.MeterId == 0 || (req.MeterId > ofp4.OFPM_MAX && req.MeterId != ofp4.OFPM_CONTROLLER) {
-						return &ofp4.Error{
-							Type: ofp4.OFPET_METER_MOD_FAILED,
-							Code: ofp4.OFPMMFC_INVALID_METER,
+			if req.MeterId == 0 || (req.MeterId > ofp4.OFPM_MAX && req.MeterId != ofp4.OFPM_CONTROLLER) {
+				err = &ofp4.Error{
+					Type: ofp4.OFPET_METER_MOD_FAILED,
+					Code: ofp4.OFPMMFC_INVALID_METER,
+				}
+			} else {
+				meter := newMeter(*req)
+				ch := make(chan error)
+				pipe.commands <- func() {
+					ch <- func() error {
+						if _, exists := pipe.meters[req.MeterId]; exists {
+							return &ofp4.Error{
+								Type: ofp4.OFPET_METER_MOD_FAILED,
+								Code: ofp4.OFPMMFC_METER_EXISTS,
+							}
+						} else {
+							pipe.meters[req.MeterId] = meter
 						}
-					}
-					if _, exists := pipe.meters[req.MeterId]; exists {
-						return &ofp4.Error{
-							Type: ofp4.OFPET_METER_MOD_FAILED,
-							Code: ofp4.OFPMMFC_METER_EXISTS,
-						}
-					} else {
-						pipe.meters[req.MeterId] = meter
-					}
-					return nil
-				}()
-				close(ch)
-			}
-			if e := <-ch; e != nil {
-				meter.commands <- nil
-				err = e
+						return nil
+					}()
+					close(ch)
+				}
+				if e := <-ch; e != nil {
+					meter.commands <- nil
+					err = e
+				}
 			}
 		case ofp4.OFPMC_DELETE:
 			ch := make(chan error)
 			pipe.commands <- func() {
 				ch <- func() error {
 					if req.MeterId == ofp4.OFPM_ALL {
-						for k, m := range pipe.meters {
-							m.commands <- nil
-							delete(pipe.meters, k)
+						for meterId, _ := range pipe.meters {
+							pipe.deleteMeterInside(meterId)
 						}
 					} else {
-						if meter, exists := pipe.meters[req.MeterId]; exists {
-							meter.commands <- nil
-							delete(pipe.meters, req.MeterId)
-						} else {
-							return &ofp4.Error{
-								Type: ofp4.OFPET_METER_MOD_FAILED,
-								Code: ofp4.OFPMMFC_UNKNOWN_METER,
-							}
-						}
+						return pipe.deleteMeterInside(req.MeterId)
 					}
 					return nil
 				}()
-				close(ch)
 			}
-			if e := <-ch; e != nil {
-				err = e
-			}
+			err = <-ch
 		case ofp4.OFPMC_MODIFY:
 			// XXX:
 		}
