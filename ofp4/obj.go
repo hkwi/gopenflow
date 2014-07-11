@@ -41,6 +41,48 @@ type Header struct {
 	Xid     uint32
 }
 
+/*
+When you operate, use following types as Body:
+	OFPT_HELLO                    Array
+	OFPT_ERROR                    Error
+	OFPT_ECHO_REQUEST             Bytes
+	OFPT_ECHO_REPLY               Bytes
+	OFPT_EXPERIMENTER             Experimenter
+
+	OFPT_FEATURES_REQUEST         _
+	OFPT_FEATURES_REPLY           SwitchFeature
+	OFPT_GET_CONFIG_REQUEST       _
+	OFPT_GET_CONFIG_REPLY         SwitchConfig
+	OFPT_SET_CONFIG               SwitchConfig
+
+	OFPT_PACKET_IN                PacketIn
+	OFPT_FLOW_REMOVED             FlowRemoved
+	OFPT_PORT_STATUS              PortStatus
+
+	OFPT_PACKET_OUT               PacketOut
+	OFPT_FLOW_MOD                 FlowMod
+	OFPT_GROUP_MOD                GroupMod
+	OFPT_PORT_MOD                 PortMod
+	OFPT_TABLE_MOD                TableMod
+
+	OFPT_MULTIPART_REQUEST        MultipartRequest
+	OFPT_MULTIPART_REPLY          MultipartReply
+
+	OFPT_BARRIER_REQUEST          _
+	OFPT_BARRIER_REPLY            _
+
+	OFPT_QUEUE_GET_CONFIG_REQUEST QueueGetConfigRequest
+	OFPT_QUEUE_GET_CONFIG_REPLY   QueueGetConfigReply
+
+	OFPT_ROLE_REQUEST             RoleRequest
+	OFPT_ROLE_REPLY               RoleRequest
+
+	OFPT_GET_ASYNC_REQUEST        _
+	OFPT_GET_ASYNC_REPLY          AsyncConfig
+	OFPT_SET_ASYNC                AsyncConfig
+
+	OFPT_METER_MOD                MeterMod
+*/
 type Message struct {
 	Header
 	Body encoding.BinaryMarshaler
@@ -200,6 +242,7 @@ func (obj *HelloElementVersionbitmap) UnmarshalBinary(data []byte) (err error) {
 	return
 }
 
+// Please not that Error can be used as error. 
 type Error struct {
 	Type uint16
 	Code uint16

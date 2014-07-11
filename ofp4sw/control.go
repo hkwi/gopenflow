@@ -370,7 +370,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 				Xid:     ofm.Xid,
 			},
 			Body: &ofp4.SwitchFeatures{
-				DatapathId:   pipe.GetDatapathId(),
+				DatapathId:   pipe.DatapathId,
 				NBuffers:     0x7fffffff,
 				NTables:      0xff,
 				Capabilities: 0,
