@@ -141,6 +141,7 @@ func (obj ActionOutput) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint16(data[8:10], obj.MaxLen)
 	return
 }
+
 func (obj *ActionOutput) UnmarshalBinary(data []byte) (err error) {
 	obj.Port = binary.BigEndian.Uint32(data[4:8])
 	obj.MaxLen = binary.BigEndian.Uint16(data[8:10])
@@ -158,6 +159,7 @@ func (obj ActionMplsTtl) MarshalBinary() (data []byte, err error) {
 	data[4] = obj.MplsTtl
 	return
 }
+
 func (obj *ActionMplsTtl) UnmarshalBinary(data []byte) (err error) {
 	obj.MplsTtl = data[4]
 	return
@@ -175,6 +177,7 @@ func (obj ActionPush) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint16(data[4:6], obj.Ethertype)
 	return
 }
+
 func (obj *ActionPush) UnmarshalBinary(data []byte) (err error) {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.Ethertype = binary.BigEndian.Uint16(data[4:6])
@@ -192,6 +195,7 @@ func (obj ActionPopMpls) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint16(data[4:6], obj.Ethertype)
 	return
 }
+
 func (obj *ActionPopMpls) UnmarshalBinary(data []byte) (err error) {
 	obj.Ethertype = binary.BigEndian.Uint16(data[4:6])
 	return
@@ -208,6 +212,7 @@ func (obj ActionSetQueue) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint32(data[4:8], obj.QueueId)
 	return
 }
+
 func (obj *ActionSetQueue) UnmarshalBinary(data []byte) (err error) {
 	obj.QueueId = binary.BigEndian.Uint32(data[4:8])
 	return
@@ -224,6 +229,7 @@ func (obj ActionGroup) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint32(data[4:8], obj.GroupId)
 	return
 }
+
 func (obj *ActionGroup) UnmarshalBinary(data []byte) (err error) {
 	obj.GroupId = binary.BigEndian.Uint32(data[4:8])
 	return
@@ -240,6 +246,7 @@ func (obj ActionNwTtl) MarshalBinary() (data []byte, err error) {
 	data[4] = obj.NwTtl
 	return
 }
+
 func (obj *ActionNwTtl) UnmarshalBinary(data []byte) (err error) {
 	obj.NwTtl = data[4]
 	return
@@ -268,15 +275,17 @@ type ActionExperimenter struct {
 	Data         []byte
 }
 
-func (obj ActionExperimenter) MarshalBinary() (data []byte, err error) {
-	length := 8 + len(obj.Data)
-	prefix := make([]byte, 8)
-	binary.BigEndian.PutUint16(prefix[0:2], OFPAT_EXPERIMENTER)
-	binary.BigEndian.PutUint16(prefix[2:4], uint16(align8(length)))
-	binary.BigEndian.PutUint32(prefix[4:8], obj.Experimenter)
-	data = append(append(prefix, obj.Data...), make([]byte, align8(length)-length)...)
-	return
+func (obj ActionExperimenter) MarshalBinary() ([]byte, error) {
+	data := make([]byte, align8(8 + len(obj.Data)))
+	binary.BigEndian.PutUint16(data[0:2], OFPAT_EXPERIMENTER)
+	binary.BigEndian.PutUint16(data[2:4], uint16(len(data)))
+	binary.BigEndian.PutUint32(data[4:8], obj.Experimenter)
+	for i,d := range obj.Data {
+		data[8+i] = d
+	}
+	return data, nil
 }
+
 func (obj *ActionExperimenter) UnmarshalBinary(data []byte) (err error) {
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	obj.Experimenter = binary.BigEndian.Uint32(data[4:8])

@@ -63,9 +63,6 @@ func (obj *MeterBandDrop) UnmarshalBinary(data []byte) (err error) {
 	obj.BurstSize = binary.BigEndian.Uint32(data[8:12])
 	return
 }
-func (obj *MeterBandDrop) GetType() uint16 {
-	return OFPMBT_DROP
-}
 
 type MeterBandDscpRemark struct {
 	Rate      uint32
@@ -87,9 +84,6 @@ func (obj *MeterBandDscpRemark) UnmarshalBinary(data []byte) (err error) {
 	obj.BurstSize = binary.BigEndian.Uint32(data[8:12])
 	obj.PrecLevel = data[12]
 	return
-}
-func (obj *MeterBandDscpRemark) GetType() uint16 {
-	return OFPMBT_DSCP_REMARK
 }
 
 type MeterBandExperimenter struct {
@@ -116,7 +110,4 @@ func (obj *MeterBandExperimenter) UnmarshalBinary(data []byte) (err error) {
 	obj.Experimenter = binary.BigEndian.Uint32(data[12:16])
 	obj.Data = data[16:]
 	return
-}
-func (obj *MeterBandExperimenter) GetType() uint16 {
-	return OFPMBT_EXPERIMENTER
 }

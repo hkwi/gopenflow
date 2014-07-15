@@ -54,24 +54,22 @@ type TableFeaturePropInstructions struct {
 	InstructionIds []Instruction
 }
 
-func (obj TableFeaturePropInstructions) MarshalBinary() (data []byte, err error) {
-	var instructions []byte
+func (obj TableFeaturePropInstructions) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 4)
 	for _, inst := range obj.InstructionIds {
-		var buf []byte
-		if buf, err = inst.MarshalBinary(); err != nil {
-			return
+		if buf, err := inst.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = append(data, buf...)
 		}
-		instructions = append(instructions, buf...)
 	}
-
-	length := 4 + len(instructions)
-	prefix := make([]byte, 4)
-	binary.BigEndian.PutUint16(prefix[0:2], obj.Type)
-	binary.BigEndian.PutUint16(prefix[2:4], uint16(align8(length)))
-
-	data = append(append(prefix, instructions...), make([]byte, align8(length)-length)...)
-	return
+	length := len(data)
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
+	binary.BigEndian.PutUint16(data[2:4], uint16(length))
+	data = append(data, make([]byte, align8(length)-length)...)
+	return data, nil
 }
+
 func (obj *TableFeaturePropInstructions) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	length := int(binary.BigEndian.Uint16(data[2:4]))
@@ -89,14 +87,16 @@ type TableFeaturePropNextTables struct {
 	NextTableIds []uint8
 }
 
-func (obj TableFeaturePropNextTables) MarshalBinary() (data []byte, err error) {
-	length := 4 + len(obj.NextTableIds)
-	prefix := make([]byte, 4)
-	binary.BigEndian.PutUint16(prefix[0:2], obj.Type)
-	binary.BigEndian.PutUint16(prefix[2:4], uint16(length))
-
-	data = append(append(prefix, obj.NextTableIds...), make([]byte, align8(length)-length)...)
-	return
+func (obj TableFeaturePropNextTables) MarshalBinary() ([]byte, error) {
+	length := 4+len(obj.NextTableIds)
+	data := make([]byte, length)
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
+	binary.BigEndian.PutUint16(data[2:4], uint16(length))
+	for i,v := range obj.NextTableIds {
+		data[4+i] = v
+	}
+	data = append(data, make([]byte, align8(length)-length)...)
+	return data, nil
 }
 
 func (obj *TableFeaturePropNextTables) UnmarshalBinary(data []byte) (err error) {
@@ -111,22 +111,20 @@ type TableFeaturePropActions struct {
 	ActionIds []Action
 }
 
-func (obj TableFeaturePropActions) MarshalBinary() (data []byte, err error) {
-	var actions []byte
+func (obj TableFeaturePropActions) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 4)
 	for _, action := range obj.ActionIds {
-		var buf []byte
-		if buf, err = action.MarshalBinary(); err != nil {
-			return
+		if buf, err := action.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = append(data, buf...)
 		}
-		actions = append(actions, buf...)
 	}
-	length := 4 + len(actions)
-	prefix := make([]byte, 4)
-	binary.BigEndian.PutUint16(prefix[0:2], obj.Type)
-	binary.BigEndian.PutUint16(prefix[2:4], uint16(length))
-
-	data = append(append(prefix, actions...), make([]byte, align8(length)-length)...)
-	return
+	length := len(data)
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
+	binary.BigEndian.PutUint16(data[2:4], uint16(length))
+	data = append(data, make([]byte, align8(length)-length)...)
+	return data, nil
 }
 
 func (obj *TableFeaturePropActions) UnmarshalBinary(data []byte) (err error) {
@@ -173,16 +171,15 @@ type TableFeaturePropExperimenter struct {
 	Data         []byte
 }
 
-func (obj TableFeaturePropExperimenter) MarshalBinary() (data []byte, err error) {
-	length := 12 + len(obj.Data)
-	prefix := make([]byte, 12)
-	binary.BigEndian.PutUint16(prefix[0:2], obj.Type)
-	binary.BigEndian.PutUint16(prefix[2:4], uint16(length))
-	binary.BigEndian.PutUint32(prefix[4:8], obj.Experimenter)
-	binary.BigEndian.PutUint32(prefix[8:12], obj.ExpType)
-
-	data = append(append(prefix, obj.Data...), make([]byte, align8(length)-length)...)
-	return
+func (obj TableFeaturePropExperimenter) MarshalBinary() ([]byte, error) {
+	data := append(make([]byte, 12), obj.Data...)
+	length := len(data)
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
+	binary.BigEndian.PutUint16(data[2:4], uint16(length))
+	binary.BigEndian.PutUint32(data[4:8], obj.Experimenter)
+	binary.BigEndian.PutUint32(data[8:12], obj.ExpType)
+	data = append(data, make([]byte, align8(length)-length)...)
+	return data, nil
 }
 
 func (obj *TableFeaturePropExperimenter) UnmarshalBinary(data []byte) (err error) {

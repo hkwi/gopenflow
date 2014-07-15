@@ -35,9 +35,6 @@ type QueuePropMinRate struct {
 	Rate uint16
 }
 
-func (obj *QueuePropMinRate) GetType() uint16 {
-	return OFPQT_MIN_RATE
-}
 func (obj QueuePropMinRate) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPQT_MIN_RATE)
@@ -54,9 +51,6 @@ type QueuePropMaxRate struct {
 	Rate uint16
 }
 
-func (obj *QueuePropMaxRate) GetType() uint16 {
-	return OFPQT_MAX_RATE
-}
 func (obj QueuePropMaxRate) MarshalBinary() (data []byte, err error) {
 	data = make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPQT_MAX_RATE)
@@ -74,9 +68,6 @@ type QueuePropExperimenter struct {
 	Data         []byte
 }
 
-func (obj *QueuePropExperimenter) GetType() uint16 {
-	return OFPQT_EXPERIMENTER
-}
 func (obj QueuePropExperimenter) MarshalBinary() (data []byte, err error) {
 	prefix := make([]byte, 16)
 

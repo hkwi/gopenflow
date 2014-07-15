@@ -780,19 +780,17 @@ type QueueGetConfigReply struct {
 	Queues []PacketQueue
 }
 
-func (obj QueueGetConfigReply) MarshalBinary() (data []byte, err error) {
-	var queues []byte
+func (obj QueueGetConfigReply) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	for _, queue := range obj.Queues {
-		var buf []byte
-		if buf, err = queue.MarshalBinary(); err != nil {
-			return
+		if buf, err := queue.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = append(data, buf...)
 		}
-		queues = append(queues, buf...)
 	}
-	prefix := make([]byte, 8)
-	binary.BigEndian.PutUint32(prefix[0:4], obj.Port)
-	data = append(prefix, queues...)
-	return
+	binary.BigEndian.PutUint32(data[0:4], obj.Port)
+	return data, nil
 }
 
 func (obj *QueueGetConfigReply) UnmarshalBinary(data []byte) (err error) {
@@ -817,21 +815,19 @@ type PacketQueue struct {
 	Properties []encoding.BinaryMarshaler
 }
 
-func (obj PacketQueue) MarshalBinary() (data []byte, err error) {
-	var properties []byte
+func (obj PacketQueue) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 16)
 	for _, property := range obj.Properties {
-		var buf []byte
-		if buf, err = property.MarshalBinary(); err != nil {
-			return
+		if buf, err := property.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = append(data, buf...)
 		}
-		properties = append(properties, buf...)
 	}
-	prefix := make([]byte, 16)
-	binary.BigEndian.PutUint32(prefix[0:4], obj.QueueId)
-	binary.BigEndian.PutUint32(prefix[4:8], obj.Port)
-	binary.BigEndian.PutUint16(prefix[8:10], uint16(16+len(properties)))
-	data = append(prefix, properties...)
-	return
+	binary.BigEndian.PutUint32(data[0:4], obj.QueueId)
+	binary.BigEndian.PutUint32(data[4:8], obj.Port)
+	binary.BigEndian.PutUint16(data[8:10], uint16(len(data)))
+	return data, nil
 }
 
 func (obj *PacketQueue) UnmarshalBinary(data []byte) (err error) {
