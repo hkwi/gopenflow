@@ -88,11 +88,11 @@ type TableFeaturePropNextTables struct {
 }
 
 func (obj TableFeaturePropNextTables) MarshalBinary() ([]byte, error) {
-	length := 4+len(obj.NextTableIds)
+	length := 4 + len(obj.NextTableIds)
 	data := make([]byte, length)
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], uint16(length))
-	for i,v := range obj.NextTableIds {
+	for i, v := range obj.NextTableIds {
 		data[4+i] = v
 	}
 	data = append(data, make([]byte, align8(length)-length)...)

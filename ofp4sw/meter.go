@@ -3,6 +3,7 @@ package ofp4sw
 import (
 	"github.com/hkwi/gopenflow/ofp4"
 	"time"
+	//	"log"
 )
 
 type packetDrop struct{}
@@ -124,6 +125,9 @@ func (m *meter) process(data *frame) error {
 			}
 
 			rate := (m.rate*BASE_INTERVAL + inc) / (BASE_INTERVAL + meterInterval)
+
+			//log.Println(rate)
+
 			if m.highestBand != nil && rate > float64(m.highestBand.getRate()) {
 				switch b := m.highestBand.(type) {
 				case *bandDrop:

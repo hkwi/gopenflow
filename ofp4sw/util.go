@@ -1,8 +1,9 @@
 package ofp4sw
 
 import (
+	"bufio"
 	"encoding/binary"
-	"fmt"
+	"log"
 	"net"
 )
 
@@ -60,30 +61,41 @@ func NewConnControlChannel(con net.Conn) ControlChannel {
 	go func() {
 		for m := range port.egress {
 			if _, err := con.Write(m); err != nil {
-				fmt.Println(err)
+				log.Println(err)
 				port.ingress <- nil
 			}
 		}
 	}()
 	go func() {
+		con2 := bufio.NewReader(con)
 		head := make([]byte, 4)
 		for {
-			if num, err := con.Read(head); err != nil {
-				break
-			} else if num != 4 {
-				break
-			}
-			length := binary.BigEndian.Uint16(head[2:4])
-			body := make([]byte, length)
-			for i, c := range head {
-				body[i] = c
-			}
-			if num, err := con.Read(body[4:]); err != nil {
-				break
-			} else if num != int(length)-4 {
-				break
-			} else {
+			err := func() error {
+				for cur := 0; cur < 4; {
+					if num, err := con2.Read(head); err != nil {
+						return err
+					} else {
+						cur += num
+					}
+				}
+				length := int(binary.BigEndian.Uint16(head[2:4]))
+				body := make([]byte, length)
+				for i, c := range head {
+					body[i] = c
+				}
+				for cur := 4; cur < length; {
+					if num, err := con2.Read(body[cur:]); err != nil {
+						return err
+					} else {
+						cur += num
+					}
+				}
 				port.ingress <- body
+				return nil
+			}()
+			if err != nil {
+				log.Print(err)
+				break
 			}
 		}
 		port.ingress <- nil
@@ -92,5 +104,6 @@ func NewConnControlChannel(con net.Conn) ControlChannel {
 }
 
 func (channel connControlChannel) Close() {
+	panic("Close called")
 	channel.conn.Close()
 }

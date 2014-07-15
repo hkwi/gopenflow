@@ -56,7 +56,6 @@ func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 					ret := actionSet(b.actionSet).process(fdata, p)
 					result.outputs = append(result.outputs, ret.outputs...)
 					result.groups = append(result.groups, ret.groups...)
-					data.errors = append(data.errors, fdata.errors...)
 				}
 			case ofp4.OFPGT_SELECT:
 				weightSum := float64(0)
@@ -72,7 +71,6 @@ func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 						ret := actionSet(b.actionSet).process(fdata, p)
 						result.outputs = append(result.outputs, ret.outputs...)
 						result.groups = append(result.groups, ret.groups...)
-						data.errors = append(data.errors, fdata.errors...)
 						break
 					}
 				}
@@ -112,7 +110,6 @@ func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 						ret := actionSet(b.actionSet).process(fdata, p)
 						result.outputs = append(result.outputs, ret.outputs...)
 						result.groups = append(result.groups, ret.groups...)
-						data.errors = append(data.errors, fdata.errors...)
 						break
 					}
 				}

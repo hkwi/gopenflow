@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/gopacket/layers"
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
+	"log"
 )
 
 type action interface {
@@ -13,27 +14,24 @@ type action interface {
 
 type actionOutput ofp4.ActionOutput
 
-func (a actionOutput) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
-	var buf []byte
-	if buf, err = data.data(); err != nil {
-		return
+func (a actionOutput) process(data *frame, pipe Pipeline) (flowEntryResult, error) {
+	buf, err := data.data()
+	if err != nil {
+		log.Print(err)
+		buf = nil // inform output port as tx_error that packet was broken by actions
 	}
-	if buf != nil {
-		ret = flowEntryResult{
-			outputs: []packetOut{
-				packetOut{
-					outPort: a.Port,
-					data:    buf,
-					maxLen:  a.MaxLen,
-					tableId: data.tableId,
-					cookie:  data.cookie,
-					fields:  data.fields,
-					reason:  data.reason,
-				},
+	ret := flowEntryResult{
+		outputs: []packetOut{
+			packetOut{
+				outPort: a.Port,
+				queueId: data.queueId,
+				data:    buf,
+				maxLen:  a.MaxLen,
+				match:   data.match,
 			},
-		}
+		},
 	}
-	return
+	return ret, nil
 }
 
 type actionGeneric ofp4.ActionGeneric
@@ -294,7 +292,7 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 	if found {
 		data.layers = buf
 	} else {
-		err = errors.New("push mpls failed")
+		err = errors.New("pop mpls failed")
 	}
 	return
 }
@@ -531,8 +529,7 @@ func (obj actionSet) process(data *frame, pipe Pipeline) (result flowEntryResult
 	for _, k := range ACTION_SET_ORDER {
 		if act, ok := actions[k]; ok {
 			if aret, err := act.process(fdata, pipe); err != nil {
-				data.errors = append(data.errors, err)
-				return
+				log.Print(err)
 			} else {
 				result.groups = append(result.groups, aret.groups...)
 				result.outputs = append(result.outputs, aret.outputs...)

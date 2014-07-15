@@ -8,9 +8,18 @@ import (
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"hash/fnv"
+	"log"
 	"net"
 )
 
+type matchResult struct {
+	tableId  uint8
+	priority uint16
+	rule     *flowEntry
+}
+
+// data associated with a packet, which is
+// alive while the packet travels the pipeline
 type frame struct {
 	layers    []gopacket.Layer
 	inPort    uint32
@@ -19,11 +28,7 @@ type frame struct {
 	tunnelId  uint64
 	queueId   uint32
 	actionSet map[uint16]action
-	tableId   uint8
-	cookie    uint64
-	fields    []match
-	reason    uint8
-	errors    []error
+	match     *matchResult
 }
 
 func (f *frame) process(p Pipeline) []packetOut {
@@ -37,13 +42,10 @@ func (f *frame) processTable(tableId uint8, pipe Pipeline) []packetOut {
 	var result []packetOut
 	for _, table := range pipe.getFlowTables(tableId) {
 		if entry, priority := table.lookup(*f); entry != nil {
-			f.tableId = tableId
-			f.cookie = entry.cookie
-			f.fields = entry.fields
-			if priority == 0 && len(entry.fields) == 0 {
-				f.reason = ofp4.OFPR_NO_MATCH
-			} else {
-				f.reason = ofp4.OFPR_ACTION
+			f.match = &matchResult{
+				tableId:  tableId,
+				priority: priority,
+				rule:     entry,
 			}
 			ret := entry.process(f, pipe)
 			result = append(result, ret.outputs...)
@@ -51,6 +53,8 @@ func (f *frame) processTable(tableId uint8, pipe Pipeline) []packetOut {
 			if ret.tableId != 0 {
 				result = append(result, f.processTable(ret.tableId, pipe)...)
 			}
+		} else {
+			// really table-miss, drop
 		}
 	}
 	return result
@@ -61,7 +65,7 @@ func (f *frame) processGroups(groups []groupOut, pipe Pipeline, processed []uint
 	for _, gout := range groups {
 		for _, gid := range processed {
 			if gid == gout.groupId {
-				f.errors = append(f.errors, errors.New("group loop detected"))
+				log.Printf("group loop detected")
 				return nil
 			}
 		}
@@ -70,7 +74,6 @@ func (f *frame) processGroups(groups []groupOut, pipe Pipeline, processed []uint
 			ret := group.process(gf, pipe)
 			result = append(result, ret.outputs...)
 			result = append(result, gf.processGroups(ret.groups, pipe, append(processed, gout.groupId))...)
-			f.errors = append(f.errors, gf.errors...)
 		}
 	}
 	return result
@@ -105,13 +108,9 @@ func (f frame) data() ([]byte, error) {
 		}
 	}
 	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true}, ls...); err != nil {
-
-		panic(err)
-
 		return nil, err
 	} else {
-		r := buf.Bytes()
-		return r, nil
+		return buf.Bytes(), nil
 	}
 }
 
@@ -121,7 +120,6 @@ func (f frame) clone() *frame {
 		d = f
 		d.layers = gopacket.NewPacket(frameBytes, layers.LayerTypeEthernet, gopacket.DecodeOptions{}).Layers()
 		d.actionSet = make(map[uint16]action)
-		d.errors = nil
 		return &d
 	}
 	return nil

@@ -3,9 +3,9 @@ package ofp4sw
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"hash/fnv"
+	"log"
 	"time"
 )
 
@@ -13,6 +13,7 @@ type flowTable struct {
 	commands chan func()
 	// list by priority
 	priorities  []*flowPriority
+	activeCount uint32
 	lookupCount uint64
 	matchCount  uint64
 }
@@ -173,7 +174,7 @@ type flowEntryResult struct {
 func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	var result flowEntryResult
 	if frameData, err := data.data(); err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return result
 	} else {
 		ch := make(chan error)
@@ -188,13 +189,14 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	if rule.instMeter != 0 {
 		for _, meter := range pipe.getMeters(rule.instMeter) {
 			if err := meter.process(data); err != nil {
-				return result
+				log.Print(err)
+				return flowEntryResult{}
 			}
 		}
 	}
 	for _, act := range rule.instApply {
 		if aret, err := act.process(data, pipe); err != nil {
-			data.errors = append(data.errors, err)
+			log.Print(err)
 		} else {
 			result.groups = append(result.groups, aret.groups...)
 			result.outputs = append(result.outputs, aret.outputs...)
@@ -220,6 +222,77 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 		result.outputs = append(result.outputs, aret.outputs...)
 	}
 	return result
+}
+
+func (entry *flowEntry) importInstructions(instructions []ofp4.Instruction) error {
+	for _, binst := range instructions {
+		switch inst := binst.(type) {
+		default:
+			return ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNKNOWN_INST}
+		case *ofp4.InstructionGotoTable:
+			entry.instGoto = inst.TableId
+		case *ofp4.InstructionWriteMetadata:
+			entry.instMetadata = &metadataInstruction{inst.Metadata, inst.MetadataMask}
+		case *ofp4.InstructionActions:
+			switch inst.Type {
+			case ofp4.OFPIT_WRITE_ACTIONS:
+				var aset actionSet
+				aset.fromMessage(inst.Actions)
+				entry.instWrite = aset
+			case ofp4.OFPIT_APPLY_ACTIONS:
+				var alist actionList
+				alist.fromMessage(inst.Actions)
+				entry.instApply = alist
+			case ofp4.OFPIT_CLEAR_ACTIONS:
+				entry.instClear = true
+			}
+		case *ofp4.InstructionMeter:
+			entry.instMeter = inst.MeterId
+		case *ofp4.InstructionExperimenter:
+			return ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNSUP_INST}
+		}
+	}
+	return nil
+}
+
+func (entry *flowEntry) exportInstructions() []ofp4.Instruction {
+	var insts []ofp4.Instruction
+	if entry.instMeter != 0 {
+		inst := ofp4.InstructionMeter{entry.instMeter}
+		insts = append(insts, inst)
+	}
+	if len([]action(entry.instApply)) > 0 {
+		if actions, err := entry.instApply.toMessage(); err != nil {
+			panic(err)
+		} else {
+			inst := ofp4.InstructionActions{ofp4.OFPIT_APPLY_ACTIONS, actions}
+			insts = append(insts, inst)
+		}
+	}
+	if entry.instClear {
+		inst := ofp4.InstructionActions{ofp4.OFPIT_CLEAR_ACTIONS, nil}
+		insts = append(insts, inst)
+	}
+	if len(map[uint16]action(entry.instWrite)) > 0 {
+		if actions, err := entry.instWrite.toMessage(); err != nil {
+			panic(err)
+		} else {
+			inst := ofp4.InstructionActions{ofp4.OFPIT_WRITE_ACTIONS, actions}
+			insts = append(insts, inst)
+		}
+	}
+	if entry.instMetadata != nil {
+		inst := ofp4.InstructionWriteMetadata{
+			entry.instMetadata.metadata,
+			entry.instMetadata.mask,
+		}
+		insts = append(insts, inst)
+	}
+	if entry.instGoto != 0 {
+		inst := ofp4.InstructionGotoTable{entry.instGoto}
+		insts = append(insts, inst)
+	}
+	return insts
 }
 
 type metadataInstruction struct {
@@ -367,7 +440,7 @@ func (ms *matchList) UnmarshalBinary(s []byte) error {
 			ret = append(ret, m)
 		} else {
 			// silently ignore
-			fmt.Print("oxm_class", s[cur:cur+2])
+			log.Print("oxm_class", s[cur:cur+2])
 		}
 	}
 	*ms = matchList(ret)
@@ -442,6 +515,9 @@ func (t flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {
 		}
 		for i := 0; i < waits; i++ {
 			stats = append(stats, <-ch2...)
+		}
+		if req.opUnregister {
+			t.activeCount -= uint32(len(stats))
 		}
 		ch <- stats
 		close(ch)
@@ -521,9 +597,6 @@ func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
 		}
 		if req.opUnregister {
 			p.rebuildIndex(miss)
-			for _, hit := range hits {
-				hit.entry.commands <- nil
-			}
 		}
 		ch <- hits
 		close(ch)
@@ -546,32 +619,8 @@ func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
 		idleTimeout: req.IdleTimeout,
 		hardTimeout: req.HardTimeout,
 	}
-	for _, binst := range req.Instructions {
-		switch inst := binst.(type) {
-		default:
-			return nil, ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNKNOWN_INST}
-		case *ofp4.InstructionGotoTable:
-			entry.instGoto = inst.TableId
-		case *ofp4.InstructionWriteMetadata:
-			entry.instMetadata = &metadataInstruction{inst.Metadata, inst.MetadataMask}
-		case *ofp4.InstructionActions:
-			switch inst.Type {
-			case ofp4.OFPIT_WRITE_ACTIONS:
-				var aset actionSet
-				aset.fromMessage(inst.Actions)
-				entry.instWrite = aset
-			case ofp4.OFPIT_APPLY_ACTIONS:
-				var alist actionList
-				alist.fromMessage(inst.Actions)
-				entry.instApply = alist
-			case ofp4.OFPIT_CLEAR_ACTIONS:
-				entry.instClear = true
-			}
-		case *ofp4.InstructionMeter:
-			entry.instMeter = inst.MeterId
-		case *ofp4.InstructionExperimenter:
-			return nil, ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNSUP_INST}
-		}
+	if err := entry.importInstructions(req.Instructions); err != nil {
+		return nil, err
 	}
 	go func() {
 		for cmd := range entry.commands {
@@ -643,7 +692,6 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 										}
 									}
 									if overlaps && (req.Flags&ofp4.OFPFF_CHECK_OVERLAP) != uint16(0) {
-										flow.commands <- nil
 										return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
 									}
 								}
@@ -660,7 +708,11 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 				}()
 				close(ch2)
 			}
-			return <-ch2
+			tableRes := <-ch2
+			if tableRes == nil {
+				table.activeCount++
+			}
+			return tableRes
 		}()
 		close(ch)
 	}

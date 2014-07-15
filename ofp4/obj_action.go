@@ -276,11 +276,11 @@ type ActionExperimenter struct {
 }
 
 func (obj ActionExperimenter) MarshalBinary() ([]byte, error) {
-	data := make([]byte, align8(8 + len(obj.Data)))
+	data := make([]byte, align8(8+len(obj.Data)))
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_EXPERIMENTER)
 	binary.BigEndian.PutUint16(data[2:4], uint16(len(data)))
 	binary.BigEndian.PutUint32(data[4:8], obj.Experimenter)
-	for i,d := range obj.Data {
+	for i, d := range obj.Data {
 		data[8+i] = d
 	}
 	return data, nil

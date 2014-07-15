@@ -89,7 +89,7 @@ func NewPcapPort(name string) (*PcapPort, error) {
 		return nil, err
 	}
 	fsource := make(chan []byte)
-	fout := make(chan []byte, 8)
+	fout := make(chan []byte)
 	port := &PcapPort{
 		name:   name,
 		handle: handle,
