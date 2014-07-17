@@ -504,7 +504,7 @@ func (a actionSet) toMessage() (actions []ofp4.Action, err error) {
 	return
 }
 
-var ACTION_SET_ORDER = [...]uint16{
+var actionSetOrder = [...]uint16{
 	ofp4.OFPAT_COPY_TTL_IN,
 	ofp4.OFPAT_POP_VLAN,
 	ofp4.OFPAT_POP_MPLS,
@@ -526,7 +526,7 @@ var ACTION_SET_ORDER = [...]uint16{
 func (obj actionSet) process(data *frame, pipe Pipeline) (result flowEntryResult) {
 	actions := map[uint16]action(obj)
 	fdata := data.clone()
-	for _, k := range ACTION_SET_ORDER {
+	for _, k := range actionSetOrder {
 		if act, ok := actions[k]; ok {
 			if aret, err := act.process(fdata, pipe); err != nil {
 				log.Print(err)

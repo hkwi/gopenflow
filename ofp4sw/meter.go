@@ -12,7 +12,7 @@ func (_ packetDrop) Error() string {
 	return "drop packet"
 }
 
-const BASE_INTERVAL = 2.0
+const baseInterval = 2.0
 
 type meter struct {
 	flagPkts    bool
@@ -124,7 +124,7 @@ func (m *meter) process(data *frame) error {
 				}
 			}
 
-			rate := (m.rate*BASE_INTERVAL + inc) / (BASE_INTERVAL + meterInterval)
+			rate := (m.rate*baseInterval + inc) / (baseInterval + meterInterval)
 
 			//log.Println(rate)
 
