@@ -26,8 +26,8 @@ type PcapPort struct {
 
 func (p PcapPort) GetPort() ofp4.Port {
 	var info ofp4.Port
-	// TODO: ioctl system call with ETHTOOL_GMODULEINFO/ETHTOOL_GMODULEEEPROM
-	// TODO: netlink IFF_UP
+	info.Name = p.name
+	getPortDetail(&info)
 	if info.Config&ofp4.OFPPC_PORT_DOWN == 0 && info.State&ofp4.OFPPS_LINK_DOWN == 0 {
 		info.State |= ofp4.OFPPS_LIVE
 	}
