@@ -59,11 +59,7 @@ func NewTransaction() transaction {
 	}
 	go func() {
 		for cmd := range tr.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
+			cmd()
 		}
 	}()
 	return tr
@@ -79,48 +75,34 @@ func newController() *controller {
 	}
 	go func() {
 		for cmd := range port.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
+			cmd()
 		}
 	}()
 	go func() {
 		for pout := range port.egress {
 			// XXX: need to implement queue here
+			if err := sendCommand(port.commands, func() {
+				for i := 0; i < 32; i++ {
+					buffer_id := uint32(rand.Int31())
+					if _, ok := port.buffer[buffer_id]; !ok {
+						port.buffer[buffer_id] = &pout
 
-			var buffer_id uint32
-
-			ch := make(chan error)
-			port.commands <- func() {
-				ch <- func() error {
-					for i := 0; i < 32; i++ {
-						buffer_id = uint32(rand.Int31())
-						if _, ok := port.buffer[buffer_id]; !ok {
-							port.buffer[buffer_id] = &pout
-							return nil
+						for _, cluster := range port.clusters {
+							switch cluster.mode {
+							default:
+								channel := cluster.main
+								pout := pout
+								go channel.Transaction().packetIn(buffer_id, pout, channel)
+							case mode_slave:
+								// do not packet_in
+							}
 						}
-					}
-					return errors.New("No buffer_id room")
-				}()
-				close(ch)
-			}
-			if err := <-ch; err != nil {
-				panic(err)
-			} else {
-				port.commands <- func() {
-					for _, cluster := range port.clusters {
-						switch cluster.mode {
-						default:
-							channel := cluster.main
-							pout := pout
-							go channel.Transaction().packetIn(buffer_id, pout, channel)
-						case mode_slave:
-							// do not packet_in
-						}
+						return
 					}
 				}
+				return
+			}); err != nil {
+				log.Println(err)
 			}
 		}
 	}()
@@ -131,7 +113,7 @@ func (c controller) Live() bool               { return true }
 
 func (c controller) addControlChannel(con ControlChannel, pipe Pipeline) error {
 	ch := make(chan ControlChannel)
-	c.commands <- func() {
+	if err := sendCommand(c.commands, func() {
 		ch <- func() ControlChannel {
 			var index uint32
 			for i := 0; i < 4; i++ {
@@ -143,7 +125,8 @@ func (c controller) addControlChannel(con ControlChannel, pipe Pipeline) error {
 			}
 			return nil
 		}()
-		close(ch)
+	}); err != nil {
+		ch <- nil
 	}
 	if con := <-ch; con == nil {
 		return errors.New("control channel registeration failed")
@@ -205,7 +188,7 @@ func (x *transaction) handleConnection(pipe Pipeline, con ControlChannel) {
 							layers:    gopacket.NewPacket(pout.data, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
 							phyInPort: pipe.getPortPhysicalPort(pout.inPort),
 						}
-						tableOut := make(chan []packetOut)
+						tableOut := make(chan []packetOut, 1)
 						serialOuts <- tableOut
 						tableOut <- data.process(pipe)
 					}()
@@ -231,10 +214,10 @@ func (x *transaction) handleConnection(pipe Pipeline, con ControlChannel) {
 			break
 		}
 
-		xcntNotify := make(chan bool)
+		xcntNotify := make(chan bool, 1)
 		xctnConcurrency <- xcntNotify
 
-		x.commands <- func() {
+		if err := sendCommand(x.commands, func() {
 			var multi []ofp4.MultipartRequest
 			xidSelf := &xid{
 				oftype: ofm.Type,
@@ -289,12 +272,12 @@ func (x *transaction) handleConnection(pipe Pipeline, con ControlChannel) {
 
 			var serialOut chan []packetOut
 			if ofm.Type == ofp4.OFPT_PACKET_OUT {
-				serialOut = make(chan []packetOut)
+				serialOut = make(chan []packetOut, 1)
 				serialOuts <- serialOut
 			} else if ofm.Type == ofp4.OFPT_FLOW_MOD {
 				req := ofm.Body.(*ofp4.FlowMod)
 				if req.BufferId != ofp4.OFP_NO_BUFFER {
-					serialOut = make(chan []packetOut)
+					serialOut = make(chan []packetOut, 1)
 					serialOuts <- serialOut
 				}
 			}
@@ -305,38 +288,45 @@ func (x *transaction) handleConnection(pipe Pipeline, con ControlChannel) {
 					_ = <-ch
 				}
 				for _, msg := range response {
-					log.Println("res", msg)
+					//log.Println("res", msg)
 					con.Egress() <- msg
 				}
-				x.commands <- func() {
+				if err := sendCommand(x.commands, func() {
 					for k, v := range x.xids {
 						if v == xidSelf {
 							delete(x.xids, k)
 						}
 					}
+				}); err != nil {
+					log.Println("transaction communication error")
 				}
 				for _, ch2 := range xidSelf.release {
 					ch2 <- true
 				}
 			}()
+		}); err != nil {
+			xcntNotify <- false
+			break
 		}
 	}
 	con.Close()
 
 	ctrl := pipe.getController()
-	ctrl.commands <- func() {
+	if err := sendCommand(ctrl.commands, func() {
 		for k, v := range ctrl.clusters {
 			if v.main == con {
 				delete(ctrl.clusters, k)
 			}
 		}
+	}); err != nil {
+		log.Println("Control communication error")
 	}
 }
 
 func (x transaction) newXid() (uint32, error) {
 	var xidKey uint32
 	ch := make(chan error)
-	x.commands <- func() {
+	if err := sendCommand(x.commands, func() {
 		ch <- func() error {
 			for i := 0; i < 8; i++ {
 				xidKey = uint32(rand.Int31())
@@ -346,7 +336,8 @@ func (x transaction) newXid() (uint32, error) {
 			}
 			return errors.New("No room for packet_in xid")
 		}()
-		close(ch)
+	}); err != nil {
+		ch <- errors.New("transaction communication error")
 	}
 	if err := <-ch; err != nil {
 		return 0, err
@@ -485,7 +476,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 			eth = req.Data
 		} else {
 			ch := make(chan []byte)
-			ctrl.commands <- func() {
+			if err := sendCommand(ctrl.commands, func() {
 				ch <- func() []byte {
 					if original, ok := ctrl.buffer[req.BufferId]; ok {
 						delete(ctrl.buffer, req.BufferId)
@@ -493,7 +484,8 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					}
 					return nil
 				}()
-				close(ch)
+			}); err != nil {
+				ch <- nil
 			}
 			eth = <-ch
 		}
@@ -503,7 +495,6 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 				inPort:    req.InPort,
 				phyInPort: pipe.getPortPhysicalPort(req.InPort),
 			}
-
 			var actionResult flowEntryResult
 			var actions actionList
 			actions.fromMessage(req.Actions)
@@ -525,14 +516,55 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 		switch req.Command {
 		case ofp4.OFPFC_ADD:
 			if err := pipe.addFlowEntry(*req); err != nil {
-				log.Print(err)
-			} else {
-				if req.BufferId != ofp4.OFP_NO_BUFFER {
-					// XXX: do pipeline processing
+				if e, ok := err.(*ofp4.Error); ok {
+					respMessages = append(respMessages, createError(ofm,
+						e.Type, e.Code))
+				} else {
+					log.Print(err)
 				}
 			}
 		case ofp4.OFPFC_MODIFY, ofp4.OFPFC_MODIFY_STRICT:
-			// XXX:
+			var reqMatch matchList
+			if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
+				log.Print(err)
+			} else if req.TableId > ofp4.OFPTT_MAX {
+				respMessages = append(respMessages, createError(ofm,
+					ofp4.OFPET_FLOW_MOD_FAILED, ofp4.OFPFMFC_BAD_TABLE_ID))
+			} else {
+				filter := flowFilter{
+					cookie:     req.Cookie,
+					cookieMask: req.CookieMask,
+					tableId:    req.TableId,
+					outPort:    ofp4.OFPP_ANY,
+					outGroup:   ofp4.OFPG_ANY,
+					match:      []match(reqMatch),
+				}
+				if req.Command == ofp4.OFPFC_MODIFY_STRICT {
+					filter.priority = req.Priority
+					filter.opStrict = true
+				}
+				for _, stat := range pipe.filterFlows(filter) {
+					entry := stat.entry
+					ch := make(chan error)
+					if err := sendCommand(entry.commands, func() {
+						if req.Flags&ofp4.OFPFF_RESET_COUNTS != 0 {
+							entry.packetCount = 0
+							entry.byteCount = 0
+						}
+						ch <- entry.importInstructions(req.Instructions)
+					}); err != nil {
+						ch <- errors.New("flow rule entry communication error")
+					}
+					if err := <-ch; err != nil {
+						if e, ok := err.(*ofp4.Error); ok {
+							respMessages = append(respMessages, createError(ofm,
+								e.Type, e.Code))
+						} else {
+							log.Print(err)
+						}
+					}
+				}
+			}
 		case ofp4.OFPFC_DELETE, ofp4.OFPFC_DELETE_STRICT:
 			var reqMatch matchList
 			if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
@@ -551,13 +583,18 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					filter.priority = req.Priority
 					filter.opStrict = true
 				}
-				pipe.filterFlows(filter)
+				for _, stat := range pipe.filterFlows(filter) {
+					entry := stat.entry
+					if entry.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
+						// XXX:
+					}
+				}
 			}
 		}
 		if req.BufferId != ofp4.OFP_NO_BUFFER {
 			ch := make(chan *packetOut)
 			ctrl := pipe.getController()
-			ctrl.commands <- func() {
+			if err := sendCommand(ctrl.commands, func() {
 				ch <- func() *packetOut {
 					if original, ok := ctrl.buffer[req.BufferId]; ok {
 						delete(ctrl.buffer, req.BufferId)
@@ -565,7 +602,8 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					}
 					return nil
 				}()
-				close(ch)
+			}); err != nil {
+				ch <- nil
 			}
 			pout := <-ch
 			if pout != nil {
@@ -595,10 +633,36 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 				}
 			}
 		case ofp4.OFPGC_MODIFY:
-			// XXX:
+			ch := make(chan error)
+			if err := sendCommand(pipe.commands, func() {
+				ch <- func() error {
+					if group, exists := pipe.groups[req.GroupId]; exists {
+						buckets := make([]bucket, len(req.Buckets))
+						for i, _ := range buckets {
+							buckets[i].fromMessage(req.Buckets[i])
+						}
+						group.groupType = req.Type
+						group.buckets = buckets
+					} else {
+						return &ofp4.Error{ofp4.OFPET_GROUP_MOD_FAILED,
+							ofp4.OFPGMFC_UNKNOWN_GROUP, nil}
+					}
+					return nil
+				}()
+			}); err != nil {
+				ch <- errors.New("pipeline communication error")
+			}
+			if err := <-ch; err != nil {
+				if e, ok := err.(*ofp4.Error); ok {
+					respMessages = append(respMessages, createError(ofm,
+						e.Type, e.Code))
+				} else {
+					log.Print(err)
+				}
+			}
 		case ofp4.OFPGC_DELETE:
 			ch := make(chan error)
-			pipe.commands <- func() {
+			if err := sendCommand(pipe.commands, func() {
 				ch <- func() error {
 					if req.GroupId == ofp4.OFPG_ALL {
 						for groupId, _ := range pipe.groups {
@@ -609,6 +673,8 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					}
 					return nil
 				}()
+			}); err != nil {
+				ch <- errors.New("pipeline communication error")
 			}
 			if err := <-ch; err != nil {
 				if e, ok := err.(*ofp4.Error); ok {
@@ -619,9 +685,28 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 				}
 			}
 		}
+	case ofp4.OFPT_PORT_MOD:
+		req := ofm.Body.(*ofp4.PortMod)
+		for _, p := range pipe.getPorts(req.PortNo) {
+			switch port := p.(type) {
+			case *portHelper:
+				ofport := port.public.GetPort()
+				port.public.SetConfig(req.Config&req.Mask | ofport.Config&^req.Mask)
+				if req.Advertise != 0 {
+					// XXX:
+				}
+			default:
+				log.Print("port cast error")
+			}
+		}
+	case ofp4.OFPT_TABLE_MOD:
+		req := ofm.Body.(*ofp4.TableMod)
+		for _, t := range pipe.getTables(req.TableId) {
+			t.config = req.Config
+		}
 	case ofp4.OFPT_MULTIPART_REQUEST:
 		req := ofm.Body.(*ofp4.MultipartRequest)
-		log.Println("multipart", req)
+		//log.Println("multipart", req)
 		multiReq := append(multi, *req)
 		var multiRes []encoding.BinaryMarshaler
 
@@ -945,6 +1030,14 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 		} else {
 			respMessages = append(respMessages, msgbin)
 		}
+	case ofp4.OFPT_QUEUE_GET_CONFIG_REQUEST:
+
+	case ofp4.OFPT_ROLE_REQUEST:
+
+	case ofp4.OFPT_GET_ASYNC_REQUEST:
+
+	case ofp4.OFPT_SET_ASYNC:
+
 	case ofp4.OFPT_METER_MOD:
 		req := ofm.Body.(*ofp4.MeterMod)
 		switch req.Command {
@@ -955,7 +1048,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 			} else {
 				meter := newMeter(*req)
 				ch := make(chan error)
-				pipe.commands <- func() {
+				if err := sendCommand(pipe.commands, func() {
 					ch <- func() error {
 						if _, exists := pipe.meters[req.MeterId]; exists {
 							return &ofp4.Error{
@@ -967,10 +1060,11 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 						}
 						return nil
 					}()
-					close(ch)
+				}); err != nil {
+					ch <- errors.New("pipeline communication error")
 				}
 				if err := <-ch; err != nil {
-					meter.commands <- nil
+					close(meter.commands)
 					if e, ok := err.(*ofp4.Error); ok {
 						respMessages = append(respMessages, createError(ofm,
 							e.Type, e.Code))
@@ -981,7 +1075,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 			}
 		case ofp4.OFPMC_DELETE:
 			ch := make(chan error)
-			pipe.commands <- func() {
+			if err := sendCommand(pipe.commands, func() {
 				ch <- func() error {
 					if req.MeterId == ofp4.OFPM_ALL {
 						for meterId, _ := range pipe.meters {
@@ -992,6 +1086,8 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					}
 					return nil
 				}()
+			}); err != nil {
+				ch <- errors.New("pipeline communication error")
 			}
 			if err := <-ch; err != nil {
 				if e, ok := err.(*ofp4.Error); ok {

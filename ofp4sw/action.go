@@ -61,51 +61,55 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 			}
 		}
 		if found > 1 {
-			for _, layer := range data.layers {
-				switch clayer := layer.(type) {
-				case *layers.MPLS:
-					clayer.TTL = ttl
-					break
-				case *layers.IPv4:
-					clayer.TTL = ttl
-					break
-				case *layers.IPv6:
-					clayer.HopLimit = ttl
-					break
+			func() {
+				for _, layer := range data.layers {
+					switch clayer := layer.(type) {
+					case *layers.MPLS:
+						clayer.TTL = ttl
+						return
+					case *layers.IPv4:
+						clayer.TTL = ttl
+						return
+					case *layers.IPv6:
+						clayer.HopLimit = ttl
+						return
+					}
 				}
-			}
+			}()
 		}
 	case ofp4.OFPAT_COPY_TTL_IN:
 		var ttl uint8
 		found := 0
-		for _, layer := range data.layers {
-			switch clayer := layer.(type) {
-			case *layers.MPLS:
-				if found > 0 {
-					clayer.TTL = ttl
-					break
-				} else {
-					ttl = clayer.TTL
-					found++
-				}
-			case *layers.IPv4:
-				if found > 0 {
-					clayer.TTL = ttl
-					break
-				} else {
-					ttl = clayer.TTL
-					found++
-				}
-			case *layers.IPv6:
-				if found > 0 {
-					clayer.HopLimit = ttl
-					break
-				} else {
-					ttl = clayer.HopLimit
-					found++
+		func() {
+			for _, layer := range data.layers {
+				switch clayer := layer.(type) {
+				case *layers.MPLS:
+					if found > 0 {
+						clayer.TTL = ttl
+						return
+					} else {
+						ttl = clayer.TTL
+						found++
+					}
+				case *layers.IPv4:
+					if found > 0 {
+						clayer.TTL = ttl
+						return
+					} else {
+						ttl = clayer.TTL
+						found++
+					}
+				case *layers.IPv6:
+					if found > 0 {
+						clayer.HopLimit = ttl
+						return
+					} else {
+						ttl = clayer.HopLimit
+						found++
+					}
 				}
 			}
-		}
+		}()
 	case ofp4.OFPAT_DEC_MPLS_TTL:
 		for _, layer := range data.layers {
 			switch clayer := layer.(type) {
@@ -151,27 +155,53 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 			err = errors.New("pop vlan failed")
 		}
 	case ofp4.OFPAT_DEC_NW_TTL:
-		for _, layer := range data.layers {
-			switch clayer := layer.(type) {
-			case *layers.IPv4:
-				if clayer.TTL > 1 {
-					clayer.TTL--
-				} else {
-					// packet_in ?
+		func() {
+			for _, layer := range data.layers {
+				switch clayer := layer.(type) {
+				case *layers.IPv4:
+					if clayer.TTL > 1 {
+						clayer.TTL--
+					} else {
+						// packet_in ?
+					}
+					return
+				case *layers.IPv6:
+					if clayer.HopLimit > 1 {
+						clayer.HopLimit--
+					} else {
+						// packet_in ?
+					}
+					return
 				}
-				break
-			case *layers.IPv6:
-				if clayer.HopLimit > 1 {
-					clayer.HopLimit--
-				} else {
-					// packet_in ?
-				}
-				break
 			}
-		}
+		}()
 	case ofp4.OFPAT_POP_PBB:
-		err = ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
-		return
+		var buf []gopacket.Layer
+		found := false
+		for i, layer := range data.layers {
+			if found == false {
+				switch pbb := layer.(type) {
+				case *PBB:
+					found = true
+					if i < 1 {
+						panic("bare pbb")
+					} else if eth, ok := data.layers[i-1].(*layers.Ethernet); ok {
+						eth.EthernetType = pbb.Type
+						eth.SrcMAC = pbb.SrcMAC
+						eth.DstMAC = pbb.DstMAC
+					} else {
+						panic("Unsupported")
+					}
+					continue
+				}
+			}
+			buf = append(buf, layer)
+		}
+		if found {
+			data.layers = buf
+		} else {
+			err = errors.New("pop vlan failed")
+		}
 	}
 	return
 }
@@ -184,19 +214,18 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 	switch a.Type {
 	case ofp4.OFPAT_PUSH_VLAN:
 		for _, layer := range data.layers {
-			var ethertype layers.EthernetType
+			buf = append(buf, layer)
+
 			if found == false {
 				switch layer.LayerType() {
 				case layers.LayerTypeEthernet:
 					eth := layer.(*layers.Ethernet)
-					ethertype = eth.EthernetType
+					ethertype := eth.EthernetType
 					eth.EthernetType = layers.EthernetType(a.Ethertype)
+
+					buf = append(buf, &layers.Dot1Q{Type: ethertype})
 					found = true
 				}
-			}
-			buf = append(buf, layer)
-			if found {
-				buf = append(buf, &layers.Dot1Q{Type: ethertype})
 			}
 		}
 	case ofp4.OFPAT_PUSH_MPLS:
@@ -267,6 +296,7 @@ type actionPopMpls ofp4.ActionPopMpls
 func (a actionPopMpls) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
 	var buf []gopacket.Layer
 	found := false
+	reparse := false
 	for i, layer := range data.layers {
 		if found == false {
 			if layer.LayerType() == layers.LayerTypeMPLS {
@@ -283,6 +313,13 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 					err = errors.New("unsupported")
 					return
 				}
+
+				if t, ok := layer.(*layers.MPLS); ok {
+					if t.StackBottom {
+						reparse = true
+					}
+				}
+
 				found = true
 				continue
 			}
@@ -291,6 +328,11 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 	}
 	if found {
 		data.layers = buf
+		if reparse {
+			if buf, err := data.data(); err == nil {
+				data.layers = gopacket.NewPacket(buf, layers.LayerTypeEthernet, gopacket.Default).Layers()
+			}
+		}
 	} else {
 		err = errors.New("pop mpls failed")
 	}

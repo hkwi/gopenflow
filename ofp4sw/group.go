@@ -1,6 +1,7 @@
 package ofp4sw
 
 import (
+	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
 	"math"
 )
@@ -47,7 +48,7 @@ type group struct {
 
 func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 	ch := make(chan flowEntryResult)
-	g.commands <- func() {
+	if err := sendCommand(g.commands, func() {
 		ch <- func() (result flowEntryResult) {
 			switch g.groupType {
 			case ofp4.OFPGT_ALL, ofp4.OFPGT_INDIRECT:
@@ -79,13 +80,15 @@ func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 					live := false
 					if b.watchPort != ofp4.OFPP_ANY {
 						ch := make(chan bool)
-						p.commands <- func() {
+						if err := sendCommand(p.commands, func() {
 							ch <- func() bool {
 								if p.watchPort(b.watchPort) {
 									return true
 								}
 								return false
 							}()
+						}); err != nil {
+							ch <- false
 						}
 						if <-ch {
 							live = true
@@ -93,13 +96,15 @@ func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 					}
 					if b.watchGroup != ofp4.OFPG_ANY {
 						ch := make(chan bool)
-						p.commands <- func() {
+						if err := sendCommand(p.commands, func() {
 							ch <- func() bool {
 								if p.watchGroup(b.watchGroup) {
 									return true
 								}
 								return false
 							}()
+						}); err != nil {
+							ch <- false
 						}
 						if <-ch {
 							live = true
@@ -116,7 +121,8 @@ func (g *group) process(data *frame, p Pipeline) flowEntryResult {
 			}
 			return
 		}()
-		close(ch)
+	}); err != nil {
+		ch <- flowEntryResult{}
 	}
 	return <-ch
 }
@@ -132,7 +138,7 @@ func (pipe *Pipeline) addGroup(req ofp4.GroupMod) error {
 		buckets:   buckets,
 	}
 	ch := make(chan error)
-	pipe.commands <- func() {
+	if err := sendCommand(pipe.commands, func() {
 		ch <- func() error {
 			if _, exists := pipe.groups[req.GroupId]; exists {
 				return &ofp4.Error{ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_GROUP_EXISTS, nil}
@@ -141,18 +147,15 @@ func (pipe *Pipeline) addGroup(req ofp4.GroupMod) error {
 			}
 			return nil
 		}()
-		close(ch)
+	}); err != nil {
+		ch <- errors.New("pipeline communication error")
 	}
 	if err := <-ch; err != nil {
 		return err
 	} else {
 		go func() {
 			for cmd := range grp.commands {
-				if cmd != nil {
-					cmd()
-				} else {
-					break
-				}
+				cmd()
 			}
 		}()
 	}
@@ -164,7 +167,7 @@ func (pipe *Pipeline) deleteGroupInside(groupId uint32) error {
 		for _, chainId := range pipe.groupChains(groupId, nil) {
 			if grp, exists := pipe.groups[chainId]; exists {
 				delete(pipe.groups, chainId)
-				grp.commands <- nil
+				close(grp.commands)
 			}
 			pipe.filterFlowsInside(flowFilter{
 				opUnregister: true,

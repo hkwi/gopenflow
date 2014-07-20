@@ -3,11 +3,27 @@ package ofp4sw
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"hash/fnv"
 	"log"
 	"time"
 )
+
+func sendCommand(server chan func(), client func()) error {
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// runtime error: send on closed channel
+				err = errors.New(fmt.Sprint(r))
+			}
+		}()
+		server <- client
+	}()
+	return err
+}
 
 type flowTable struct {
 	commands chan func()
@@ -16,6 +32,7 @@ type flowTable struct {
 	activeCount uint32
 	lookupCount uint64
 	matchCount  uint64
+	config      uint32
 }
 
 type flowPriority struct {
@@ -52,14 +69,12 @@ type match struct {
 }
 
 func newFlowTable() *flowTable {
-	table := &flowTable{commands: make(chan func(), 16)}
+	table := &flowTable{
+		commands: make(chan func(), 4),
+	}
 	go func() {
 		for cmd := range table.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
+			cmd()
 		}
 	}()
 	return table
@@ -67,17 +82,13 @@ func newFlowTable() *flowTable {
 
 func newFlowPriority(priority uint16) *flowPriority {
 	prio := &flowPriority{
-		commands: make(chan func(), 16),
+		commands: make(chan func(), 4),
 		flows:    make(map[uint32][]*flowEntry),
 		priority: priority,
 	}
 	go func() {
 		for cmd := range prio.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
+			cmd()
 		}
 	}()
 	return prio
@@ -90,15 +101,18 @@ type lookupResult struct {
 
 func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
 	ch := make(chan []*flowPriority)
-	table.commands <- func() {
+	if err := sendCommand(table.commands, func() {
 		table.lookupCount++
 		ch <- table.priorities
-		close(ch)
+	}); err != nil {
+		ch <- nil
 	}
 	for _, prio := range <-ch {
 		if en := prio.matchFrame(data); en != nil {
-			table.commands <- func() {
+			if err := sendCommand(table.commands, func() {
 				table.matchCount++
+			}); err != nil {
+				return nil, 0
 			}
 			return en, prio.priority
 		}
@@ -108,14 +122,14 @@ func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
 
 func (priority flowPriority) matchFrame(data frame) *flowEntry {
 	ret := make(chan *flowEntry)
-	priority.commands <- func() {
+	if err := sendCommand(priority.commands, func() {
 		ret <- func() *flowEntry {
 			hasher := fnv.New32()
 			for _, p1 := range priority.caps {
 				if buf, err := data.getValue(p1); err != nil {
 					return nil
 				} else {
-					hasher.Write(buf)
+					hasher.Write(maskBytes(buf, p1.mask))
 				}
 			}
 			if entries, ok := priority.flows[hasher.Sum32()]; ok {
@@ -134,7 +148,8 @@ func (priority flowPriority) matchFrame(data frame) *flowEntry {
 			}
 			return nil
 		}()
-		close(ret)
+	}); err != nil {
+		ret <- nil
 	}
 	return <-ret
 }
@@ -148,7 +163,6 @@ func (priority *flowPriority) rebuildIndex(flows []*flowEntry) {
 			cap = capMask(cap, flow.fields)
 		}
 	}
-
 	for k, _ := range priority.flows {
 		delete(priority.flows, k)
 	}
@@ -178,11 +192,12 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 		return result
 	} else {
 		ch := make(chan error)
-		rule.commands <- func() {
+		if err := sendCommand(rule.commands, func() {
 			rule.packetCount++
 			rule.byteCount += uint64(len(frameData))
 			ch <- nil
-			close(ch)
+		}); err != nil {
+			ch <- nil
 		}
 		_ = <-ch
 	}
@@ -470,9 +485,10 @@ type flowStats struct {
 
 func (p Pipeline) filterFlows(req flowFilter) []flowStats {
 	ch := make(chan []flowStats)
-	p.commands <- func() {
+	if err := sendCommand(p.commands, func() {
 		ch <- p.filterFlowsInside(req)
-		close(ch)
+	}); err != nil {
+		ch <- nil
 	}
 	return <-ch
 }
@@ -499,7 +515,7 @@ func (p Pipeline) filterFlowsInside(req flowFilter) []flowStats {
 
 func (t flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {
 	ch := make(chan []flowStats)
-	t.commands <- func() {
+	if err := sendCommand(t.commands, func() {
 		var stats []flowStats
 		waits := 0
 		ch2 := make(chan []flowStats)
@@ -520,14 +536,15 @@ func (t flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {
 			t.activeCount -= uint32(len(stats))
 		}
 		ch <- stats
-		close(ch)
+	}); err != nil {
+		ch <- nil
 	}
 	return <-ch
 }
 
 func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
 	ch := make(chan []flowStats)
-	p.commands <- func() {
+	if err := sendCommand(p.commands, func() {
 		var hits []flowStats
 		var miss []*flowEntry
 		for _, flows := range p.flows {
@@ -597,9 +614,13 @@ func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
 		}
 		if req.opUnregister {
 			p.rebuildIndex(miss)
+			for _, h := range hits {
+				close(h.entry.commands)
+			}
 		}
 		ch <- hits
-		close(ch)
+	}); err != nil {
+		ch <- nil
 	}
 	return <-ch
 }
@@ -612,7 +633,7 @@ func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
 		return nil, err
 	}
 	entry := &flowEntry{
-		commands:    make(chan func(), 16),
+		commands:    make(chan func(), 4),
 		fields:      []match(reqMatch),
 		cookie:      req.Cookie,
 		created:     time.Now(),
@@ -624,26 +645,22 @@ func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
 	}
 	go func() {
 		for cmd := range entry.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
+			cmd()
 		}
 	}()
 	return entry, nil
 }
 
 func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
+	if req.TableId > ofp4.OFPTT_MAX {
+		return ofp4.Error{
+			Type: ofp4.OFPET_FLOW_MOD_FAILED,
+			Code: ofp4.OFPFMFC_BAD_TABLE_ID,
+		}
+	}
 	ch := make(chan error)
-	pipe.commands <- func() {
+	if e1 := sendCommand(pipe.commands, func() {
 		ch <- func() error {
-			if req.TableId > ofp4.OFPTT_MAX {
-				return ofp4.Error{
-					Type: ofp4.OFPET_FLOW_MOD_FAILED,
-					Code: ofp4.OFPFMFC_BAD_TABLE_ID,
-				}
-			}
 			var table *flowTable
 			if trial, ok := pipe.flows[req.TableId]; ok {
 				table = trial
@@ -653,7 +670,7 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 			}
 
 			ch2 := make(chan error)
-			table.commands <- func() {
+			if e2 := sendCommand(table.commands, func() {
 				ch2 <- func() error {
 					var split int
 					var priority *flowPriority
@@ -671,7 +688,7 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 						table.priorities = append(append(table.priorities[:split], priority), table.priorities[split:]...)
 					}
 					ch3 := make(chan error)
-					priority.commands <- func() {
+					if e3 := sendCommand(priority.commands, func() {
 						ch3 <- func() error {
 							var reqMatch matchList
 							if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
@@ -703,10 +720,13 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 							priority.rebuildIndex(flows)
 							return nil
 						}()
+					}); e3 != nil {
+						ch3 <- nil
 					}
 					return <-ch3
 				}()
-				close(ch2)
+			}); e2 != nil {
+				ch2 <- nil
 			}
 			tableRes := <-ch2
 			if tableRes == nil {
@@ -714,7 +734,8 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 			}
 			return tableRes
 		}()
-		close(ch)
+	}); e1 != nil {
+		ch <- nil
 	}
 	ret := <-ch
 

@@ -129,7 +129,7 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 			go func() {
 				for eth := range port.Ingress() {
 					eth := eth
-					ch2 := make(chan []packetOut)
+					ch2 := make(chan []packetOut, 1)
 					serialOuts <- ch2
 					go func() {
 						ch2 <- func() []packetOut {

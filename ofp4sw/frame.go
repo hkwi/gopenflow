@@ -107,7 +107,7 @@ func (f frame) data() ([]byte, error) {
 			return nil, errors.New(fmt.Sprint("non serializableLayer", layer))
 		}
 	}
-	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true}, ls...); err != nil {
+	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}, ls...); err != nil {
 		return nil, err
 	} else {
 		return buf.Bytes(), nil
@@ -190,6 +190,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 			}
 		}
 	case ofp4.OFPXMT_OFB_ETH_TYPE:
+		do_break := false
 		var ret []byte
 		for _, layer := range data.layers {
 			switch t := layer.(type) {
@@ -205,6 +206,11 @@ func (data frame) getValue(m match) ([]byte, error) {
 				} else {
 					ret = buf
 				}
+			default:
+				do_break = true
+			}
+			if do_break {
+				break
 			}
 		}
 		if ret != nil {
@@ -415,7 +421,13 @@ func (data frame) getValue(m match) ([]byte, error) {
 			}
 		}
 	case ofp4.OFPXMT_OFB_PBB_ISID:
-		return nil, errors.New("Unsupported OFPXMT_OFB_PBB_ISID now")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*PBB); ok {
+				ext := make([]byte, 4)
+				binary.BigEndian.PutUint32(ext, t.ServiceIdentifier)
+				return ext[1:], nil
+			}
+		}
 	case ofp4.OFPXMT_OFB_TUNNEL_ID:
 		return toMatchBytes(data.tunnelId)
 	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
@@ -688,7 +700,12 @@ func (data *frame) setValue(m match) error {
 			}
 		}
 	case ofp4.OFPXMT_OFB_PBB_ISID:
-		return errors.New("Unsupported OFPXMT_OFB_PBB_ISID now")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*PBB); ok {
+				t.ServiceIdentifier = binary.BigEndian.Uint32(append(make([]byte, 1), m.value...))
+				return nil
+			}
+		}
 	case ofp4.OFPXMT_OFB_TUNNEL_ID:
 		data.tunnelId = binary.BigEndian.Uint64(m.value)
 		return nil
