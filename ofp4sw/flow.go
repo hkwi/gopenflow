@@ -204,7 +204,7 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	if rule.instMeter != 0 {
 		for _, meter := range pipe.getMeters(rule.instMeter) {
 			if err := meter.process(data); err != nil {
-				log.Print(err)
+				//				log.Print(err)
 				return flowEntryResult{}
 			}
 		}
@@ -374,8 +374,15 @@ func capMask(f1, f2 []match) []match {
 			if m1.field == m2.field {
 				maskFull := true
 				mask := make([]byte, len(m1.mask))
+				value := make([]byte, len(m1.mask))
 				for i, _ := range mask {
 					mask[i] = m1.mask[i] & m2.mask[i]
+					e1 := m1.value[i] & mask[i]
+					e2 := m2.value[i] & mask[i]
+					if e1 != e2 {
+						mask[i] ^= e1 ^ e2
+						value[i] = (e1 & e2) &^ (e1 ^ e2)
+					}
 					if mask[i] != 0 {
 						maskFull = false
 					}
@@ -384,6 +391,7 @@ func capMask(f1, f2 []match) []match {
 					ret = append(ret, match{
 						field: m1.field,
 						mask:  mask,
+						value: value,
 					})
 				}
 			}
@@ -685,7 +693,11 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 					}
 					if priority == nil {
 						priority = newFlowPriority(req.Priority)
-						table.priorities = append(append(table.priorities[:split], priority), table.priorities[split:]...)
+						table.priorities = append(table.priorities, nil)
+						copy(table.priorities[split+1:], table.priorities[split:])
+						table.priorities[split] = priority
+						// NOTE: inserting. below does not work.
+						// table.priorities = append(append(table.priorities[:split], priority), table.priorities[split:]...)
 					}
 					ch3 := make(chan error)
 					if e3 := sendCommand(priority.commands, func() {

@@ -161,7 +161,7 @@ func (c controller) addControlChannel(con ControlChannel, pipe Pipeline) error {
 }
 
 func (x *transaction) handleConnection(pipe Pipeline, con ControlChannel) {
-	serialOuts := make(chan chan []packetOut)
+	serialOuts := make(chan chan []packetOut, 4)
 	go func() {
 		for serialOut := range serialOuts {
 			pouts := <-serialOut
@@ -471,6 +471,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 	case ofp4.OFPT_PACKET_OUT:
 		req := ofm.Body.(*ofp4.PacketOut)
 		ctrl := pipe.getController()
+		var pouts []packetOut
 		var eth []byte
 		if req.BufferId == ofp4.OFP_NO_BUFFER {
 			eth = req.Data
@@ -506,10 +507,13 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 					actionResult.outputs = append(actionResult.outputs, aret.outputs...)
 				}
 			}
-			serialOut <- append(actionResult.outputs, data.processGroups(actionResult.groups, pipe, nil)...)
+			pouts = append(actionResult.outputs, data.processGroups(actionResult.groups, pipe, nil)...)
 		} else {
 			respMessages = append(respMessages, createError(ofm,
 				ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BUFFER_UNKNOWN))
+		}
+		if serialOut != nil {
+			serialOut <- pouts
 		}
 	case ofp4.OFPT_FLOW_MOD:
 		req := ofm.Body.(*ofp4.FlowMod)
@@ -606,6 +610,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 				ch <- nil
 			}
 			pout := <-ch
+			var pouts []packetOut
 			if pout != nil {
 				if eth := pout.data; eth != nil {
 					data := frame{
@@ -613,12 +618,13 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 						inPort:    pout.inPort,
 						phyInPort: pipe.getPortPhysicalPort(pout.inPort),
 					}
-					serialOut <- data.process(pipe)
+					pouts = data.process(pipe)
 				}
 			} else {
 				respMessages = append(respMessages, createError(ofm,
 					ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BUFFER_UNKNOWN))
 			}
+			serialOut <- pouts
 		}
 	case ofp4.OFPT_GROUP_MOD:
 		req := ofm.Body.(*ofp4.GroupMod)
