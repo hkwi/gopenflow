@@ -1,9 +1,8 @@
 package ofp4sw
 
 import (
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/pcap"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/pcap"
 	"log"
 )
 
@@ -27,6 +26,7 @@ type PcapPort struct {
 func (p PcapPort) GetPort() ofp4.Port {
 	var info ofp4.Port
 	info.Name = p.name
+	info.Config = p.GetConfig()
 	getPortDetail(&info)
 	if info.Config&ofp4.OFPPC_PORT_DOWN == 0 && info.State&ofp4.OFPPS_LINK_DOWN == 0 {
 		info.State |= ofp4.OFPPS_LIVE
@@ -48,6 +48,23 @@ func (p PcapPort) Egress() chan<- []byte {
 
 func (p *PcapPort) SetPortNo(portNo uint32) {
 	p.portNo = portNo
+}
+
+func (p PcapPort) GetConfig() uint32 {
+	var config uint32
+	if p.configDown {
+		config |= ofp4.OFPPC_PORT_DOWN
+	}
+	if p.configNoRecv {
+		config |= ofp4.OFPPC_NO_RECV
+	}
+	if p.configNoFwd {
+		config |= ofp4.OFPPC_NO_FWD
+	}
+	if p.configNoPacketIn {
+		config |= ofp4.OFPPC_NO_PACKET_IN
+	}
+	return config
 }
 
 func (p *PcapPort) SetConfig(config uint32) {
@@ -75,19 +92,24 @@ func (p *PcapPort) SetConfig(config uint32) {
 
 func (p PcapPort) GetStats() PortStats {
 	stats := p.stats
-	if stat, err := p.handle.Stats(); err != nil {
-		log.Print(err)
-	} else {
-		stats.RxDropped = uint64(stat.PacketsDropped) + uint64(stat.PacketsIfDropped)
-	}
 	return stats
 }
 
 func NewPcapPort(name string) (*PcapPort, error) {
-	handle, err := pcap.OpenLive(name, 16000, true, pcap.BlockForever)
+	handle, err := pcap.Create(name)
 	if err != nil {
 		return nil, err
 	}
+	if e:=handle.SetTimeout(10); e!=nil {
+		return nil, e
+	}
+	if e:=handle.Activate(); e!=nil {
+		return nil, e
+	}
+	if e:=handle.Setnonblock(true); e!=nil {
+		return nil, e
+	}
+	
 	fsource := make(chan []byte)
 	fout := make(chan []byte)
 	port := &PcapPort{
@@ -98,33 +120,29 @@ func NewPcapPort(name string) (*PcapPort, error) {
 	}
 	go func() {
 		fsource := (chan<- []byte)(fsource)
-		packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-		packetSource.DecodeOptions = gopacket.DecodeOptions{Lazy: true, NoCopy: true}
-		// packetSource.Packets() buffers too much
 		for {
-			if packet, err := packetSource.NextPacket(); err != nil {
+			if packet, err := handle.NextPacket(); err != nil {
 				log.Print(err)
 				break
 			} else {
-				b := packet.Data()
-				port.stats.RxBytes += uint64(len(b))
+				port.stats.RxBytes += uint64(len(packet))
 				port.stats.RxPackets++
-				fsource <- b
+				fsource <- packet
 			}
 		}
-		port.handle.Close()
+		handle.Close()
 	}()
 	go func() {
 		fout := (<-chan []byte)(fout)
 		for b := range fout {
-			if err := handle.WritePacketData(b); err != nil {
+			if err := handle.Sendpacket(b); err != nil {
 				log.Print(err)
 				break
 			}
 			port.stats.TxBytes += uint64(len(b))
 			port.stats.TxPackets++
 		}
-		port.handle.Close()
+		handle.Close()
 	}()
 	return port, nil
 }

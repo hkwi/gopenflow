@@ -55,6 +55,7 @@ type Port interface {
 	Ingress() <-chan []byte
 	Egress() chan<- []byte
 	SetPortNo(portNo uint32)
+	GetConfig() uint32
 	SetConfig(config uint32)
 }
 
@@ -140,6 +141,7 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 							f := frame{
 								inPort:    portNo,
 								phyInPort: port.GetPhysicalPort(),
+								serialized: eth,
 								layers:    gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
 							}
 							pouts := f.process(pipe)

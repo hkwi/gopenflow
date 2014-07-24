@@ -24,7 +24,8 @@ type ControlSource struct {
 
 type connControlChannel struct {
 	controlChannelCommon
-	conn net.Conn
+	conn     net.Conn
+	callback func()
 }
 
 func NewListenControlSource(nets, laddr string) (channels <-chan ControlChannel, err error) {
@@ -40,7 +41,7 @@ func NewListenControlSource(nets, laddr string) (channels <-chan ControlChannel,
 				if con, err := ln.Accept(); err != nil {
 					break
 				} else {
-					ch2 <- NewConnControlChannel(con)
+					ch2 <- NewConnControlChannel(con, nil)
 				}
 			}
 			close(ch2)
@@ -49,14 +50,15 @@ func NewListenControlSource(nets, laddr string) (channels <-chan ControlChannel,
 	return
 }
 
-func NewConnControlChannel(con net.Conn) ControlChannel {
+func NewConnControlChannel(con net.Conn, cb func()) ControlChannel {
 	port := connControlChannel{
 		controlChannelCommon: controlChannelCommon{
 			transaction: NewTransaction(),
 			ingress:     make(chan []byte),
 			egress:      make(chan []byte),
 		},
-		conn: con,
+		conn:     con,
+		callback: cb,
 	}
 	go func() {
 		for m := range port.egress {
@@ -104,6 +106,7 @@ func NewConnControlChannel(con net.Conn) ControlChannel {
 }
 
 func (channel connControlChannel) Close() {
-	panic("Close called")
 	channel.conn.Close()
+	channel.callback()
+	panic("Close called")
 }

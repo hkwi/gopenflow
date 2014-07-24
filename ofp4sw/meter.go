@@ -32,12 +32,7 @@ func (m *meter) process(data *frame) error {
 	ch := make(chan error)
 	m.commands <- func() {
 		ch <- func() error {
-			length := 0
-			if buf, err := data.data(); err != nil {
-				return err
-			} else {
-				length = len(buf)
-			}
+			length := data.getLength()
 
 			now := time.Now()
 			meterInterval := float64(now.Sub(m.meterTime)) / float64(time.Second)

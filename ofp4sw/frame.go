@@ -22,6 +22,7 @@ type matchResult struct {
 // alive while the packet travels the pipeline
 type frame struct {
 	layers    []gopacket.Layer
+	serialized    []byte // may be nil
 	inPort    uint32
 	phyInPort uint32
 	metadata  uint64
@@ -79,39 +80,51 @@ func (f *frame) processGroups(groups []groupOut, pipe Pipeline, processed []uint
 	return result
 }
 
-func (f frame) data() ([]byte, error) {
-	buf := gopacket.NewSerializeBuffer()
-	ls := make([]gopacket.SerializableLayer, len(f.layers))
+func (f *frame) getLength() int {
+	if f.serialized == nil {
+		if buf,err := f.data(); err == nil {
+			f.serialized = buf
+		}
+	}
+	return len(f.serialized)
+}
 
-	var network gopacket.NetworkLayer
-	for i, layer := range f.layers {
-		switch l := layer.(type) {
-		case *layers.IPv4:
-			if network == nil {
-				network = l
+func (f frame) data() ([]byte, error) {
+	if f.serialized == nil {
+		buf := gopacket.NewSerializeBuffer()
+		ls := make([]gopacket.SerializableLayer, len(f.layers))
+
+		var network gopacket.NetworkLayer
+		for i, layer := range f.layers {
+			switch l := layer.(type) {
+			case *layers.IPv4:
+				if network == nil {
+					network = l
+				}
+			case *layers.IPv6:
+				if network == nil {
+					network = l
+				}
+			case *layers.TCP:
+				l.SetNetworkLayerForChecksum(network)
+			case *layers.UDP:
+				l.SetNetworkLayerForChecksum(network)
+			case *layers.ICMPv6:
+				l.SetNetworkLayerForChecksum(network)
 			}
-		case *layers.IPv6:
-			if network == nil {
-				network = l
+			if t, ok := layer.(gopacket.SerializableLayer); ok {
+				ls[i] = t
+			} else {
+				return nil, errors.New(fmt.Sprint("non serializableLayer", layer))
 			}
-		case *layers.TCP:
-			l.SetNetworkLayerForChecksum(network)
-		case *layers.UDP:
-			l.SetNetworkLayerForChecksum(network)
-		case *layers.ICMPv6:
-			l.SetNetworkLayerForChecksum(network)
 		}
-		if t, ok := layer.(gopacket.SerializableLayer); ok {
-			ls[i] = t
+		if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}, ls...); err != nil {
+			return nil, err
 		} else {
-			return nil, errors.New(fmt.Sprint("non serializableLayer", layer))
+			f.serialized = buf.Bytes()
 		}
 	}
-	if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}, ls...); err != nil {
-		return nil, err
-	} else {
-		return buf.Bytes(), nil
-	}
+	return f.serialized, nil
 }
 
 func (f frame) clone() *frame {
@@ -393,11 +406,44 @@ func (data frame) getValue(m match) ([]byte, error) {
 			}
 		}
 	case ofp4.OFPXMT_OFB_IPV6_ND_TARGET:
-		return nil, errors.New("Unspported")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*layers.ICMPv6); ok {
+				typ := uint8(t.TypeCode>>8)
+				if typ == layers.ICMPv6TypeNeighborSolicitation || typ == layers.ICMPv6TypeNeighborAdvertisement {
+					return t.Payload[:16], nil
+				}
+			}
+		}
 	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
-		return nil, errors.New("Unsupported OFPXMT_OFB_IPV6_ND_SLL now")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*layers.ICMPv6); ok {
+				typ := uint8(t.TypeCode>>8)
+				if typ == layers.ICMPv6TypeNeighborSolicitation {
+					for cur:=16; cur<len(t.Payload); {
+						length := int(t.Payload[cur+1])*8
+						if t.Payload[cur]==1 { // source link-layer address (RFC 2461 4.6)
+							return t.Payload[cur+2:cur+length], nil
+						}
+						cur += length
+					}
+				}
+			}
+		}
 	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
-		return nil, errors.New("Unsupported OFPXMT_OFB_IPV6_ND_TLL now")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*layers.ICMPv6); ok {
+				typ := uint8(t.TypeCode>>8)
+				if typ == layers.ICMPv6TypeNeighborAdvertisement {
+					for cur:=16; cur<len(t.Payload); {
+						length := int(t.Payload[cur+1])*8
+						if t.Payload[cur]==2 { // target link-layer address (RFC 2461 4.6)
+							return t.Payload[cur+2:cur+length], nil
+						}
+						cur += length
+					}
+				}
+			}
+		}
 	case ofp4.OFPXMT_OFB_MPLS_LABEL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
@@ -669,11 +715,59 @@ func (data *frame) setValue(m match) error {
 			}
 		}
 	case ofp4.OFPXMT_OFB_IPV6_ND_TARGET:
-		return errors.New("Unspported")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*layers.ICMPv6); ok {
+				typ := uint8(t.TypeCode>>8)
+				if typ == layers.ICMPv6TypeNeighborSolicitation || typ == layers.ICMPv6TypeNeighborAdvertisement {
+					copy(t.Payload[:16], m.value)
+					return nil
+				}
+			}
+		}
 	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
-		return errors.New("Unsupported OFPXMT_OFB_IPV6_ND_SLL now")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*layers.ICMPv6); ok {
+				typ := uint8(t.TypeCode>>8)
+				if typ == layers.ICMPv6TypeNeighborSolicitation {
+					for cur:=16; cur<len(t.Payload); {
+						length := int(t.Payload[cur+1])*8
+						if t.Payload[cur]==1 { // source link-layer address (RFC 2461 4.6)
+							copy(t.Payload[cur+2:], m.value)
+							return nil
+						}
+						cur += length
+					}
+					buf := make([]byte, 8)
+					buf[0] = 2
+					buf[1] = 1
+					copy(buf[2:], m.value)
+					t.Payload = append(t.Payload, buf...)
+					return nil
+				}
+			}
+		}
 	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
-		return errors.New("Unsupported OFPXMT_OFB_IPV6_ND_TLL now")
+		for _, layer := range data.layers {
+			if t, ok := layer.(*layers.ICMPv6); ok {
+				typ := uint8(t.TypeCode>>8)
+				if typ == layers.ICMPv6TypeNeighborAdvertisement {
+					for cur:=16; cur<len(t.Payload); {
+						length := int(t.Payload[cur+1])*8
+						if t.Payload[cur]==2 { // target link-layer address (RFC 2461 4.6)
+							copy(t.Payload[cur+2:], m.value)
+							return nil
+						}
+						cur += length
+					}
+					buf := make([]byte, 8)
+					buf[0] = 2
+					buf[1] = 1
+					copy(buf[2:], m.value)
+					t.Payload = append(t.Payload, buf...)
+					return nil
+				}
+			}
+		}
 	case ofp4.OFPXMT_OFB_MPLS_LABEL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {

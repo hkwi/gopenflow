@@ -37,6 +37,8 @@ func (a actionOutput) process(data *frame, pipe Pipeline) (flowEntryResult, erro
 type actionGeneric ofp4.ActionGeneric
 
 func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
+	data.serialized = nil
+	
 	switch a.Type {
 	default:
 		err = ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
@@ -209,6 +211,8 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 type actionPush ofp4.ActionPush
 
 func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
+	data.serialized = nil
+	
 	var buf []gopacket.Layer
 	found := false
 	switch a.Type {
@@ -277,8 +281,23 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 			buf = append(buf, layer)
 		}
 	case ofp4.OFPAT_PUSH_PBB:
-		err = ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
-		return
+		for _, layer := range data.layers {
+			buf = append(buf, layer)
+			if found == false {
+				switch layer.LayerType() {
+				case layers.LayerTypeEthernet:
+					eth := layer.(*layers.Ethernet)
+					ethertype := eth.EthernetType
+					eth.EthernetType = layers.EthernetType(a.Ethertype)
+					buf = append(buf, &PBB{
+						DstMAC: eth.DstMAC,
+						SrcMAC: eth.SrcMAC,
+						Type: ethertype,
+					})
+					found = true
+				}
+			}
+		}
 	default:
 		err = ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
 		return
@@ -294,6 +313,8 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 type actionPopMpls ofp4.ActionPopMpls
 
 func (a actionPopMpls) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
+	data.serialized = nil
+
 	var buf []gopacket.Layer
 	found := false
 	reparse := false
@@ -349,6 +370,8 @@ func (a actionSetQueue) process(data *frame, pipe Pipeline) (ret flowEntryResult
 type actionMplsTtl ofp4.ActionMplsTtl
 
 func (a actionMplsTtl) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
+	data.serialized = nil
+
 	for _, layer := range data.layers {
 		if layer.LayerType() == layers.LayerTypeMPLS {
 			layer.(*layers.MPLS).TTL = a.MplsTtl
@@ -376,6 +399,8 @@ func (a actionGroup) process(data *frame, pipe Pipeline) (ret flowEntryResult, e
 type actionNwTtl ofp4.ActionNwTtl
 
 func (a actionNwTtl) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
+	data.serialized = nil
+
 	for _, layer := range data.layers {
 		switch t := layer.(type) {
 		case *layers.IPv4:
@@ -393,6 +418,8 @@ func (a actionNwTtl) process(data *frame, pipe Pipeline) (ret flowEntryResult, e
 type actionSetField ofp4.ActionSetField
 
 func (a actionSetField) process(data *frame, pipe Pipeline) (flowEntryResult, error) {
+	data.serialized = nil
+
 	var ret flowEntryResult
 	var ms matchList
 	if err := ms.UnmarshalBinary(a.Field); err != nil {

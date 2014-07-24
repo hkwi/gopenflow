@@ -117,10 +117,56 @@ import (
 	"unsafe"
 )
 
-func getPortDetail(stat *ofp4.Port) error {
-	fd := C.socket(C.AF_INET, C.SOCK_DGRAM, 0)
-	defer C.close(fd)
+var supportedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
+	C.SUPPORTED_10baseT_Half:       ofp4.OFPPF_10MB_HD,
+	C.SUPPORTED_10baseT_Full:       ofp4.OFPPF_10MB_FD,
+	C.SUPPORTED_100baseT_Half:      ofp4.OFPPF_100MB_HD,
+	C.SUPPORTED_100baseT_Full:      ofp4.OFPPF_100MB_FD,
+	C.SUPPORTED_1000baseT_Half:     ofp4.OFPPF_1GB_HD,
+	C.SUPPORTED_1000baseT_Full:     ofp4.OFPPF_1GB_FD,
+	C.SUPPORTED_Autoneg:            ofp4.OFPPF_AUTONEG,
+	C.SUPPORTED_TP:                 ofp4.OFPPF_COPPER,
+	C.SUPPORTED_10000baseT_Full:    ofp4.OFPPF_10GB_FD,
+	C.SUPPORTED_Pause:              ofp4.OFPPF_PAUSE,
+	C.SUPPORTED_Asym_Pause:         ofp4.OFPPF_PAUSE_ASYM,
+	C.SUPPORTED_2500baseX_Full:     ofp4.OFPPF_OTHER,
+	C.SUPPORTED_1000baseKX_Full:    ofp4.OFPPF_1GB_FD,
+	C.SUPPORTED_10000baseKX4_Full:  ofp4.OFPPF_10MB_FD,
+	C.SUPPORTED_10000baseKR_Full:   ofp4.OFPPF_10GB_FD,
+	C.SUPPORTED_10000baseR_FEC:     ofp4.OFPPF_10GB_FD,
+	C.SUPPORTED_20000baseMLD2_Full: ofp4.OFPPF_OTHER,
+	C.SUPPORTED_20000baseKR2_Full:  ofp4.OFPPF_OTHER,
+	C.SUPPORTED_40000baseKR4_Full:  ofp4.OFPPF_40GB_FD,
+	C.SUPPORTED_40000baseCR4_Full:  ofp4.OFPPF_40GB_FD,
+	C.SUPPORTED_40000baseSR4_Full:  ofp4.OFPPF_40GB_FD,
+	C.SUPPORTED_40000baseLR4_Full:  ofp4.OFPPF_40GB_FD,
+}
+var advertisedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
+	C.ADVERTISED_10baseT_Half:       ofp4.OFPPF_10MB_HD,
+	C.ADVERTISED_10baseT_Full:       ofp4.OFPPF_10MB_FD,
+	C.ADVERTISED_100baseT_Half:      ofp4.OFPPF_100MB_HD,
+	C.ADVERTISED_100baseT_Full:      ofp4.OFPPF_100MB_FD,
+	C.ADVERTISED_1000baseT_Half:     ofp4.OFPPF_1GB_HD,
+	C.ADVERTISED_1000baseT_Full:     ofp4.OFPPF_1GB_FD,
+	C.ADVERTISED_Autoneg:            ofp4.OFPPF_AUTONEG,
+	C.ADVERTISED_TP:                 ofp4.OFPPF_COPPER,
+	C.ADVERTISED_10000baseT_Full:    ofp4.OFPPF_10GB_FD,
+	C.ADVERTISED_Pause:              ofp4.OFPPF_PAUSE,
+	C.ADVERTISED_Asym_Pause:         ofp4.OFPPF_PAUSE_ASYM,
+	C.ADVERTISED_2500baseX_Full:     ofp4.OFPPF_OTHER,
+	C.ADVERTISED_1000baseKX_Full:    ofp4.OFPPF_1GB_FD,
+	C.ADVERTISED_10000baseKX4_Full:  ofp4.OFPPF_10MB_FD,
+	C.ADVERTISED_10000baseKR_Full:   ofp4.OFPPF_10GB_FD,
+	C.ADVERTISED_10000baseR_FEC:     ofp4.OFPPF_10GB_FD,
+	C.ADVERTISED_20000baseMLD2_Full: ofp4.OFPPF_OTHER,
+	C.ADVERTISED_20000baseKR2_Full:  ofp4.OFPPF_OTHER,
+	C.ADVERTISED_40000baseKR4_Full:  ofp4.OFPPF_40GB_FD,
+	C.ADVERTISED_40000baseCR4_Full:  ofp4.OFPPF_40GB_FD,
+	C.ADVERTISED_40000baseSR4_Full:  ofp4.OFPPF_40GB_FD,
+	C.ADVERTISED_40000baseLR4_Full:  ofp4.OFPPF_40GB_FD,
+}
 
+func getPortDetail(stat *ofp4.Port) error {
 	cname := C.CString(stat.Name)
 	defer C.free(unsafe.Pointer(cname))
 
@@ -142,65 +188,20 @@ func getPortDetail(stat *ofp4.Port) error {
 		}
 	}
 
+	fd := C.socket(C.AF_INET, C.SOCK_DGRAM, 0)
+	defer C.close(fd)
+
 	ecmd := C.struct_ethtool_cmd{cmd: C.ETHTOOL_GSET}
 	if r, err := C.ethtool_cmd_call(fd, cname, &ecmd); err != nil {
 		return err
 	} else if r != 0 {
 		return errors.New("ethtool_cmd_call error")
 	} else {
-		supportedConvert := map[C.__u32]uint32{
-			C.SUPPORTED_10baseT_Half:       ofp4.OFPPF_10MB_HD,
-			C.SUPPORTED_10baseT_Full:       ofp4.OFPPF_10MB_FD,
-			C.SUPPORTED_100baseT_Half:      ofp4.OFPPF_100MB_HD,
-			C.SUPPORTED_100baseT_Full:      ofp4.OFPPF_100MB_FD,
-			C.SUPPORTED_1000baseT_Half:     ofp4.OFPPF_1GB_HD,
-			C.SUPPORTED_1000baseT_Full:     ofp4.OFPPF_1GB_FD,
-			C.SUPPORTED_Autoneg:            ofp4.OFPPF_AUTONEG,
-			C.SUPPORTED_TP:                 ofp4.OFPPF_COPPER,
-			C.SUPPORTED_10000baseT_Full:    ofp4.OFPPF_10GB_FD,
-			C.SUPPORTED_Pause:              ofp4.OFPPF_PAUSE,
-			C.SUPPORTED_Asym_Pause:         ofp4.OFPPF_PAUSE_ASYM,
-			C.SUPPORTED_2500baseX_Full:     ofp4.OFPPF_OTHER,
-			C.SUPPORTED_1000baseKX_Full:    ofp4.OFPPF_1GB_FD,
-			C.SUPPORTED_10000baseKX4_Full:  ofp4.OFPPF_10MB_FD,
-			C.SUPPORTED_10000baseKR_Full:   ofp4.OFPPF_10GB_FD,
-			C.SUPPORTED_10000baseR_FEC:     ofp4.OFPPF_10GB_FD,
-			C.SUPPORTED_20000baseMLD2_Full: ofp4.OFPPF_OTHER,
-			C.SUPPORTED_20000baseKR2_Full:  ofp4.OFPPF_OTHER,
-			C.SUPPORTED_40000baseKR4_Full:  ofp4.OFPPF_40GB_FD,
-			C.SUPPORTED_40000baseCR4_Full:  ofp4.OFPPF_40GB_FD,
-			C.SUPPORTED_40000baseSR4_Full:  ofp4.OFPPF_40GB_FD,
-			C.SUPPORTED_40000baseLR4_Full:  ofp4.OFPPF_40GB_FD,
-		}
 		stat.Supported = 0
 		for k, v := range supportedConvert {
 			if ecmd.supported&k != 0 {
 				stat.Supported |= v
 			}
-		}
-		advertisedConvert := map[C.__u32]uint32{
-			C.ADVERTISED_10baseT_Half:       ofp4.OFPPF_10MB_HD,
-			C.ADVERTISED_10baseT_Full:       ofp4.OFPPF_10MB_FD,
-			C.ADVERTISED_100baseT_Half:      ofp4.OFPPF_100MB_HD,
-			C.ADVERTISED_100baseT_Full:      ofp4.OFPPF_100MB_FD,
-			C.ADVERTISED_1000baseT_Half:     ofp4.OFPPF_1GB_HD,
-			C.ADVERTISED_1000baseT_Full:     ofp4.OFPPF_1GB_FD,
-			C.ADVERTISED_Autoneg:            ofp4.OFPPF_AUTONEG,
-			C.ADVERTISED_TP:                 ofp4.OFPPF_COPPER,
-			C.ADVERTISED_10000baseT_Full:    ofp4.OFPPF_10GB_FD,
-			C.ADVERTISED_Pause:              ofp4.OFPPF_PAUSE,
-			C.ADVERTISED_Asym_Pause:         ofp4.OFPPF_PAUSE_ASYM,
-			C.ADVERTISED_2500baseX_Full:     ofp4.OFPPF_OTHER,
-			C.ADVERTISED_1000baseKX_Full:    ofp4.OFPPF_1GB_FD,
-			C.ADVERTISED_10000baseKX4_Full:  ofp4.OFPPF_10MB_FD,
-			C.ADVERTISED_10000baseKR_Full:   ofp4.OFPPF_10GB_FD,
-			C.ADVERTISED_10000baseR_FEC:     ofp4.OFPPF_10GB_FD,
-			C.ADVERTISED_20000baseMLD2_Full: ofp4.OFPPF_OTHER,
-			C.ADVERTISED_20000baseKR2_Full:  ofp4.OFPPF_OTHER,
-			C.ADVERTISED_40000baseKR4_Full:  ofp4.OFPPF_40GB_FD,
-			C.ADVERTISED_40000baseCR4_Full:  ofp4.OFPPF_40GB_FD,
-			C.ADVERTISED_40000baseSR4_Full:  ofp4.OFPPF_40GB_FD,
-			C.ADVERTISED_40000baseLR4_Full:  ofp4.OFPPF_40GB_FD,
 		}
 		stat.Advertised = 0
 		stat.Peer = 0

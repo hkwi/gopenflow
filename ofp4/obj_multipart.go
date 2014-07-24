@@ -12,9 +12,7 @@ type MultipartRequest struct {
 }
 
 func (obj MultipartRequest) MarshalBinary() ([]byte, error) {
-	data := make([]byte, 8)
-	binary.BigEndian.PutUint16(data[0:2], obj.Type)
-	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
+	var data []byte
 	switch obj.Type {
 	default:
 		return nil, Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
@@ -35,17 +33,20 @@ func (obj MultipartRequest) MarshalBinary() ([]byte, error) {
 		if buf, err := obj.Body.MarshalBinary(); err != nil {
 			return nil, err
 		} else {
-			data = append(data, buf...)
+			data = make([]byte, 8+len(buf))
+			copy(data[8:], buf)
 		}
 	case OFPMP_TABLE_FEATURES:
-		for _, entry := range []encoding.BinaryMarshaler(obj.Body.(Array)) {
-			if buf, err := entry.MarshalBinary(); err != nil {
-				return nil, err
-			} else {
-				data = append(data, buf...)
-			}
+		if buf,err:=obj.Body.(Array).MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = make([]byte, 8+len(buf))
+			copy(data[8:], buf)
 		}
 	}
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
+	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
+	// 4 padding
 	return data, nil
 }
 
@@ -100,19 +101,21 @@ type MultipartReply struct {
 	Body  encoding.BinaryMarshaler
 }
 
-func (obj MultipartReply) MarshalBinary() (data []byte, err error) {
-	var body []byte
+func (obj MultipartReply) MarshalBinary() ([]byte, error) {
+	var data []byte
 	switch obj.Type {
 	default:
-		err = Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
-		return
+		return nil, Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
 	case OFPMP_DESC,
 		OFPMP_AGGREGATE,
 		OFPMP_GROUP_FEATURES,
 		OFPMP_METER_FEATURES,
 		OFPMP_EXPERIMENTER:
-		if body, err = obj.Body.MarshalBinary(); err != nil {
-			return
+		if buf, err := obj.Body.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = make([]byte, 8+len(buf))
+			copy(data[8:], buf)
 		}
 	case OFPMP_FLOW,
 		OFPMP_TABLE,
@@ -124,18 +127,17 @@ func (obj MultipartReply) MarshalBinary() (data []byte, err error) {
 		OFPMP_METER_CONFIG,
 		OFPMP_TABLE_FEATURES,
 		OFPMP_PORT_DESC:
-		for _, entry := range []encoding.BinaryMarshaler(obj.Body.(Array)) {
-			var buf []byte
-			if buf, err = entry.MarshalBinary(); err != nil {
-				return
-			}
-			body = append(body, buf...)
+		if buf, err := obj.Body.(Array).MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			data = make([]byte, 8+len(buf))
+			copy(data[8:], buf)
 		}
 	}
-	data = append(make([]byte, 8), body...)
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], obj.Flags)
-	return
+	// 4 padding
+	return data, nil
 }
 
 func (obj *MultipartReply) UnmarshalBinary(data []byte) (err error) {

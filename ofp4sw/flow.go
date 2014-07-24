@@ -187,14 +187,11 @@ type flowEntryResult struct {
 
 func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	var result flowEntryResult
-	if frameData, err := data.data(); err != nil {
-		log.Println(err)
-		return result
-	} else {
+	{
 		ch := make(chan error)
 		if err := sendCommand(rule.commands, func() {
 			rule.packetCount++
-			rule.byteCount += uint64(len(frameData))
+			rule.byteCount += uint64(data.getLength())
 			ch <- nil
 		}); err != nil {
 			ch <- nil
@@ -445,11 +442,14 @@ func (ms matchList) MarshalBinary() ([]byte, error) {
 
 func (ms *matchList) UnmarshalBinary(s []byte) error {
 	var ret []match
-	for cur := 0; cur+4 < len(s); cur += 4 + int(s[cur+3]) {
+	for cur := 0; cur+4 < len(s); {
+		length := int(s[cur+3])
+		if length == 0 { // OFPAT_SET_FIELD has padding
+			break
+		}
 		if binary.BigEndian.Uint16(s[cur:cur+2]) == 0x8000 {
 			m := match{}
 			m.field = uint64(s[cur+2] >> 1)
-			length := int(s[cur+3])
 			if s[cur+2]&0x01 == 0 {
 				m.value = s[cur+4 : cur+4+length]
 				m.mask = make([]byte, length)
@@ -462,9 +462,9 @@ func (ms *matchList) UnmarshalBinary(s []byte) error {
 			}
 			ret = append(ret, m)
 		} else {
-			// silently ignore
-			log.Print("oxm_class", s[cur:cur+2])
+			log.Print("oxm_class", s[cur:])
 		}
+		cur += 4 + length
 	}
 	*ms = matchList(ret)
 	return nil

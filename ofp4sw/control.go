@@ -185,6 +185,7 @@ func (x *transaction) handleConnection(pipe Pipeline, con ControlChannel) {
 					defer func() {
 						data := frame{
 							inPort:    pout.inPort,
+							serialized: pout.data,
 							layers:    gopacket.NewPacket(pout.data, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
 							phyInPort: pipe.getPortPhysicalPort(pout.inPort),
 						}
@@ -492,6 +493,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 		}
 		if eth != nil {
 			data := frame{
+				serialized: eth,
 				layers:    gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{NoCopy: true}).Layers(),
 				inPort:    req.InPort,
 				phyInPort: pipe.getPortPhysicalPort(req.InPort),
@@ -614,6 +616,7 @@ func (x transaction) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pip
 			if pout != nil {
 				if eth := pout.data; eth != nil {
 					data := frame{
+						serialized: eth,
 						layers:    gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
 						inPort:    pout.inPort,
 						phyInPort: pipe.getPortPhysicalPort(pout.inPort),
