@@ -7,7 +7,6 @@ import (
 	"code.google.com/p/gopacket"
 	"code.google.com/p/gopacket/layers"
 	"errors"
-	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"log"
 	"sync"
@@ -145,7 +144,6 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 				self.stats.TxPackets++
 				self.stats.TxBytes += uint64(len(pout.data))
 			default:
-				fmt.Print(".")
 				self.stats.TxDropped++
 			}
 		}
