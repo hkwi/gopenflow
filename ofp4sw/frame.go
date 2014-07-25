@@ -107,6 +107,8 @@ func (f frame) data() ([]byte, error) {
 			if t, ok := layer.(gopacket.SerializableLayer); ok {
 				ls[i] = t
 			} else {
+				// XXX: gopacket known issues:
+				// XXX:  IPv6 with hop-by-hop header
 				return nil, errors.New(fmt.Sprint("non serializableLayer", layer))
 			}
 		}
@@ -128,7 +130,7 @@ func (f frame) clone() *frame {
 		eth = f.serialized
 	} else {
 		if frameBytes, err := f.data(); err != nil {
-			return nil
+			log.Println(err)
 		} else {
 			eth = frameBytes
 		}
@@ -482,7 +484,76 @@ func (data frame) getValue(m match) ([]byte, error) {
 	case ofp4.OFPXMT_OFB_TUNNEL_ID:
 		return toMatchBytes(data.tunnelId)
 	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
-		return nil, errors.New("Unsupported OFPXMT_OFB_IPV6_EXTHDR now")
+		exthdr := uint16(0)
+		for _, layer := range data.layers {
+			switch p := layer.(type) {
+			case *layers.IPv6:
+				if p.NextHeader == layers.IPProtocolNoNextHeader {
+					exthdr |= ofp4.OFPIEH_NONEXT
+				}
+			case *layers.IPSecESP:
+				if exthdr&^(ofp4.OFPIEH_HOP|ofp4.OFPIEH_DEST|ofp4.OFPIEH_ROUTER|ofp4.OFPIEH_FRAG|ofp4.OFPIEH_AUTH) != 0 {
+					exthdr |= ofp4.OFPIEH_UNSEQ
+				}
+				if exthdr&ofp4.OFPIEH_ESP != 0 {
+					exthdr |= ofp4.OFPIEH_UNREP
+				}
+				exthdr |= ofp4.OFPIEH_ESP
+				//				if p.NextHeader == layers.IPProtocolNoNextHeader {
+				//					exthdr |= ofp4.OFPIEH_NONEXT
+				//				}
+			case *layers.IPSecAH:
+				if exthdr&^(ofp4.OFPIEH_HOP|ofp4.OFPIEH_DEST|ofp4.OFPIEH_ROUTER|ofp4.OFPIEH_FRAG) != 0 {
+					exthdr |= ofp4.OFPIEH_UNSEQ
+				}
+				if exthdr&ofp4.OFPIEH_AUTH != 0 {
+					exthdr |= ofp4.OFPIEH_UNREP
+				}
+				exthdr |= ofp4.OFPIEH_AUTH
+				if p.NextHeader == layers.IPProtocolNoNextHeader {
+					exthdr |= ofp4.OFPIEH_NONEXT
+				}
+			case *layers.IPv6Destination:
+				exthdr |= ofp4.OFPIEH_DEST
+				if p.NextHeader == layers.IPProtocolNoNextHeader {
+					exthdr |= ofp4.OFPIEH_NONEXT
+				}
+			case *layers.IPv6Fragment:
+				if exthdr&^(ofp4.OFPIEH_HOP|ofp4.OFPIEH_DEST|ofp4.OFPIEH_ROUTER) != 0 {
+					exthdr |= ofp4.OFPIEH_UNSEQ
+				}
+				if exthdr&ofp4.OFPIEH_FRAG != 0 {
+					exthdr |= ofp4.OFPIEH_UNREP
+				}
+				exthdr |= ofp4.OFPIEH_FRAG
+				if p.NextHeader == layers.IPProtocolNoNextHeader {
+					exthdr |= ofp4.OFPIEH_NONEXT
+				}
+			case *layers.IPv6Routing:
+				if exthdr&^(ofp4.OFPIEH_HOP|ofp4.OFPIEH_DEST) != 0 {
+					exthdr |= ofp4.OFPIEH_UNSEQ
+				}
+				if exthdr&ofp4.OFPIEH_ROUTER != 0 {
+					exthdr |= ofp4.OFPIEH_UNREP
+				}
+				exthdr |= ofp4.OFPIEH_ROUTER
+				if p.NextHeader == layers.IPProtocolNoNextHeader {
+					exthdr |= ofp4.OFPIEH_NONEXT
+				}
+			case *layers.IPv6HopByHop:
+				if exthdr != 0 {
+					exthdr |= ofp4.OFPIEH_UNSEQ
+				}
+				if exthdr&ofp4.OFPIEH_HOP != 0 {
+					exthdr |= ofp4.OFPIEH_UNREP
+				}
+				exthdr |= ofp4.OFPIEH_HOP
+				if p.NextHeader == layers.IPProtocolNoNextHeader {
+					exthdr |= ofp4.OFPIEH_NONEXT
+				}
+			}
+		}
+		return toMatchBytes(exthdr)
 	}
 	return nil, errors.New(fmt.Sprint("layer not found", m.field))
 }
@@ -811,7 +882,7 @@ func (data *frame) setValue(m match) error {
 		data.tunnelId = binary.BigEndian.Uint64(m.value)
 		return nil
 	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
-		return errors.New("Unsupported OFPXMT_OFB_IPV6_EXTHDR now")
+		return errors.New("OFPXMT_OFB_IPV6_EXTHDR setter is unsupported")
 	}
 	return errors.New(fmt.Sprint("layer not found", m.field))
 }

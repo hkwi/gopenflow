@@ -220,7 +220,7 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 	switch a.Type {
 	case ofp4.OFPAT_PUSH_VLAN:
 		data.length += 4
-		for _, layer := range data.layers {
+		for i, layer := range data.layers {
 			buf = append(buf, layer)
 
 			if found == false {
@@ -230,7 +230,13 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 					ethertype := eth.EthernetType
 					eth.EthernetType = layers.EthernetType(a.Ethertype)
 
-					buf = append(buf, &layers.Dot1Q{Type: ethertype})
+					dot1q := &layers.Dot1Q{Type: ethertype}
+					if d, ok := data.layers[i+1].(*layers.Dot1Q); ok {
+						dot1q.Priority = d.Priority
+						dot1q.DropEligible = d.DropEligible
+						dot1q.VLANIdentifier = d.VLANIdentifier
+					}
+					buf = append(buf, dot1q)
 					found = true
 				}
 			}
