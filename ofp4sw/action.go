@@ -38,7 +38,7 @@ type actionGeneric ofp4.ActionGeneric
 
 func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
 	data.serialized = nil
-	
+
 	switch a.Type {
 	default:
 		err = ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
@@ -152,6 +152,7 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 			buf = append(buf, layer)
 		}
 		if found {
+			data.length -= 4
 			data.layers = buf
 		} else {
 			err = errors.New("pop vlan failed")
@@ -200,6 +201,7 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 			buf = append(buf, layer)
 		}
 		if found {
+			data.length -= 18
 			data.layers = buf
 		} else {
 			err = errors.New("pop vlan failed")
@@ -212,11 +214,12 @@ type actionPush ofp4.ActionPush
 
 func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, err error) {
 	data.serialized = nil
-	
+
 	var buf []gopacket.Layer
 	found := false
 	switch a.Type {
 	case ofp4.OFPAT_PUSH_VLAN:
+		data.length += 4
 		for _, layer := range data.layers {
 			buf = append(buf, layer)
 
@@ -233,6 +236,7 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 			}
 		}
 	case ofp4.OFPAT_PUSH_MPLS:
+		data.length += 4
 		for i, layer := range data.layers {
 			if found == false {
 				var ttl uint8
@@ -281,6 +285,7 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 			buf = append(buf, layer)
 		}
 	case ofp4.OFPAT_PUSH_PBB:
+		data.length += 18
 		for _, layer := range data.layers {
 			buf = append(buf, layer)
 			if found == false {
@@ -292,7 +297,7 @@ func (a actionPush) process(data *frame, pipe Pipeline) (ret flowEntryResult, er
 					buf = append(buf, &PBB{
 						DstMAC: eth.DstMAC,
 						SrcMAC: eth.SrcMAC,
-						Type: ethertype,
+						Type:   ethertype,
 					})
 					found = true
 				}
@@ -348,6 +353,7 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (ret flowEntryResult,
 		buf = append(buf, layer)
 	}
 	if found {
+		data.length -= 4
 		data.layers = buf
 		if reparse {
 			if buf, err := data.data(); err == nil {

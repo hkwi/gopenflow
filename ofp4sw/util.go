@@ -8,14 +8,17 @@ import (
 )
 
 type controlChannelCommon struct {
-	transaction transaction
-	ingress     chan []byte
-	egress      chan []byte
+	ingress chan []byte
+	egress  chan []byte
 }
 
-func (p controlChannelCommon) Transaction() transaction { return p.transaction }
-func (p controlChannelCommon) Ingress() <-chan []byte   { return (<-chan []byte)(p.ingress) }
-func (p controlChannelCommon) Egress() chan<- []byte    { return (chan<- []byte)(p.egress) }
+func (p controlChannelCommon) Ingress() <-chan []byte {
+	return p.ingress
+}
+
+func (p controlChannelCommon) Egress() chan<- []byte {
+	return p.egress
+}
 
 type ControlSource struct {
 	listener net.Listener
@@ -53,9 +56,8 @@ func NewListenControlSource(nets, laddr string) (channels <-chan ControlChannel,
 func NewConnControlChannel(con net.Conn, cb func()) ControlChannel {
 	port := connControlChannel{
 		controlChannelCommon: controlChannelCommon{
-			transaction: NewTransaction(),
-			ingress:     make(chan []byte),
-			egress:      make(chan []byte),
+			ingress: make(chan []byte),
+			egress:  make(chan []byte),
 		},
 		conn:     con,
 		callback: cb,

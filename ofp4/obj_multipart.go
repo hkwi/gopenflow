@@ -37,7 +37,7 @@ func (obj MultipartRequest) MarshalBinary() ([]byte, error) {
 			copy(data[8:], buf)
 		}
 	case OFPMP_TABLE_FEATURES:
-		if buf,err:=obj.Body.(Array).MarshalBinary(); err != nil {
+		if buf, err := obj.Body.(Array).MarshalBinary(); err != nil {
 			return nil, err
 		} else {
 			data = make([]byte, 8+len(buf))

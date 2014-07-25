@@ -7,12 +7,16 @@ import (
 	"code.google.com/p/gopacket"
 	"code.google.com/p/gopacket/layers"
 	"errors"
+	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	"log"
+	"sync"
 	"time"
 )
 
 type Pipeline struct {
-	commands chan func()
+	lock     *sync.Mutex
+	commands chan func() // obsolete
 	flows    map[uint8]*flowTable
 	ports    map[uint32]portInternal
 	groups   map[uint32]*group
@@ -24,6 +28,7 @@ type Pipeline struct {
 
 func NewPipeline() *Pipeline {
 	pipe := Pipeline{
+		lock:     &sync.Mutex{},
 		commands: make(chan func(), 16),
 		flows:    make(map[uint8]*flowTable),
 		ports:    make(map[uint32]portInternal),
@@ -31,32 +36,37 @@ func NewPipeline() *Pipeline {
 		meters:   make(map[uint32]*meter),
 	}
 	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
-	go func() {
-		for cmd := range pipe.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
-		}
-	}()
 	return &pipe
 }
 
-type portInternal interface {
-	Live() bool
-	Egress() chan<- packetOut
+type packetOut struct {
+	outPort uint32
+	queueId uint32
+	data    []byte
+	// below for OFPT_PACKET_IN
+	maxLen uint16
+	match  *matchResult
+	// below for OFPP_TABLE
+	inPort uint32
+}
+
+type PortState struct {
+	LinkDown   bool
+	Blocked    bool
+	Live       bool
+	Advertised uint32
+	Supported  uint32
+	Peer       uint32
+	Curr       uint32
+	HwAddr     [6]byte
 }
 
 type Port interface {
+	Name() string
 	GetPhysicalPort() uint32
-	GetPort() ofp4.Port
-	GetStats() PortStats
 	Ingress() <-chan []byte
 	Egress() chan<- []byte
-	SetPortNo(portNo uint32)
-	GetConfig() uint32
-	SetConfig(config uint32)
+	State() *PortState
 }
 
 type PortStats struct {
@@ -74,134 +84,177 @@ type PortStats struct {
 	Collisions uint64
 }
 
-type portHelper struct {
+type portInternal interface {
+	Outlet() chan<- packetOut
+	Stats() *PortStats
+	State() *PortState
+	GetConfig() uint32
+	SetConfig(uint32) error
+}
+
+type normalPort struct {
 	public  Port
-	egress  chan packetOut
+	outlet  chan packetOut
+	stats   PortStats
+	config  uint32
 	created time.Time
 }
 
-type packetOut struct {
-	outPort uint32
-	queueId uint32
-	data    []byte
-	// below for OFPT_PACKET_IN
-	maxLen uint16
-	match  *matchResult
-	// below for OFPP_TABLE
-	inPort uint32
+func (self normalPort) Outlet() chan<- packetOut {
+	return self.outlet
 }
 
-type groupOut struct {
-	groupId uint32
-	data    frame
+func (self normalPort) Stats() *PortStats {
+	return &self.stats
 }
 
-func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
-	ch := make(chan error)
-	pipe.commands <- func() {
-		ch <- func() error {
-			portInt := portHelper{
-				public:  port,
-				egress:  make(chan packetOut),
-				created: time.Now(),
-			}
-			if portNo != ofp4.OFPP_ANY {
-				if _, exists := pipe.ports[portNo]; exists {
-					return errors.New("portNo already used")
-				}
-			} else {
-				portNo = uint32(1)
-				for existingPortNo, _ := range pipe.ports {
-					if existingPortNo > ofp4.OFPP_MAX {
-						continue // skip special ports
-					}
-					if existingPortNo >= portNo {
-						portNo = existingPortNo + 1
-					}
-					if portNo > ofp4.OFPP_MAX {
-						return errors.New("No room for port id")
-					}
-				}
-			}
-			pipe.ports[portNo] = &portInt
-			port.SetPortNo(portNo)
+func (self normalPort) GetConfig() uint32 {
+	return self.config
+}
 
-			serialOuts := make(chan chan []packetOut, 8)
-			go func() {
-				for eth := range port.Ingress() {
-					eth := eth
-					ch2 := make(chan []packetOut, 1)
-					serialOuts <- ch2
-					go func() {
-						ch2 <- func() []packetOut {
-							config := port.GetPort().Config
-							if config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
-								return nil
-							}
-							f := frame{
-								inPort:    portNo,
-								phyInPort: port.GetPhysicalPort(),
-								serialized: eth,
-								layers:    gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
-							}
-							pouts := f.process(pipe)
-							if config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
-								var newPouts []packetOut
-								for _, pout := range pouts {
-									if pout.outPort != ofp4.OFPP_CONTROLLER {
-										newPouts = append(newPouts, pout)
-									}
-								}
-								pouts = newPouts
-							}
-							return pouts
-						}()
-						close(ch2)
-					}()
-				}
-				close(serialOuts)
-			}()
-			go func() {
-				for result := range serialOuts {
-					pouts := <-result
-					for _, pout := range pouts {
-						pout := pout
-						ch2 := make(chan portInternal)
-						go func() {
-							for pi := range ch2 {
-								pi.Egress() <- pout
-							}
-						}()
-						pipe.commands <- func() {
-							for outPortNo, outPort := range pipe.ports {
-								if pout.outPort == ofp4.OFPP_ALL && outPortNo <= ofp4.OFPP_MAX {
-									if portNo != outPortNo {
-										ch2 <- outPort
-									}
-								} else if pout.outPort == outPortNo {
-									ch2 <- outPort
-								}
-							}
-							close(ch2)
-						}
-					}
-				}
-			}()
-			go func() {
-				// XXX: need to implement queue here
-				for pout := range portInt.egress {
-					config := port.GetPort().Config
-					if config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
-						continue
-					}
-					port.Egress() <- pout.data
-				}
-			}()
-			return nil
-		}()
-		close(ch)
+func (self normalPort) SetConfig(config uint32) error {
+	self.config = config
+	return nil
+}
+
+func (self normalPort) State() *PortState {
+	var info PortState
+	info = *self.public.State()
+
+	if self.config&ofp4.OFPPC_PORT_DOWN != 0 || info.LinkDown {
+		info.Live = false
 	}
-	return <-ch
+	return &info
+}
+
+func (self normalPort) start(pipe Pipeline, portNo uint32) {
+	// EGRESS
+	go func() {
+		// XXX: need to implement queue here
+		for pout := range self.outlet {
+			if pout.data == nil {
+				log.Println("packet serialization error")
+				continue
+			}
+			if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
+				self.stats.TxDropped++
+				continue
+			}
+			select {
+			case self.public.Egress() <- pout.data:
+				self.stats.TxPackets++
+				self.stats.TxBytes += uint64(len(pout.data))
+			default:
+				fmt.Print(".")
+				self.stats.TxDropped++
+			}
+		}
+	}()
+
+	// INGRESS
+	serialOuts := make(chan chan []packetOut, 8) // parallel pipeline processing
+	go func() {
+		for eth := range self.public.Ingress() {
+			eth := eth
+			serialOut := make(chan []packetOut, 1)
+			serialOuts <- serialOut
+			go func() {
+				serialOut <- func() []packetOut {
+					if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
+						return nil
+					}
+					f := frame{
+						inPort:     portNo,
+						phyInPort:  self.public.GetPhysicalPort(),
+						serialized: eth,
+						length:     len(eth),
+						layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
+					}
+					pouts := f.process(pipe)
+					if self.config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
+						var newPouts []packetOut
+						for _, pout := range pouts {
+							if pout.outPort != ofp4.OFPP_CONTROLLER {
+								newPouts = append(newPouts, pout)
+							}
+						}
+						pouts = newPouts
+					}
+					return pouts
+				}()
+				close(serialOut)
+			}()
+		}
+		close(serialOuts)
+	}()
+	go func() {
+		for serialOut := range serialOuts {
+			for pouts := range serialOut {
+				for _, pout := range pouts {
+					ports := func() []portInternal {
+						pipe.lock.Lock()
+						defer pipe.lock.Unlock()
+
+						var ports []portInternal
+						if pout.outPort != ofp4.OFPP_ALL {
+							if outInt, ok := pipe.ports[pout.outPort]; ok {
+								ports = append(ports, outInt)
+							}
+						} else {
+							for outPortNo, outInt := range pipe.ports {
+								if outPortNo <= ofp4.OFPP_MAX && portNo != outPortNo {
+									ports = append(ports, outInt)
+								}
+							}
+						}
+						return ports
+					}()
+					for _, outInt := range ports {
+						outInt.Outlet() <- pout
+					}
+				}
+			}
+		}
+	}()
+}
+
+// AddPort adds a normal openflow port into the pipeline.
+func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
+	portInt := &normalPort{
+		public:  port,
+		outlet:  make(chan packetOut),
+		created: time.Now(),
+	}
+	if err := func() error {
+		pipe.lock.Lock()
+		defer pipe.lock.Unlock()
+
+		if portNo != ofp4.OFPP_ANY {
+			if _, exists := pipe.ports[portNo]; exists {
+				return errors.New("portNo already used")
+			}
+		} else {
+			portNo = uint32(1)
+			for existingPortNo, _ := range pipe.ports {
+				if existingPortNo > ofp4.OFPP_MAX {
+					continue // skip special ports
+				}
+				if existingPortNo >= portNo {
+					portNo = existingPortNo + 1
+				}
+				if portNo > ofp4.OFPP_MAX {
+					return errors.New("No room for port id")
+				}
+			}
+		}
+		pipe.ports[portNo] = portInt
+		return nil
+	}(); err != nil {
+		return err
+	}
+	portInt.start(pipe, portNo)
+	// XXX: trigger ofp_port_status
+	return nil
 }
 
 func (pipe Pipeline) getController() *controller {
@@ -217,42 +270,42 @@ func (pipe Pipeline) AddControlChannel(channel ControlChannel) error {
 	if ctrl := pipe.getController(); ctrl != nil {
 		return ctrl.addControlChannel(channel, pipe)
 	} else {
-		return errors.New("controller port not registered")
+		return errors.New("OFPP_CONTROLLER not registered")
 	}
 }
 
-func (pipe Pipeline) getFlowTables(tableId uint8) []*flowTable {
-	ch := make(chan []*flowTable)
-	pipe.commands <- func() {
-		ch <- func() []*flowTable {
-			var buf []*flowTable
-			for k, v := range pipe.flows {
-				if tableId == ofp4.OFPTT_ALL || tableId == k {
-					buf = append(buf, v)
-				}
-			}
-			return buf
-		}()
-		close(ch)
+func (pipe Pipeline) getFlowTables(tableId uint8) map[uint8]*flowTable {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	buf := make(map[uint8]*flowTable)
+	if tableId == ofp4.OFPTT_ALL {
+		for k, v := range pipe.flows {
+			buf[k] = v
+		}
+	} else {
+		if table, ok := pipe.flows[tableId]; ok {
+			buf[tableId] = table
+		}
 	}
-	return <-ch
+	return buf
 }
 
-func (p Pipeline) getGroups(groupId uint32) map[uint32]*group {
-	ret := make(chan map[uint32]*group)
-	p.commands <- func() {
-		ret <- func() map[uint32]*group {
-			groups := make(map[uint32]*group)
-			for k, g := range p.groups {
-				if groupId == ofp4.OFPG_ALL || groupId == k {
-					groups[k] = g
-				}
-			}
-			return groups
-		}()
-		close(ret)
+func (pipe Pipeline) getGroups(groupId uint32) map[uint32]*group {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	groups := make(map[uint32]*group)
+	if groupId == ofp4.OFPG_ALL {
+		for k, g := range pipe.groups {
+			groups[k] = g
+		}
+	} else {
+		if group, ok := pipe.groups[groupId]; ok {
+			groups[groupId] = group
+		}
 	}
-	return <-ret
+	return groups
 }
 
 // Call this function inside a pipeline transaction
@@ -277,97 +330,55 @@ func (p Pipeline) watchGroup(groupId uint32) bool {
 // Call this function inside a pipeline transaction
 func (p Pipeline) watchPort(portNo uint32) bool {
 	if port, ok := p.ports[portNo]; ok {
-		if port.Live() {
+		if port.State().Live {
 			return true
 		}
 	}
 	return false
 }
 
-func (p Pipeline) getTables(tableId uint8) map[uint8]*flowTable {
-	ret := make(chan map[uint8]*flowTable)
-	p.commands <- func() {
-		ret <- func() map[uint8]*flowTable {
-			tables := make(map[uint8]*flowTable)
-			for k, t := range p.flows {
-				if tableId == ofp4.OFPTT_ALL || tableId == k {
-					tables[k] = t
-				}
-			}
-			return tables
-		}()
-		close(ret)
-	}
-	return <-ret
-}
+func (pipe Pipeline) getMeters(meterId uint32) map[uint32]*meter {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
 
-func (p Pipeline) getMeters(meterId uint32) map[uint32]*meter {
-	ret := make(chan map[uint32]*meter)
-	p.commands <- func() {
-		ret <- func() map[uint32]*meter {
-			meters := make(map[uint32]*meter)
-			for k, m := range p.meters {
-				if meterId == ofp4.OFPM_ALL || meterId == k {
-					meters[k] = m
-				}
-			}
-			return meters
-		}()
-		close(ret)
+	meters := make(map[uint32]*meter)
+	if meterId == ofp4.OFPM_ALL {
+		for k, m := range pipe.meters {
+			meters[k] = m
+		}
+	} else {
+		if meter, ok := pipe.meters[meterId]; ok {
+			meters[meterId] = meter
+		}
 	}
-	return <-ret
+	return meters
 }
 
 func (pipe Pipeline) getPorts(portNo uint32) map[uint32]portInternal {
-	ret := make(chan map[uint32]portInternal)
-	pipe.commands <- func() {
-		ret <- func() map[uint32]portInternal {
-			ports := make(map[uint32]portInternal)
-			for k, g := range pipe.ports {
-				if portNo == ofp4.OFPP_ANY || portNo == ofp4.OFPP_ALL || portNo == k {
-					ports[k] = g
-				}
-			}
-			return ports
-		}()
-		close(ret)
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	ports := make(map[uint32]portInternal)
+	if portNo == ofp4.OFPP_ANY || portNo == ofp4.OFPP_ALL {
+		for k, g := range pipe.ports {
+			ports[k] = g
+		}
+	} else {
+		if port, ok := pipe.ports[portNo]; ok {
+			ports[portNo] = port
+		}
 	}
-	return <-ret
+	return ports
 }
 
 func (pipe Pipeline) getPortPhysicalPort(portNo uint32) uint32 {
-	ch := make(chan Port)
-	pipe.commands <- func() {
-		ch <- func() Port {
-			if inPort, ok := pipe.ports[portNo]; ok {
-				if ph, ok := inPort.(*portHelper); ok {
-					return ph.public
-				}
-			}
-			return nil
-		}()
-	}
-	port := <-ch
-	if port != nil {
-		return port.GetPhysicalPort()
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	if portInt, ok := pipe.ports[portNo]; ok {
+		if port, ok := portInt.(*normalPort); ok {
+			return port.public.GetPhysicalPort()
+		}
 	}
 	return 0
-}
-
-func (p portHelper) Egress() chan<- packetOut {
-	return (chan<- packetOut)(p.egress)
-}
-
-func (p portHelper) Live() bool {
-	info := p.public.GetPort()
-	if info.Config&ofp4.OFPPC_PORT_DOWN != 0 {
-		return false
-	}
-	if info.State&ofp4.OFPPS_LINK_DOWN != 0 {
-		return false
-	}
-	if info.State&(ofp4.OFPPS_LIVE) != 0 {
-		return true
-	}
-	return false
 }

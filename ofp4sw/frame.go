@@ -21,15 +21,16 @@ type matchResult struct {
 // data associated with a packet, which is
 // alive while the packet travels the pipeline
 type frame struct {
-	layers    []gopacket.Layer
-	serialized    []byte // may be nil
-	inPort    uint32
-	phyInPort uint32
-	metadata  uint64
-	tunnelId  uint64
-	queueId   uint32
-	actionSet map[uint16]action
-	match     *matchResult
+	layers     []gopacket.Layer
+	serialized []byte // cache
+	length     int    // cache
+	inPort     uint32
+	phyInPort  uint32
+	metadata   uint64
+	tunnelId   uint64
+	queueId    uint32
+	actionSet  map[uint16]action
+	match      *matchResult
 }
 
 func (f *frame) process(p Pipeline) []packetOut {
@@ -80,15 +81,6 @@ func (f *frame) processGroups(groups []groupOut, pipe Pipeline, processed []uint
 	return result
 }
 
-func (f *frame) getLength() int {
-	if f.serialized == nil {
-		if buf,err := f.data(); err == nil {
-			f.serialized = buf
-		}
-	}
-	return len(f.serialized)
-}
-
 func (f frame) data() ([]byte, error) {
 	if f.serialized == nil {
 		buf := gopacket.NewSerializeBuffer()
@@ -122,20 +114,33 @@ func (f frame) data() ([]byte, error) {
 			return nil, err
 		} else {
 			f.serialized = buf.Bytes()
+			if len(f.serialized) != f.length {
+				log.Println("frame length shortcut may be broken")
+			}
 		}
 	}
 	return f.serialized, nil
 }
 
 func (f frame) clone() *frame {
-	if frameBytes, err := f.data(); err == nil {
-		var d frame
-		d = f
-		d.layers = gopacket.NewPacket(frameBytes, layers.LayerTypeEthernet, gopacket.DecodeOptions{}).Layers()
-		d.actionSet = make(map[uint16]action)
-		return &d
+	var eth []byte
+	if f.serialized != nil {
+		eth = f.serialized
+	} else {
+		if frameBytes, err := f.data(); err != nil {
+			return nil
+		} else {
+			eth = frameBytes
+		}
 	}
-	return nil
+	return &frame{
+		inPort:     f.inPort,
+		phyInPort:  f.phyInPort,
+		length:     len(eth),
+		serialized: eth,
+		layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{}).Layers(),
+		actionSet:  make(map[uint16]action),
+	}
 }
 
 func (f frame) hash() uint32 {
@@ -408,7 +413,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 	case ofp4.OFPXMT_OFB_IPV6_ND_TARGET:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				typ := uint8(t.TypeCode>>8)
+				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborSolicitation || typ == layers.ICMPv6TypeNeighborAdvertisement {
 					return t.Payload[:16], nil
 				}
@@ -417,12 +422,12 @@ func (data frame) getValue(m match) ([]byte, error) {
 	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				typ := uint8(t.TypeCode>>8)
+				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborSolicitation {
-					for cur:=16; cur<len(t.Payload); {
-						length := int(t.Payload[cur+1])*8
-						if t.Payload[cur]==1 { // source link-layer address (RFC 2461 4.6)
-							return t.Payload[cur+2:cur+length], nil
+					for cur := 16; cur < len(t.Payload); {
+						length := int(t.Payload[cur+1]) * 8
+						if t.Payload[cur] == 1 { // source link-layer address (RFC 2461 4.6)
+							return t.Payload[cur+2 : cur+length], nil
 						}
 						cur += length
 					}
@@ -432,12 +437,12 @@ func (data frame) getValue(m match) ([]byte, error) {
 	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				typ := uint8(t.TypeCode>>8)
+				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborAdvertisement {
-					for cur:=16; cur<len(t.Payload); {
-						length := int(t.Payload[cur+1])*8
-						if t.Payload[cur]==2 { // target link-layer address (RFC 2461 4.6)
-							return t.Payload[cur+2:cur+length], nil
+					for cur := 16; cur < len(t.Payload); {
+						length := int(t.Payload[cur+1]) * 8
+						if t.Payload[cur] == 2 { // target link-layer address (RFC 2461 4.6)
+							return t.Payload[cur+2 : cur+length], nil
 						}
 						cur += length
 					}
@@ -479,10 +484,12 @@ func (data frame) getValue(m match) ([]byte, error) {
 	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
 		return nil, errors.New("Unsupported OFPXMT_OFB_IPV6_EXTHDR now")
 	}
-	return nil, errors.New("layer not found")
+	return nil, errors.New(fmt.Sprint("layer not found", m.field))
 }
 
 func (data *frame) setValue(m match) error {
+	data.serialized = nil
+
 	switch m.field {
 	default:
 		return errors.New("unknown oxm field")
@@ -717,7 +724,7 @@ func (data *frame) setValue(m match) error {
 	case ofp4.OFPXMT_OFB_IPV6_ND_TARGET:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				typ := uint8(t.TypeCode>>8)
+				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborSolicitation || typ == layers.ICMPv6TypeNeighborAdvertisement {
 					copy(t.Payload[:16], m.value)
 					return nil
@@ -727,11 +734,11 @@ func (data *frame) setValue(m match) error {
 	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				typ := uint8(t.TypeCode>>8)
+				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborSolicitation {
-					for cur:=16; cur<len(t.Payload); {
-						length := int(t.Payload[cur+1])*8
-						if t.Payload[cur]==1 { // source link-layer address (RFC 2461 4.6)
+					for cur := 16; cur < len(t.Payload); {
+						length := int(t.Payload[cur+1]) * 8
+						if t.Payload[cur] == 1 { // source link-layer address (RFC 2461 4.6)
 							copy(t.Payload[cur+2:], m.value)
 							return nil
 						}
@@ -749,11 +756,11 @@ func (data *frame) setValue(m match) error {
 	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				typ := uint8(t.TypeCode>>8)
+				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborAdvertisement {
-					for cur:=16; cur<len(t.Payload); {
-						length := int(t.Payload[cur+1])*8
-						if t.Payload[cur]==2 { // target link-layer address (RFC 2461 4.6)
+					for cur := 16; cur < len(t.Payload); {
+						length := int(t.Payload[cur+1]) * 8
+						if t.Payload[cur] == 2 { // target link-layer address (RFC 2461 4.6)
 							copy(t.Payload[cur+2:], m.value)
 							return nil
 						}
@@ -806,7 +813,7 @@ func (data *frame) setValue(m match) error {
 	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
 		return errors.New("Unsupported OFPXMT_OFB_IPV6_EXTHDR now")
 	}
-	return errors.New("layer not found")
+	return errors.New(fmt.Sprint("layer not found", m.field))
 }
 
 func toMatchBytes(value interface{}) (data []byte, err error) {

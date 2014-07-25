@@ -8,7 +8,7 @@ import (
 type packetDrop struct{}
 
 func (_ packetDrop) Error() string {
-	return "drop packet"
+	return "meter drop packet"
 }
 
 const baseInterval = 2.0
@@ -32,7 +32,7 @@ func (m *meter) process(data *frame) error {
 	ch := make(chan error)
 	m.commands <- func() {
 		ch <- func() error {
-			length := data.getLength()
+			length := data.length
 
 			now := time.Now()
 			meterInterval := float64(now.Sub(m.meterTime)) / float64(time.Second)
@@ -84,7 +84,9 @@ func (m *meter) process(data *frame) error {
 						}
 					case *bandDscpRemark:
 						if b.bucket+inc > float64(b.burstSize) {
-							// do dscp remark
+							if err := b.remark(data); err != nil {
+								return err
+							}
 							if m.flagStats {
 								b.packetCount++
 								b.byteCount += uint64(length)
@@ -129,12 +131,11 @@ func (m *meter) process(data *frame) error {
 					}
 					return &packetDrop{}
 				case *bandDscpRemark:
-					// do dscp remark
 					if m.flagStats {
 						b.packetCount++
 						b.byteCount += uint64(length)
 					}
-					return nil
+					return b.remark(data)
 				case *bandExperimenter:
 					// do nothing
 					if m.flagStats {
@@ -179,6 +180,30 @@ type bandDrop struct {
 type bandDscpRemark struct {
 	bandCommon
 	precLevel uint8
+}
+
+func (self bandDscpRemark) remark(data *frame) error {
+	dscpMatch := match{field: ofp4.OFPXMT_OFB_IP_DSCP}
+	if v, err := data.getValue(dscpMatch); err != nil {
+		return nil
+	} else {
+		phb := uint8(v[0]) >> 3
+		prec := uint8(v[0]) >> 1 & 0x03
+		if prec != 0 && (phb == 1 || phb == 2 || phb == 3 || phb == 4) {
+			prec += self.precLevel
+			if prec > 0x03 {
+				prec = 0x03
+			}
+			if err := data.setValue(match{
+				field: ofp4.OFPXMT_OFB_IP_DSCP,
+				value: []byte{byte(phb<<3 | prec<<1)},
+				mask:  []byte{0xff},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 type bandExperimenter struct {

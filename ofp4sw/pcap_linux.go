@@ -166,26 +166,25 @@ var advertisedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
 	C.ADVERTISED_40000baseLR4_Full:  ofp4.OFPPF_40GB_FD,
 }
 
-func getPortDetail(stat *ofp4.Port) error {
-	cname := C.CString(stat.Name)
+func pcapPortState(name string) (*PortState, error) {
+	state := &PortState{}
+
+	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 
-	stat.State = 0
 	if flags, err := C.get_flags(cname); err != nil {
-		return err
+		return nil, err
 	} else {
 		live := true
 		if flags&C.IFF_LOWER_UP == 0 {
-			stat.State |= ofp4.OFPPS_LINK_DOWN
+			state.LinkDown = true
 			live = false
 		}
 		if flags&C.IFF_UP == 0 {
-			stat.State |= ofp4.OFPPS_BLOCKED
+			state.Blocked = true
 			live = false
 		}
-		if live {
-			stat.State |= ofp4.OFPPS_LIVE
-		}
+		state.Live = live
 	}
 
 	fd := C.socket(C.AF_INET, C.SOCK_DGRAM, 0)
@@ -193,24 +192,24 @@ func getPortDetail(stat *ofp4.Port) error {
 
 	ecmd := C.struct_ethtool_cmd{cmd: C.ETHTOOL_GSET}
 	if r, err := C.ethtool_cmd_call(fd, cname, &ecmd); err != nil {
-		return err
+		return nil, err
 	} else if r != 0 {
-		return errors.New("ethtool_cmd_call error")
+		return nil, errors.New("ethtool_cmd_call error")
 	} else {
-		stat.Supported = 0
+		state.Supported = 0
 		for k, v := range supportedConvert {
 			if ecmd.supported&k != 0 {
-				stat.Supported |= v
+				state.Supported |= v
 			}
 		}
-		stat.Advertised = 0
-		stat.Peer = 0
+		state.Advertised = 0
+		state.Peer = 0
 		for k, v := range advertisedConvert {
 			if ecmd.advertising&k != 0 {
-				stat.Advertised |= v
+				state.Advertised |= v
 			}
 			if ecmd.lp_advertising&k != 0 {
-				stat.Peer |= v
+				state.Peer |= v
 			}
 		}
 
@@ -262,19 +261,19 @@ func getPortDetail(stat *ofp4.Port) error {
 		if ecmd.autoneg != C.AUTONEG_DISABLE {
 			curr |= ofp4.OFPPF_AUTONEG
 		}
-		stat.Curr = curr
+		state.Curr = curr
 	}
 	var cHwaddrLen C.int
 	if cHwaddr, err := C.get_hwaddr(fd, cname, &cHwaddrLen); err != nil {
-		return err
+		return nil, err
 	} else {
 		hwAddr := C.GoBytes(unsafe.Pointer(cHwaddr), cHwaddrLen)
-		for i, _ := range stat.HwAddr {
+		for i, _ := range state.HwAddr {
 			if i < int(cHwaddrLen) {
-				stat.HwAddr[i] = hwAddr[i]
+				state.HwAddr[i] = hwAddr[i]
 			}
 		}
 		C.free(cHwaddr)
 	}
-	return nil
+	return state, nil
 }

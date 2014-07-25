@@ -1,9 +1,10 @@
 package ofp4sw
 
 import (
+	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
 )
 
-func getPortDetail(stat *ofp4.Port) error {
-	return nil
+func pcapPortState(name string) (*PortState, error) {
+	return nil, errors.New("noop")
 }

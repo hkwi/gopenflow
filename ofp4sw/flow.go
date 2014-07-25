@@ -3,30 +3,15 @@ package ofp4sw
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"hash/fnv"
 	"log"
+	"sync"
 	"time"
 )
 
-func sendCommand(server chan func(), client func()) error {
-	var err error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				// runtime error: send on closed channel
-				err = errors.New(fmt.Sprint(r))
-			}
-		}()
-		server <- client
-	}()
-	return err
-}
-
 type flowTable struct {
-	commands chan func()
+	lock *sync.Mutex
 	// list by priority
 	priorities  []*flowPriority
 	activeCount uint32
@@ -36,14 +21,14 @@ type flowTable struct {
 }
 
 type flowPriority struct {
-	commands chan func()
+	lock     *sync.Mutex
 	priority uint16
 	caps     []match
 	flows    map[uint32][]*flowEntry // entries in the same priority
 }
 
 type flowEntry struct {
-	commands    chan func()
+	lock        *sync.Mutex
 	fields      []match
 	cookie      uint64
 	packetCount uint64
@@ -68,52 +53,28 @@ type match struct {
 	value []byte
 }
 
-func newFlowTable() *flowTable {
-	table := &flowTable{
-		commands: make(chan func(), 4),
-	}
-	go func() {
-		for cmd := range table.commands {
-			cmd()
-		}
-	}()
-	return table
-}
-
-func newFlowPriority(priority uint16) *flowPriority {
-	prio := &flowPriority{
-		commands: make(chan func(), 4),
-		flows:    make(map[uint32][]*flowEntry),
-		priority: priority,
-	}
-	go func() {
-		for cmd := range prio.commands {
-			cmd()
-		}
-	}()
-	return prio
-}
-
 type lookupResult struct {
 	entry    *flowEntry
 	priority uint16
 }
 
 func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
-	ch := make(chan []*flowPriority)
-	if err := sendCommand(table.commands, func() {
+	var priorities []*flowPriority
+	func() {
+		table.lock.Lock()
+		defer table.lock.Unlock()
+
 		table.lookupCount++
-		ch <- table.priorities
-	}); err != nil {
-		ch <- nil
-	}
-	for _, prio := range <-ch {
+		priorities = table.priorities
+	}()
+	for _, prio := range priorities {
 		if en := prio.matchFrame(data); en != nil {
-			if err := sendCommand(table.commands, func() {
+			func() {
+				table.lock.Lock()
+				defer table.lock.Unlock()
+
 				table.matchCount++
-			}); err != nil {
-				return nil, 0
-			}
+			}()
 			return en, prio.priority
 		}
 	}
@@ -121,37 +82,37 @@ func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
 }
 
 func (priority flowPriority) matchFrame(data frame) *flowEntry {
-	ret := make(chan *flowEntry)
-	if err := sendCommand(priority.commands, func() {
-		ret <- func() *flowEntry {
-			hasher := fnv.New32()
-			for _, p1 := range priority.caps {
-				if buf, err := data.getValue(p1); err != nil {
-					return nil
-				} else {
-					hasher.Write(maskBytes(buf, p1.mask))
-				}
+	entries := func() []*flowEntry {
+		priority.lock.Lock()
+		defer priority.lock.Unlock()
+
+		hasher := fnv.New32()
+		for _, p1 := range priority.caps {
+			if buf, err := data.getValue(p1); err != nil {
+				log.Println(err)
+				return nil
+			} else {
+				hasher.Write(maskBytes(buf, p1.mask))
 			}
-			if entries, ok := priority.flows[hasher.Sum32()]; ok {
-				for _, entry := range entries {
-					hit := true
-					for _, field := range entry.fields {
-						if !field.match(data) {
-							hit = false
-							break
-						}
-					}
-					if hit {
-						return entry
-					}
-				}
+		}
+		if entries, ok := priority.flows[hasher.Sum32()]; ok {
+			return entries
+		}
+		return nil
+	}()
+	for _, entry := range entries {
+		hit := true
+		for _, field := range entry.fields {
+			if !field.match(data) {
+				hit = false
+				break
 			}
-			return nil
-		}()
-	}); err != nil {
-		ret <- nil
+		}
+		if hit {
+			return entry
+		}
 	}
-	return <-ret
+	return nil
 }
 
 func (priority *flowPriority) rebuildIndex(flows []*flowEntry) {
@@ -186,23 +147,24 @@ type flowEntryResult struct {
 }
 
 func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
+	func() {
+		rule.lock.Lock()
+		defer rule.lock.Unlock()
+
+		rule.packetCount++
+		rule.byteCount += uint64(data.length)
+	}()
+
 	var result flowEntryResult
-	{
-		ch := make(chan error)
-		if err := sendCommand(rule.commands, func() {
-			rule.packetCount++
-			rule.byteCount += uint64(data.getLength())
-			ch <- nil
-		}); err != nil {
-			ch <- nil
-		}
-		_ = <-ch
-	}
 	if rule.instMeter != 0 {
 		for _, meter := range pipe.getMeters(rule.instMeter) {
 			if err := meter.process(data); err != nil {
-				//				log.Print(err)
-				return flowEntryResult{}
+				if _, ok := err.(*packetDrop); ok {
+					// no log
+				} else {
+					log.Println(err)
+				}
+				return result
 			}
 		}
 	}
@@ -491,14 +453,11 @@ type flowStats struct {
 	entry    *flowEntry
 }
 
-func (p Pipeline) filterFlows(req flowFilter) []flowStats {
-	ch := make(chan []flowStats)
-	if err := sendCommand(p.commands, func() {
-		ch <- p.filterFlowsInside(req)
-	}); err != nil {
-		ch <- nil
-	}
-	return <-ch
+func (pipe Pipeline) filterFlows(req flowFilter) []flowStats {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	return pipe.filterFlowsInside(req)
 }
 
 func (p Pipeline) filterFlowsInside(req flowFilter) []flowStats {
@@ -522,115 +481,106 @@ func (p Pipeline) filterFlowsInside(req flowFilter) []flowStats {
 }
 
 func (t flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	waits := 0
 	ch := make(chan []flowStats)
-	if err := sendCommand(t.commands, func() {
-		var stats []flowStats
-		waits := 0
-		ch2 := make(chan []flowStats)
-		for _, prio := range t.priorities {
-			if req.opStrict && prio.priority != req.priority {
-				continue
-			}
-			prio2 := prio
-			go func() {
-				ch2 <- prio2.filterFlows(req, tableId)
-			}()
-			waits++
+	for _, prio := range t.priorities {
+		if req.opStrict && prio.priority != req.priority {
+			continue
 		}
-		for i := 0; i < waits; i++ {
-			stats = append(stats, <-ch2...)
-		}
-		if req.opUnregister {
-			t.activeCount -= uint32(len(stats))
-		}
-		ch <- stats
-	}); err != nil {
-		ch <- nil
+		prio := prio
+		go func() {
+			ch <- prio.filterFlows(req, tableId)
+		}()
+		waits++
 	}
-	return <-ch
+	var stats []flowStats
+	for i := 0; i < waits; i++ {
+		stats = append(stats, <-ch...)
+	}
+	if req.opUnregister {
+		t.activeCount -= uint32(len(stats))
+	}
+	return stats
 }
 
 func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
-	ch := make(chan []flowStats)
-	if err := sendCommand(p.commands, func() {
-		var hits []flowStats
-		var miss []*flowEntry
-		for _, flows := range p.flows {
-			for _, flow := range flows {
-				hit := func() bool {
-					if (flow.cookie & req.cookieMask) != (req.cookie & req.cookieMask) {
-						return false
-					}
-					for _, m := range flow.fields {
-						if !m.matchMatch(req.match) {
-							return false
-						}
-					}
-					if req.outPort != ofp4.OFPP_ANY {
-						for _, act := range flow.instApply {
-							if cact, ok := act.(*actionOutput); ok {
-								if cact.Port == req.outPort {
-									return true
-								}
-							}
-						}
-						for _, act := range flow.instWrite {
-							if cact, ok := act.(*actionOutput); ok {
-								if cact.Port == req.outPort {
-									return true
-								}
-							}
-						}
-						return false
-					}
-					if req.outGroup != ofp4.OFPG_ANY {
-						for _, act := range flow.instApply {
-							if cact, ok := act.(*actionGroup); ok {
-								if cact.GroupId == req.outGroup {
-									return true
-								}
-							}
-						}
-						for _, act := range flow.instWrite {
-							if cact, ok := act.(*actionGroup); ok {
-								if cact.GroupId == req.outGroup {
-									return true
-								}
-							}
-						}
-						return false
-					}
-					if req.meterId != 0 {
-						if flow.instMeter == req.meterId {
-							return true
-						}
-						return false
-					}
-					return true
-				}()
-				if hit {
-					stat := flowStats{
-						tableId:  tableId,
-						priority: p.priority,
-						entry:    flow,
-					}
-					hits = append(hits, stat)
-				} else {
-					miss = append(miss, flow)
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	var hits []flowStats
+	var miss []*flowEntry
+	for _, flows := range p.flows {
+		for _, flow := range flows {
+			hit := func() bool {
+				if (flow.cookie & req.cookieMask) != (req.cookie & req.cookieMask) {
+					return false
 				}
+				for _, m := range flow.fields {
+					if !m.matchMatch(req.match) {
+						return false
+					}
+				}
+				if req.outPort != ofp4.OFPP_ANY {
+					for _, act := range flow.instApply {
+						if cact, ok := act.(*actionOutput); ok {
+							if cact.Port == req.outPort {
+								return true
+							}
+						}
+					}
+					for _, act := range flow.instWrite {
+						if cact, ok := act.(*actionOutput); ok {
+							if cact.Port == req.outPort {
+								return true
+							}
+						}
+					}
+					return false
+				}
+				if req.outGroup != ofp4.OFPG_ANY {
+					for _, act := range flow.instApply {
+						if cact, ok := act.(*actionGroup); ok {
+							if cact.GroupId == req.outGroup {
+								return true
+							}
+						}
+					}
+					for _, act := range flow.instWrite {
+						if cact, ok := act.(*actionGroup); ok {
+							if cact.GroupId == req.outGroup {
+								return true
+							}
+						}
+					}
+					return false
+				}
+				if req.meterId != 0 {
+					if flow.instMeter == req.meterId {
+						return true
+					}
+					return false
+				}
+				return true
+			}()
+			if hit {
+				stat := flowStats{
+					tableId:  tableId,
+					priority: p.priority,
+					entry:    flow,
+				}
+				hits = append(hits, stat)
+			} else {
+				miss = append(miss, flow)
 			}
 		}
-		if req.opUnregister {
-			p.rebuildIndex(miss)
-			for _, h := range hits {
-				close(h.entry.commands)
-			}
-		}
-		ch <- hits
-	}); err != nil {
-		ch <- nil
 	}
-	return <-ch
+	if req.opUnregister {
+		p.rebuildIndex(miss)
+	}
+	return hits
 }
 
 ///// flow entry operation
@@ -641,7 +591,7 @@ func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
 		return nil, err
 	}
 	entry := &flowEntry{
-		commands:    make(chan func(), 4),
+		lock:        &sync.Mutex{},
 		fields:      []match(reqMatch),
 		cookie:      req.Cookie,
 		created:     time.Now(),
@@ -651,11 +601,6 @@ func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
 	if err := entry.importInstructions(req.Instructions); err != nil {
 		return nil, err
 	}
-	go func() {
-		for cmd := range entry.commands {
-			cmd()
-		}
-	}()
 	return entry, nil
 }
 
@@ -666,90 +611,75 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 			Code: ofp4.OFPFMFC_BAD_TABLE_ID,
 		}
 	}
-	ch := make(chan error)
-	if e1 := sendCommand(pipe.commands, func() {
-		ch <- func() error {
-			var table *flowTable
-			if trial, ok := pipe.flows[req.TableId]; ok {
-				table = trial
-			} else {
-				table = newFlowTable()
-				pipe.flows[req.TableId] = table
-			}
 
-			ch2 := make(chan error)
-			if e2 := sendCommand(table.commands, func() {
-				ch2 <- func() error {
-					var split int
-					var priority *flowPriority
-					for i, prio := range table.priorities { // descending order
-						if prio.priority > req.Priority {
-							split = i
-						} else if prio.priority == req.Priority {
-							priority = prio
-						} else {
-							break
-						}
-					}
-					if priority == nil {
-						priority = newFlowPriority(req.Priority)
-						table.priorities = append(table.priorities, nil)
-						copy(table.priorities[split+1:], table.priorities[split:])
-						table.priorities[split] = priority
-						// NOTE: inserting. below does not work.
-						// table.priorities = append(append(table.priorities[:split], priority), table.priorities[split:]...)
-					}
-					ch3 := make(chan error)
-					if e3 := sendCommand(priority.commands, func() {
-						ch3 <- func() error {
-							var reqMatch matchList
-							if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
-								return err
-							}
-
-							var flows []*flowEntry
-							if flow, err := newFlowEntry(req); err != nil {
-								return err
-							} else {
-								key := capKey(priority.caps, flow.fields)
-								if ent, ok := priority.flows[key]; ok {
-									overlaps := false
-									for _, f := range ent {
-										if overlap(f.fields, flow.fields) {
-											overlaps = true
-											break
-										}
-									}
-									if overlaps && (req.Flags&ofp4.OFPFF_CHECK_OVERLAP) != uint16(0) {
-										return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
-									}
-								}
-								flows = append(flows, flow)
-							}
-							for _, fs := range priority.flows {
-								flows = append(flows, fs...)
-							}
-							priority.rebuildIndex(flows)
-							return nil
-						}()
-					}); e3 != nil {
-						ch3 <- nil
-					}
-					return <-ch3
-				}()
-			}); e2 != nil {
-				ch2 <- nil
-			}
-			tableRes := <-ch2
-			if tableRes == nil {
-				table.activeCount++
-			}
-			return tableRes
-		}()
-	}); e1 != nil {
-		ch <- nil
+	var flow *flowEntry
+	if tflow, err := newFlowEntry(req); err != nil {
+		return err
+	} else {
+		flow = tflow
 	}
-	ret := <-ch
 
-	return ret
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	var table *flowTable
+	if trial, ok := pipe.flows[req.TableId]; ok {
+		table = trial
+	} else {
+		table = &flowTable{
+			lock: &sync.Mutex{},
+		}
+		pipe.flows[req.TableId] = table
+	}
+
+	table.lock.Lock()
+	defer table.lock.Unlock()
+
+	var split int
+	var priority *flowPriority
+	for i, prio := range table.priorities { // descending order
+		if prio.priority > req.Priority {
+			split = i
+		} else if prio.priority == req.Priority {
+			priority = prio
+		} else {
+			break
+		}
+	}
+	if priority == nil {
+		priority = &flowPriority{
+			lock:     &sync.Mutex{},
+			flows:    make(map[uint32][]*flowEntry),
+			priority: req.Priority,
+		}
+		table.priorities = append(table.priorities, nil)
+		copy(table.priorities[split+1:], table.priorities[split:])
+		table.priorities[split] = priority
+		// NOTE: inserting. below does not work.
+		// table.priorities = append(append(table.priorities[:split], priority), table.priorities[split:]...)
+	}
+
+	priority.lock.Lock()
+	defer priority.lock.Unlock()
+
+	key := capKey(priority.caps, flow.fields)
+	if ent, ok := priority.flows[key]; ok {
+		overlaps := false
+		for _, f := range ent {
+			if overlap(f.fields, flow.fields) {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps && (req.Flags&ofp4.OFPFF_CHECK_OVERLAP) != uint16(0) {
+			return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
+		}
+	}
+	flows := []*flowEntry{flow}
+	for _, fs := range priority.flows {
+		flows = append(flows, fs...)
+	}
+	priority.rebuildIndex(flows)
+	table.activeCount++
+	return nil
 }
