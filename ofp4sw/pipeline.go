@@ -24,7 +24,7 @@ type Pipeline struct {
 	flags      uint16 // ofp_config_flags, check capability
 }
 
-func NewPipeline() *Pipeline {
+func NewPipeline() Pipeline {
 	pipe := Pipeline{
 		lock:     &sync.Mutex{},
 		flows:    make(map[uint8]*flowTable),
@@ -33,7 +33,7 @@ func NewPipeline() *Pipeline {
 		meters:   make(map[uint32]*meter),
 	}
 	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
-	return &pipe
+	return pipe
 }
 
 type packetOut struct {
