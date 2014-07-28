@@ -3,6 +3,7 @@ package ofp4sw
 import (
 	"github.com/hkwi/gopenflow/ofp4"
 	"time"
+	"sync"
 )
 
 type packetDrop struct{}
@@ -17,7 +18,7 @@ type meter struct {
 	flagPkts    bool
 	flagBurst   bool
 	flagStats   bool
-	commands    chan func()
+	lock *sync.Mutex
 	created     time.Time
 	packetCount uint64
 	byteCount   uint64
@@ -29,131 +30,127 @@ type meter struct {
 }
 
 func (m *meter) process(data *frame) error {
-	ch := make(chan error)
-	m.commands <- func() {
-		ch <- func() error {
-			length := data.length
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	
+	length := data.length
 
-			now := time.Now()
-			meterInterval := float64(now.Sub(m.meterTime)) / float64(time.Second)
+	now := time.Now()
+	meterInterval := float64(now.Sub(m.meterTime)) / float64(time.Second)
 
-			if m.flagStats {
-				m.packetCount++
-				m.byteCount += uint64(length)
-			}
+	if m.flagStats {
+		m.packetCount++
+		m.byteCount += uint64(length)
+	}
 
-			inc := float64(length*8) / 1000.0 // kilobits
+	inc := float64(length*8) / 1000.0 // kilobits
+	if m.flagPkts {
+		inc = 1
+	}
+	if m.flagBurst {
+		for _, bi := range m.bands {
+			drain := meterInterval * float64(bi.getRate()) * 8 / 1000.0
 			if m.flagPkts {
-				inc = 1
+				drain = meterInterval * float64(bi.getRate())
 			}
-			if m.flagBurst {
-				for _, bi := range m.bands {
-					drain := meterInterval * float64(bi.getRate()) * 8 / 1000.0
-					if m.flagPkts {
-						drain = meterInterval * float64(bi.getRate())
-					}
-					switch b := bi.(type) {
-					case *bandDrop:
-						b.bucket -= drain
-						if b.bucket < 0 {
-							b.bucket = 0
-						}
-					case *bandDscpRemark:
-						b.bucket -= drain
-						if b.bucket < 0 {
-							b.bucket = 0
-						}
-					case *bandExperimenter:
-						b.bucket -= drain
-						if b.bucket < 0 {
-							b.bucket = 0
-						}
-					default:
-						panic("Unexpected band")
-					}
+			switch b := bi.(type) {
+			case *bandDrop:
+				b.bucket -= drain
+				if b.bucket < 0 {
+					b.bucket = 0
 				}
-				for _, bi := range m.bands {
-					switch b := bi.(type) {
-					case *bandDrop:
-						if b.bucket+inc > float64(b.burstSize) {
-							if m.flagStats {
-								b.packetCount++
-								b.byteCount += uint64(length)
-							}
-							return &packetDrop{}
-						}
-					case *bandDscpRemark:
-						if b.bucket+inc > float64(b.burstSize) {
-							if err := b.remark(data); err != nil {
-								return err
-							}
-							if m.flagStats {
-								b.packetCount++
-								b.byteCount += uint64(length)
-							}
-							return nil
-						}
-					case *bandExperimenter:
-						if b.bucket+inc > float64(b.burstSize) {
-							// do nothing
-							if m.flagStats {
-								b.packetCount++
-								b.byteCount += uint64(length)
-							}
-							return nil
-						}
-					default:
-						panic("Unexpected band")
-					}
+			case *bandDscpRemark:
+				b.bucket -= drain
+				if b.bucket < 0 {
+					b.bucket = 0
 				}
-				for _, bi := range m.bands {
-					switch b := bi.(type) {
-					case *bandDrop:
-						b.bucket += inc
-					case *bandDscpRemark:
-						b.bucket += inc
-					case *bandExperimenter:
-						b.bucket += inc
-					default:
-						panic("Unexpected band")
-					}
+			case *bandExperimenter:
+				b.bucket -= drain
+				if b.bucket < 0 {
+					b.bucket = 0
 				}
+			default:
+				panic("Unexpected band")
 			}
-
-			rate := (m.rate*baseInterval + inc) / (baseInterval + meterInterval)
-
-			if m.highestBand != nil && rate > float64(m.highestBand.getRate()) {
-				switch b := m.highestBand.(type) {
-				case *bandDrop:
+		}
+		for _, bi := range m.bands {
+			switch b := bi.(type) {
+			case *bandDrop:
+				if b.bucket+inc > float64(b.burstSize) {
 					if m.flagStats {
 						b.packetCount++
 						b.byteCount += uint64(length)
 					}
 					return &packetDrop{}
-				case *bandDscpRemark:
+				}
+			case *bandDscpRemark:
+				if b.bucket+inc > float64(b.burstSize) {
+					if err := b.remark(data); err != nil {
+						return err
+					}
 					if m.flagStats {
 						b.packetCount++
 						b.byteCount += uint64(length)
 					}
-					return b.remark(data)
-				case *bandExperimenter:
+					return nil
+				}
+			case *bandExperimenter:
+				if b.bucket+inc > float64(b.burstSize) {
 					// do nothing
 					if m.flagStats {
 						b.packetCount++
 						b.byteCount += uint64(length)
 					}
 					return nil
-				default:
-					panic("Unexpected band")
 				}
+			default:
+				panic("Unexpected band")
 			}
-			m.meterTime = now
-			m.rate = rate
-			return nil
-		}()
-		close(ch)
+		}
+		for _, bi := range m.bands {
+			switch b := bi.(type) {
+			case *bandDrop:
+				b.bucket += inc
+			case *bandDscpRemark:
+				b.bucket += inc
+			case *bandExperimenter:
+				b.bucket += inc
+			default:
+				panic("Unexpected band")
+			}
+		}
 	}
-	return <-ch
+
+	rate := (m.rate*baseInterval + inc) / (baseInterval + meterInterval)
+
+	if m.highestBand != nil && rate > float64(m.highestBand.getRate()) {
+		switch b := m.highestBand.(type) {
+		case *bandDrop:
+			if m.flagStats {
+				b.packetCount++
+				b.byteCount += uint64(length)
+			}
+			return &packetDrop{}
+		case *bandDscpRemark:
+			if m.flagStats {
+				b.packetCount++
+				b.byteCount += uint64(length)
+			}
+			return b.remark(data)
+		case *bandExperimenter:
+			// do nothing
+			if m.flagStats {
+				b.packetCount++
+				b.byteCount += uint64(length)
+			}
+			return nil
+		default:
+			panic("Unexpected band")
+		}
+	}
+	m.meterTime = now
+	m.rate = rate
+	return nil
 }
 
 type band interface {
@@ -251,36 +248,26 @@ func newMeter(msg ofp4.MeterMod) *meter {
 		}
 	}
 
-	m := meter{
-		commands:    make(chan func(), 16),
+	self := &meter{
+		lock: &sync.Mutex{},
 		created:     time.Now(),
 		bands:       bands,
 		highestBand: highestBand,
 	}
 	if msg.Flags&ofp4.OFPMF_PKTPS != 0 {
-		m.flagPkts = true
+		self.flagPkts = true
 	}
 	if msg.Flags&ofp4.OFPMF_BURST != 0 {
-		m.flagBurst = true
+		self.flagBurst = true
 	}
 	if msg.Flags&ofp4.OFPMF_STATS != 0 {
-		m.flagStats = true
+		self.flagStats = true
 	}
-	go func() {
-		for cmd := range m.commands {
-			if cmd != nil {
-				cmd()
-			} else {
-				break
-			}
-		}
-	}()
-	return &m
+	return self
 }
 
 func (pipe *Pipeline) deleteMeterInside(meterId uint32) error {
-	if meter, exists := pipe.meters[meterId]; exists {
-		meter.commands <- nil
+	if _, exists := pipe.meters[meterId]; exists {
 		delete(pipe.meters, meterId)
 		pipe.filterFlowsInside(flowFilter{
 			opUnregister: true,

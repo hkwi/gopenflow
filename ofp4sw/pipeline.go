@@ -15,7 +15,6 @@ import (
 
 type Pipeline struct {
 	lock     *sync.Mutex
-	commands chan func() // obsolete
 	flows    map[uint8]*flowTable
 	ports    map[uint32]portInternal
 	groups   map[uint32]*group
@@ -28,7 +27,6 @@ type Pipeline struct {
 func NewPipeline() *Pipeline {
 	pipe := Pipeline{
 		lock:     &sync.Mutex{},
-		commands: make(chan func(), 16),
 		flows:    make(map[uint8]*flowTable),
 		ports:    make(map[uint32]portInternal),
 		groups:   make(map[uint32]*group),
@@ -195,6 +193,7 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 
 						var ports []portInternal
 						if pout.outPort != ofp4.OFPP_ALL {
+							ports = make([]portInternal, 0, len(pipe.ports))
 							if outInt, ok := pipe.ports[pout.outPort]; ok {
 								ports = append(ports, outInt)
 							}

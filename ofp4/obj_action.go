@@ -116,11 +116,11 @@ type ActionGeneric struct {
 	Type uint16
 }
 
-func (obj ActionGeneric) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionGeneric) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], 8)
-	return
+	return data, nil
 }
 
 func (obj *ActionGeneric) UnmarshalBinary(data []byte) (err error) {
@@ -133,13 +133,14 @@ type ActionOutput struct {
 	MaxLen uint16
 }
 
-func (obj ActionOutput) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 16)
+func (obj ActionOutput) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 16)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_OUTPUT)
 	binary.BigEndian.PutUint16(data[2:4], 16)
 	binary.BigEndian.PutUint32(data[4:8], obj.Port)
 	binary.BigEndian.PutUint16(data[8:10], obj.MaxLen)
-	return
+	// 6 padding
+	return data, nil
 }
 
 func (obj *ActionOutput) UnmarshalBinary(data []byte) (err error) {
@@ -152,12 +153,13 @@ type ActionMplsTtl struct {
 	MplsTtl uint8
 }
 
-func (obj ActionMplsTtl) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionMplsTtl) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_SET_MPLS_TTL)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	data[4] = obj.MplsTtl
-	return
+	// 3 padding
+	return data, nil
 }
 
 func (obj *ActionMplsTtl) UnmarshalBinary(data []byte) (err error) {
@@ -170,12 +172,13 @@ type ActionPush struct {
 	Ethertype uint16
 }
 
-func (obj ActionPush) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionPush) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	binary.BigEndian.PutUint16(data[4:6], obj.Ethertype)
-	return
+	// 2 padding
+	return data, nil
 }
 
 func (obj *ActionPush) UnmarshalBinary(data []byte) (err error) {
@@ -188,12 +191,13 @@ type ActionPopMpls struct {
 	Ethertype uint16
 }
 
-func (obj ActionPopMpls) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionPopMpls) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_POP_MPLS)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	binary.BigEndian.PutUint16(data[4:6], obj.Ethertype)
-	return
+	// 2 padding
+	return data, nil
 }
 
 func (obj *ActionPopMpls) UnmarshalBinary(data []byte) (err error) {
@@ -205,12 +209,12 @@ type ActionSetQueue struct {
 	QueueId uint32
 }
 
-func (obj ActionSetQueue) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionSetQueue) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_SET_QUEUE)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	binary.BigEndian.PutUint32(data[4:8], obj.QueueId)
-	return
+	return data, nil
 }
 
 func (obj *ActionSetQueue) UnmarshalBinary(data []byte) (err error) {
@@ -222,12 +226,12 @@ type ActionGroup struct {
 	GroupId uint32
 }
 
-func (obj ActionGroup) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionGroup) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_GROUP)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	binary.BigEndian.PutUint32(data[4:8], obj.GroupId)
-	return
+	return data, nil
 }
 
 func (obj *ActionGroup) UnmarshalBinary(data []byte) (err error) {
@@ -239,34 +243,36 @@ type ActionNwTtl struct {
 	NwTtl uint8
 }
 
-func (obj ActionNwTtl) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj ActionNwTtl) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_SET_NW_TTL)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	data[4] = obj.NwTtl
-	return
+	// 3 padding
+	return data, nil
 }
 
-func (obj *ActionNwTtl) UnmarshalBinary(data []byte) (err error) {
+func (obj *ActionNwTtl) UnmarshalBinary(data []byte) error {
 	obj.NwTtl = data[4]
-	return
+	return nil
 }
 
 type ActionSetField struct {
 	Field []byte
 }
 
-func (obj ActionSetField) MarshalBinary() (data []byte, err error) {
-	data = append(make([]byte, 4), obj.Field...)
-	length := len(data)
+func (obj ActionSetField) MarshalBinary() ([]byte, error) {
+	length := align8(4 + len(obj.Field))
+	data := make([]byte, length)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_SET_FIELD)
-	binary.BigEndian.PutUint16(data[2:4], uint16(align8(length)))
-	data = append(data, make([]byte, align8(length)-length)...)
-	return
+	binary.BigEndian.PutUint16(data[2:4], uint16(length))
+	copy(data[4:], obj.Field)
+	return data, nil
 }
+
 func (obj *ActionSetField) UnmarshalBinary(data []byte) (err error) {
-	length := int(binary.BigEndian.Uint16(data[2:4]))
-	obj.Field = data[4:length]
+	oxm_length := int(data[7] & 0x7F)
+	obj.Field = data[4 : 8+oxm_length]
 	return
 }
 
@@ -276,13 +282,12 @@ type ActionExperimenter struct {
 }
 
 func (obj ActionExperimenter) MarshalBinary() ([]byte, error) {
-	data := make([]byte, align8(8+len(obj.Data)))
+	length := 8 + align8(len(obj.Data))
+	data := make([]byte, length)
 	binary.BigEndian.PutUint16(data[0:2], OFPAT_EXPERIMENTER)
-	binary.BigEndian.PutUint16(data[2:4], uint16(len(data)))
+	binary.BigEndian.PutUint16(data[2:4], uint16(length))
 	binary.BigEndian.PutUint32(data[4:8], obj.Experimenter)
-	for i, d := range obj.Data {
-		data[8+i] = d
-	}
+	copy(data[8:], obj.Data)
 	return data, nil
 }
 

@@ -83,28 +83,31 @@ type InstructionId struct {
 	Type uint16
 }
 
-func (obj InstructionId) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 4)
+func (obj InstructionId) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 4)
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], 4)
-	return
+	return data, nil
 }
-func (obj *InstructionId) UnmarshalBinary(data []byte) (err error) {
+
+func (obj *InstructionId) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
-	return
+	return nil
 }
 
 type InstructionGotoTable struct {
 	TableId uint8
 }
 
-func (obj InstructionGotoTable) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj InstructionGotoTable) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPIT_GOTO_TABLE)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	data[4] = obj.TableId
-	return
+	// 3 padding
+	return data, nil
 }
+
 func (obj *InstructionGotoTable) UnmarshalBinary(data []byte) (err error) {
 	obj.TableId = data[4]
 	return
@@ -115,14 +118,15 @@ type InstructionWriteMetadata struct {
 	MetadataMask uint64
 }
 
-func (obj InstructionWriteMetadata) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 24)
+func (obj InstructionWriteMetadata) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 24)
 	binary.BigEndian.PutUint16(data[0:2], OFPIT_WRITE_METADATA)
 	binary.BigEndian.PutUint16(data[2:4], 24)
 	binary.BigEndian.PutUint64(data[8:16], obj.Metadata)
 	binary.BigEndian.PutUint64(data[16:24], obj.MetadataMask)
-	return
+	return data, nil
 }
+
 func (obj *InstructionWriteMetadata) UnmarshalBinary(data []byte) (err error) {
 	obj.Metadata = binary.BigEndian.Uint64(data[8:16])
 	obj.MetadataMask = binary.BigEndian.Uint64(data[16:24])
@@ -135,17 +139,20 @@ type InstructionActions struct {
 }
 
 func (obj InstructionActions) MarshalBinary() ([]byte, error) {
-	data := make([]byte, 8)
-	binary.BigEndian.PutUint16(data[0:2], obj.Type)
-	if buf, err := actionList(obj.Actions).MarshalBinary(); err != nil {
+	actions, err := actionList(obj.Actions).MarshalBinary()
+	if err != nil {
 		return nil, err
-	} else {
-		data = append(data, buf...)
 	}
+	data := make([]byte, 8+len(actions))
+	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], uint16(len(data)))
+	// 4 padding
+	copy(data[8:], actions)
 	return data, nil
 }
+
 func (obj *InstructionActions) UnmarshalBinary(data []byte) error {
+	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	var actions actionList
 	if err := actions.UnmarshalBinary(data[8:length]); err != nil {
@@ -153,7 +160,6 @@ func (obj *InstructionActions) UnmarshalBinary(data []byte) error {
 	} else {
 		obj.Actions = []Action(actions)
 	}
-	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	return nil
 }
 
@@ -161,13 +167,14 @@ type InstructionMeter struct {
 	MeterId uint32
 }
 
-func (obj InstructionMeter) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj InstructionMeter) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint16(data[0:2], OFPIT_METER)
 	binary.BigEndian.PutUint16(data[2:4], 8)
 	binary.BigEndian.PutUint32(data[4:8], obj.MeterId)
-	return
+	return data, nil
 }
+
 func (obj *InstructionMeter) UnmarshalBinary(data []byte) (err error) {
 	obj.MeterId = binary.BigEndian.Uint32(data[4:8])
 	return
@@ -178,19 +185,18 @@ type InstructionExperimenter struct {
 	Data         []byte
 }
 
-func (obj InstructionExperimenter) MarshalBinary() (data []byte, err error) {
-	prefix := make([]byte, 8)
-	binary.BigEndian.PutUint16(prefix[0:2], OFPIT_EXPERIMENTER)
-	binary.BigEndian.PutUint16(prefix[2:4], uint16(8+len(obj.Data)))
-	binary.BigEndian.PutUint32(prefix[4:8], obj.Experimenter)
-
-	data = append(prefix, obj.Data...)
-	return
+func (obj InstructionExperimenter) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8+len(obj.Data))
+	binary.BigEndian.PutUint16(data[0:2], OFPIT_EXPERIMENTER)
+	binary.BigEndian.PutUint16(data[2:4], uint16(8+len(obj.Data)))
+	binary.BigEndian.PutUint32(data[4:8], obj.Experimenter)
+	copy(data[8:], obj.Data)
+	return data, nil
 }
 
-func (obj *InstructionExperimenter) UnmarshalBinary(data []byte) (err error) {
+func (obj *InstructionExperimenter) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	obj.Experimenter = binary.BigEndian.Uint32(data[4:8])
 	obj.Data = data[8:length]
-	return
+	return nil
 }

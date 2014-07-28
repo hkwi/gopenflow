@@ -506,13 +506,13 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 		pipe.getController().missSendLen = config.MissSendLen
 	case ofp4.OFPT_PACKET_OUT:
 		req := ofm.Body.(*ofp4.PacketOut)
-		ctrl := pipe.getController()
 		var pouts []packetOut
 		var eth []byte
 		if req.BufferId == ofp4.OFP_NO_BUFFER {
 			eth = req.Data
 		} else {
 			eth = func() []byte {
+				ctrl := pipe.getController()
 				ctrl.lock.Lock()
 				defer ctrl.lock.Unlock()
 

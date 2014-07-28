@@ -17,7 +17,7 @@ type Band encoding.BinaryMarshaler
 
 type Bytes []byte
 
-func (obj Bytes) MarshalBinary() (data []byte, err error) {
+func (obj Bytes) MarshalBinary() ([]byte, error) {
 	return []byte(obj), nil
 }
 
@@ -137,7 +137,7 @@ func (obj Message) MarshalBinary() ([]byte, error) {
 	return data, nil
 }
 
-func (obj *Message) UnmarshalBinary(data []byte) (err error) {
+func (obj *Message) UnmarshalBinary(data []byte) error {
 	obj.Version = data[0]
 	obj.Type = data[1]
 	length := int(binary.BigEndian.Uint16(data[2:4]))
@@ -146,8 +146,7 @@ func (obj *Message) UnmarshalBinary(data []byte) (err error) {
 	var body encoding.BinaryMarshaler
 	switch obj.Type {
 	default:
-		err = errors.New("Unknown OFPT_")
-		return
+		return errors.New("Unknown OFPT_")
 	case OFPT_FEATURES_REQUEST, OFPT_GET_CONFIG_REQUEST, OFPT_BARRIER_REQUEST, OFPT_BARRIER_REPLY, OFPT_GET_ASYNC_REQUEST:
 		// no body
 	case OFPT_HELLO:
@@ -159,12 +158,11 @@ func (obj *Message) UnmarshalBinary(data []byte) (err error) {
 			payload := data[cur : cur+eLength]
 			switch eType {
 			default:
-				err = errors.New("Unknown OFPHET_")
-				return
+				return errors.New("Unknown OFPHET_")
 			case OFPHET_VERSIONBITMAP:
 				element := new(HelloElementVersionbitmap)
-				if err = element.UnmarshalBinary(payload); err != nil {
-					return
+				if err := element.UnmarshalBinary(payload); err != nil {
+					return err
 				}
 				elements = append(elements, element)
 			}
@@ -213,59 +211,59 @@ func (obj *Message) UnmarshalBinary(data []byte) (err error) {
 		body = new(MeterMod)
 	}
 	if body != nil {
-		if err = body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:length]); err != nil {
-			return
+		if err := body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:length]); err != nil {
+			return err
 		}
 		obj.Body = body
 	}
-	return
+	return nil
 }
 
 type HelloElementVersionbitmap struct {
 	Bitmaps []uint32
 }
 
-func (obj HelloElementVersionbitmap) MarshalBinary() (data []byte, err error) {
+func (obj HelloElementVersionbitmap) MarshalBinary() ([]byte, error) {
 	length := 4 + 4*len(obj.Bitmaps)
-	data = make([]byte, length)
+	data := make([]byte, length)
 	binary.BigEndian.PutUint16(data[0:2], OFPHET_VERSIONBITMAP)
 	binary.BigEndian.PutUint16(data[2:4], uint16(length))
 	for i, element := range obj.Bitmaps {
 		off := 4 + 4*i
 		binary.BigEndian.PutUint32(data[off:off+4], element)
 	}
-	return
+	return data, nil
 }
 
-func (obj *HelloElementVersionbitmap) UnmarshalBinary(data []byte) (err error) {
+func (obj *HelloElementVersionbitmap) UnmarshalBinary(data []byte) error {
 	obj.Bitmaps = make([]uint32, len(data)/4-1)
 	for i, _ := range obj.Bitmaps {
 		off := 4 + 4*i
 		obj.Bitmaps[i] = binary.BigEndian.Uint32(data[off : off+4])
 	}
-	return
+	return nil
 }
 
-// Please not that Error can be used as error.
+// Please note that Error can be used as error.
 type Error struct {
 	Type uint16
 	Code uint16
 	Data []byte
 }
 
-func (obj Error) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 4+len(obj.Data))
-	copy(data[4:], obj.Data)
+func (obj Error) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 4+len(obj.Data))
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], obj.Code)
-	return
+	copy(data[4:], obj.Data)
+	return data, nil
 }
 
-func (obj *Error) UnmarshalBinary(data []byte) (err error) {
+func (obj *Error) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.Code = binary.BigEndian.Uint16(data[2:4])
 	obj.Data = data[4:]
-	return
+	return nil
 }
 
 func (obj Error) Error() string {
@@ -278,19 +276,19 @@ type Experimenter struct {
 	Data         []byte
 }
 
-func (obj Experimenter) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8+len(obj.Data))
+func (obj Experimenter) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8+len(obj.Data))
 	binary.BigEndian.PutUint32(data[0:4], obj.Experimenter)
 	binary.BigEndian.PutUint32(data[4:8], obj.ExpType)
 	copy(data[8:], obj.Data)
-	return
+	return data, nil
 }
 
-func (obj *Experimenter) UnmarshalBinary(data []byte) (err error) {
+func (obj *Experimenter) UnmarshalBinary(data []byte) error {
 	obj.Experimenter = binary.BigEndian.Uint32(data[0:4])
 	obj.ExpType = binary.BigEndian.Uint32(data[4:8])
 	obj.Data = data[8:]
-	return
+	return nil
 }
 
 type SwitchFeatures struct {
@@ -301,23 +299,24 @@ type SwitchFeatures struct {
 	Capabilities uint32
 }
 
-func (obj SwitchFeatures) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 24)
+func (obj SwitchFeatures) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 24)
 	binary.BigEndian.PutUint64(data[0:8], obj.DatapathId)
 	binary.BigEndian.PutUint32(data[8:12], obj.NBuffers)
 	data[12] = obj.NTables
 	data[13] = obj.AuxiliaryId
 	binary.BigEndian.PutUint32(data[16:20], obj.Capabilities)
-	return
+	// 4 padding
+	return data, nil
 }
 
-func (obj *SwitchFeatures) UnmarshalBinary(data []byte) (err error) {
+func (obj *SwitchFeatures) UnmarshalBinary(data []byte) error {
 	obj.DatapathId = binary.BigEndian.Uint64(data[0:8])
 	obj.NBuffers = binary.BigEndian.Uint32(data[8:12])
 	obj.NTables = data[12]
 	obj.AuxiliaryId = data[13]
 	obj.Capabilities = binary.BigEndian.Uint32(data[16:20])
-	return
+	return nil
 }
 
 type SwitchConfig struct {
@@ -325,17 +324,17 @@ type SwitchConfig struct {
 	MissSendLen uint16
 }
 
-func (obj SwitchConfig) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 4)
+func (obj SwitchConfig) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 4)
 	binary.BigEndian.PutUint16(data[0:2], obj.Flags)
 	binary.BigEndian.PutUint16(data[2:4], obj.MissSendLen)
-	return
+	return data, nil
 }
 
-func (obj *SwitchConfig) UnmarshalBinary(data []byte) (err error) {
+func (obj *SwitchConfig) UnmarshalBinary(data []byte) error {
 	obj.Flags = binary.BigEndian.Uint16(data[0:2])
 	obj.MissSendLen = binary.BigEndian.Uint16(data[2:4])
-	return
+	return nil
 }
 
 type Match struct {
@@ -343,23 +342,20 @@ type Match struct {
 	OxmFields []byte
 }
 
-func (obj Match) MarshalBinary() (data []byte, err error) {
+func (obj Match) MarshalBinary() ([]byte, error) {
 	length := 4 + len(obj.OxmFields) // excluding padding
-
-	data = make([]byte, align8(length))
+	data := make([]byte, align8(length))
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], uint16(length))
-	for i, d := range obj.OxmFields {
-		data[4+i] = d
-	}
-	return
+	copy(data[4:], obj.OxmFields)
+	return data, nil
 }
 
-func (obj *Match) UnmarshalBinary(data []byte) (err error) {
+func (obj *Match) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.OxmFields = data[4:length]
-	return
+	return nil
 }
 
 type PacketIn struct {
@@ -372,42 +368,34 @@ type PacketIn struct {
 	Data     []byte
 }
 
-func (obj PacketIn) MarshalBinary() (data []byte, err error) {
-	var match []byte
-	if match, err = obj.Match.MarshalBinary(); err != nil {
-		return
+func (obj PacketIn) MarshalBinary() ([]byte, error) {
+	match, err := obj.Match.MarshalBinary()
+	if err != nil {
+		return nil, err
 	}
-
-	data = make([]byte, 16+len(match)+2+len(obj.Data))
+	data := make([]byte, 16+len(match)+2+len(obj.Data))
 	binary.BigEndian.PutUint32(data[0:4], obj.BufferId)
 	binary.BigEndian.PutUint16(data[4:6], obj.TotalLen)
 	data[6] = obj.Reason
 	data[7] = obj.TableId
 	binary.BigEndian.PutUint64(data[8:16], obj.Cookie)
-	for i, d := range match {
-		data[16+i] = d
-	}
-	off := 16 + len(match) + 2
-	for i, d := range obj.Data {
-		data[off+i] = d
-	}
-	return
+	copy(data[16:], match)
+	copy(data[16+len(match)+2:], obj.Data)
+	return data, nil
 }
 
-func (obj *PacketIn) UnmarshalBinary(data []byte) (err error) {
+func (obj *PacketIn) UnmarshalBinary(data []byte) error {
 	matchLength := int(binary.BigEndian.Uint16(data[18:20]))
-	if err = obj.Match.UnmarshalBinary(data[16 : 16+matchLength]); err != nil {
-		return
+	if err := obj.Match.UnmarshalBinary(data[16 : 16+matchLength]); err != nil {
+		return err
 	}
-
 	obj.BufferId = binary.BigEndian.Uint32(data[0:4])
 	obj.TotalLen = binary.BigEndian.Uint16(data[4:6])
 	obj.Reason = data[6]
 	obj.TableId = data[7]
 	obj.Cookie = binary.BigEndian.Uint64(data[8:16])
-
 	obj.Data = data[16+matchLength+2:]
-	return
+	return nil
 }
 
 type FlowRemoved struct {
@@ -444,12 +432,11 @@ func (obj FlowRemoved) MarshalBinary() ([]byte, error) {
 	return data, nil
 }
 
-func (obj *FlowRemoved) UnmarshalBinary(data []byte) (err error) {
+func (obj *FlowRemoved) UnmarshalBinary(data []byte) error {
 	matchLength := int(binary.BigEndian.Uint16(data[42:44]))
-	if err = obj.Match.UnmarshalBinary(data[40 : 40+matchLength]); err != nil {
-		return
+	if err := obj.Match.UnmarshalBinary(data[40 : 40+matchLength]); err != nil {
+		return err
 	}
-
 	obj.Cookie = binary.BigEndian.Uint64(data[0:8])
 	obj.Priority = binary.BigEndian.Uint16(data[8:10])
 	obj.Reason = data[10]
@@ -460,7 +447,7 @@ func (obj *FlowRemoved) UnmarshalBinary(data []byte) (err error) {
 	obj.HardTimeout = binary.BigEndian.Uint16(data[22:24])
 	obj.PacketCount = binary.BigEndian.Uint64(data[24:32])
 	obj.ByteCount = binary.BigEndian.Uint64(data[32:40])
-	return
+	return nil
 }
 
 type Port struct {
@@ -477,16 +464,16 @@ type Port struct {
 	MaxSpeed   uint32
 }
 
-func (obj Port) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 64)
+func (obj Port) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 64)
 	binary.BigEndian.PutUint32(data[0:4], obj.PortNo)
-	for i, addr := range obj.HwAddr {
-		data[8+i] = addr
-	}
-	for i, c := range []byte(obj.Name) {
-		if i < OFP_MAX_PORT_NAME_LEN {
-			data[16+i] = c
-		}
+	// 4 padding
+	copy(data[8:], obj.HwAddr[:])
+	// 2 padding
+	if len(obj.Name) < OFP_MAX_PORT_NAME_LEN {
+		copy(data[16:], obj.Name)
+	} else {
+		copy(data[16:], obj.Name[:OFP_MAX_PORT_NAME_LEN])
 	}
 	binary.BigEndian.PutUint32(data[32:36], obj.Config)
 	binary.BigEndian.PutUint32(data[36:40], obj.State)
@@ -496,10 +483,10 @@ func (obj Port) MarshalBinary() (data []byte, err error) {
 	binary.BigEndian.PutUint32(data[52:56], obj.Peer)
 	binary.BigEndian.PutUint32(data[56:60], obj.CurrSpeed)
 	binary.BigEndian.PutUint32(data[60:64], obj.MaxSpeed)
-	return
+	return data, nil
 }
 
-func (obj *Port) UnmarshalBinary(data []byte) (err error) {
+func (obj *Port) UnmarshalBinary(data []byte) error {
 	obj.PortNo = binary.BigEndian.Uint32(data[0:4])
 	for i, addr := range data[8:14] {
 		obj.HwAddr[i] = addr
@@ -513,7 +500,7 @@ func (obj *Port) UnmarshalBinary(data []byte) (err error) {
 	obj.Peer = binary.BigEndian.Uint32(data[52:56])
 	obj.CurrSpeed = binary.BigEndian.Uint32(data[56:60])
 	obj.MaxSpeed = binary.BigEndian.Uint32(data[60:64])
-	return
+	return nil
 }
 
 type PortStatus struct {
@@ -533,10 +520,12 @@ func (obj PortStatus) MarshalBinary() ([]byte, error) {
 	return data, nil
 }
 
-func (obj *PortStatus) UnmarshalBinary(data []byte) (err error) {
+func (obj *PortStatus) UnmarshalBinary(data []byte) error {
 	obj.Reason = data[0]
-	err = obj.Desc.UnmarshalBinary(data[8:])
-	return
+	if err := obj.Desc.UnmarshalBinary(data[8:]); err != nil {
+		return err
+	}
+	return nil
 }
 
 type PacketOut struct {
@@ -591,7 +580,7 @@ type FlowMod struct {
 	Instructions []Instruction
 }
 
-func (obj FlowMod) MarshalBinary() (data []byte, err error) {
+func (obj FlowMod) MarshalBinary() ([]byte, error) {
 	match, e1 := obj.Match.MarshalBinary()
 	if e1 != nil {
 		return nil, e1
@@ -600,7 +589,7 @@ func (obj FlowMod) MarshalBinary() (data []byte, err error) {
 	if e2 != nil {
 		return nil, e2
 	}
-	data = make([]byte, 40+len(match)+len(instructions))
+	data := make([]byte, 40+len(match)+len(instructions))
 	binary.BigEndian.PutUint64(data[0:8], obj.Cookie)
 	binary.BigEndian.PutUint64(data[8:16], obj.CookieMask)
 	data[16] = obj.TableId
@@ -642,8 +631,6 @@ func (obj *FlowMod) UnmarshalBinary(data []byte) error {
 	obj.Flags = binary.BigEndian.Uint16(data[36:38])
 	return nil
 }
-
-// xxx:
 
 type GroupMod struct {
 	Command uint16
@@ -730,19 +717,17 @@ type PortMod struct {
 	Advertise uint32
 }
 
-func (obj PortMod) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 32)
+func (obj PortMod) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 32)
 	binary.BigEndian.PutUint32(data[0:4], obj.PortNo)
-	for i, addr := range obj.HwAddr {
-		data[8+i] = addr
-	}
+	copy(data[8:], obj.HwAddr[:])
 	binary.BigEndian.PutUint32(data[16:20], obj.Config)
 	binary.BigEndian.PutUint32(data[20:24], obj.Mask)
 	binary.BigEndian.PutUint32(data[24:28], obj.Advertise)
-	return
+	return data, nil
 }
 
-func (obj *PortMod) UnmarshalBinary(data []byte) (err error) {
+func (obj *PortMod) UnmarshalBinary(data []byte) error {
 	obj.PortNo = binary.BigEndian.Uint32(data[0:4])
 	for i, _ := range obj.HwAddr {
 		obj.HwAddr[i] = data[8+i]
@@ -750,7 +735,7 @@ func (obj *PortMod) UnmarshalBinary(data []byte) (err error) {
 	obj.Config = binary.BigEndian.Uint32(data[16:20])
 	obj.Mask = binary.BigEndian.Uint32(data[20:24])
 	obj.Advertise = binary.BigEndian.Uint32(data[24:28])
-	return
+	return nil
 }
 
 type TableMod struct {
@@ -758,32 +743,32 @@ type TableMod struct {
 	Config  uint32
 }
 
-func (obj TableMod) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj TableMod) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	data[0] = obj.TableId
 	binary.BigEndian.PutUint32(data[4:8], obj.Config)
-	return
+	return data, nil
 }
 
-func (obj *TableMod) UnmarshalBinary(data []byte) (err error) {
+func (obj *TableMod) UnmarshalBinary(data []byte) error {
 	obj.TableId = data[0]
 	obj.Config = binary.BigEndian.Uint32(data[4:8])
-	return
+	return nil
 }
 
 type QueueGetConfigRequest struct {
 	Port uint32
 }
 
-func (obj QueueGetConfigRequest) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 8)
+func (obj QueueGetConfigRequest) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 8)
 	binary.BigEndian.PutUint32(data[0:4], obj.Port)
-	return
+	return data, nil
 }
 
-func (obj *QueueGetConfigRequest) UnmarshalBinary(data []byte) (err error) {
+func (obj *QueueGetConfigRequest) UnmarshalBinary(data []byte) error {
 	obj.Port = binary.BigEndian.Uint32(data[0:4])
-	return
+	return nil
 }
 
 type QueueGetConfigReply struct {
@@ -804,20 +789,20 @@ func (obj QueueGetConfigReply) MarshalBinary() ([]byte, error) {
 	return data, nil
 }
 
-func (obj *QueueGetConfigReply) UnmarshalBinary(data []byte) (err error) {
+func (obj *QueueGetConfigReply) UnmarshalBinary(data []byte) error {
 	var queues []PacketQueue
 	for cur := 16; cur < len(data); {
 		length := int(binary.BigEndian.Uint16(data[8+cur : 10+cur]))
 		queue := new(PacketQueue)
-		if err = queue.UnmarshalBinary(data[cur : cur+length]); err != nil {
-			return
+		if err := queue.UnmarshalBinary(data[cur : cur+length]); err != nil {
+			return err
 		}
 		queues = append(queues, *queue)
 		cur += length
 	}
 	obj.Port = binary.BigEndian.Uint32(data[0:4])
 	obj.Queues = queues
-	return
+	return nil
 }
 
 type PacketQueue struct {
@@ -840,14 +825,16 @@ func (obj PacketQueue) MarshalBinary() ([]byte, error) {
 	return data, nil
 }
 
-func (obj *PacketQueue) UnmarshalBinary(data []byte) (err error) {
-	length := int(binary.BigEndian.Uint16(data[8:10]))
-	if obj.Properties, err = queuePropertiesUnmarshalBinary(data[16:length]); err != nil {
-		return
-	}
+func (obj *PacketQueue) UnmarshalBinary(data []byte) error {
 	obj.QueueId = binary.BigEndian.Uint32(data[0:4])
 	obj.Port = binary.BigEndian.Uint32(data[4:8])
-	return
+	length := int(binary.BigEndian.Uint16(data[8:10]))
+	var queueProps queueProperties
+	if err := queueProps.UnmarshalBinary(data[16:length]); err != nil {
+		return err
+	}
+	obj.Properties = []encoding.BinaryMarshaler(queueProps)
+	return nil
 }
 
 type RoleRequest struct {
@@ -855,17 +842,17 @@ type RoleRequest struct {
 	GenerationId uint64
 }
 
-func (obj RoleRequest) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 16)
+func (obj RoleRequest) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 16)
 	binary.BigEndian.PutUint32(data[0:4], obj.Role)
 	binary.BigEndian.PutUint64(data[8:16], obj.GenerationId)
-	return
+	return data, nil
 }
 
-func (obj *RoleRequest) UnmarshalBinary(data []byte) (err error) {
+func (obj *RoleRequest) UnmarshalBinary(data []byte) error {
 	obj.Role = binary.BigEndian.Uint32(data[0:4])
 	obj.GenerationId = binary.BigEndian.Uint64(data[8:16])
-	return
+	return nil
 }
 
 type AsyncConfig struct {
@@ -874,8 +861,8 @@ type AsyncConfig struct {
 	FlowRemovedMask [2]uint32
 }
 
-func (obj AsyncConfig) MarshalBinary() (data []byte, err error) {
-	data = make([]byte, 24)
+func (obj AsyncConfig) MarshalBinary() ([]byte, error) {
+	data := make([]byte, 24)
 	for i, num := range obj.PacketInMask {
 		pos := i * 4
 		binary.BigEndian.PutUint32(data[pos:4+pos], num)
@@ -888,10 +875,10 @@ func (obj AsyncConfig) MarshalBinary() (data []byte, err error) {
 		pos := i*4 + 16
 		binary.BigEndian.PutUint32(data[pos:4+pos], num)
 	}
-	return
+	return data, nil
 }
 
-func (obj *AsyncConfig) UnmarshalBinary(data []byte) (err error) {
+func (obj *AsyncConfig) UnmarshalBinary(data []byte) error {
 	for i, _ := range obj.PacketInMask {
 		pos := i * 4
 		obj.PacketInMask[i] = binary.BigEndian.Uint32(data[pos : 4+pos])
@@ -904,7 +891,7 @@ func (obj *AsyncConfig) UnmarshalBinary(data []byte) (err error) {
 		pos := i*4 + 16
 		obj.FlowRemovedMask[i] = binary.BigEndian.Uint32(data[pos : 4+pos])
 	}
-	return
+	return nil
 }
 
 type MeterMod struct {

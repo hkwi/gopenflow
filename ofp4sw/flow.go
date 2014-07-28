@@ -171,7 +171,7 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	for _, act := range rule.instApply {
 		if aret, err := act.process(data, pipe); err != nil {
 			log.Print(err)
-		} else {
+		} else if aret != nil {
 			result.groups = append(result.groups, aret.groups...)
 			result.outputs = append(result.outputs, aret.outputs...)
 		}
@@ -190,10 +190,10 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	if rule.instGoto != 0 {
 		result.tableId = rule.instGoto
 	} else {
-		tmp := data.clone()
-		aret := actionSet(data.actionSet).process(tmp, pipe)
-		result.groups = append(result.groups, aret.groups...)
-		result.outputs = append(result.outputs, aret.outputs...)
+		if aret := actionSet(data.actionSet).process(data, pipe); aret != nil {
+			result.groups = append(result.groups, aret.groups...)
+			result.outputs = append(result.outputs, aret.outputs...)
+		}
 	}
 	return result
 }

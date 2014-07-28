@@ -76,7 +76,7 @@ func NewConnControlChannel(con net.Conn, cb func()) ControlChannel {
 		for {
 			err := func() error {
 				for cur := 0; cur < 4; {
-					if num, err := con2.Read(head); err != nil {
+					if num, err := con2.Read(head[cur:]); err != nil {
 						return err
 					} else {
 						cur += num
