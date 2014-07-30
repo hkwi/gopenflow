@@ -54,12 +54,16 @@ type group struct {
 func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 	var result flowEntryResult
 
-	g.lock.Lock()
-	defer g.lock.Unlock()
+	buckets := make([]bucket, 0, len(g.buckets))
+	func(){
+		g.lock.Lock()
+		defer g.lock.Unlock()
+		buckets = append(buckets, g.buckets...)
+	}()
 
 	switch g.groupType {
 	case ofp4.OFPGT_ALL, ofp4.OFPGT_INDIRECT:
-		for _, b := range g.buckets {
+		for _, b := range buckets {
 			fdata := data.clone()
 			ret := actionSet(b.actionSet).process(fdata, pipe)
 			result.outputs = append(result.outputs, ret.outputs...)
@@ -67,12 +71,12 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 		}
 	case ofp4.OFPGT_SELECT:
 		weightSum := float64(0)
-		for _, b := range g.buckets {
+		for _, b := range buckets {
 			weightSum += float64(b.weight)
 		}
 		step := weightSum * float64(data.hash()) / float64(math.MaxUint32)
 		weightSum = 0.0
-		for _, b := range g.buckets {
+		for _, b := range buckets {
 			weightSum += float64(b.weight)
 			if step <= weightSum {
 				fdata := data.clone()
@@ -83,7 +87,7 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 			}
 		}
 	case ofp4.OFPGT_FF:
-		for _, b := range g.buckets {
+		for _, b := range buckets {
 			live := false
 			if b.watchPort != ofp4.OFPP_ANY {
 				live = func() bool {

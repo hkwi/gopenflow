@@ -59,20 +59,18 @@ type lookupResult struct {
 }
 
 func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
-	var priorities []*flowPriority
+	priorities := make([]*flowPriority, 0, len(table.priorities))
 	func() {
 		table.lock.Lock()
 		defer table.lock.Unlock()
-
 		table.lookupCount++
-		priorities = table.priorities
+		priorities = append(priorities, table.priorities...)
 	}()
 	for _, prio := range priorities {
 		if en := prio.matchFrame(data); en != nil {
 			func() {
 				table.lock.Lock()
 				defer table.lock.Unlock()
-
 				table.matchCount++
 			}()
 			return en, prio.priority
@@ -85,7 +83,7 @@ func (priority flowPriority) matchFrame(data frame) *flowEntry {
 	entries := func() []*flowEntry {
 		priority.lock.Lock()
 		defer priority.lock.Unlock()
-
+	
 		hasher := fnv.New32()
 		for _, p1 := range priority.caps {
 			if buf, err := data.getValue(p1); err != nil {
@@ -96,7 +94,7 @@ func (priority flowPriority) matchFrame(data frame) *flowEntry {
 			}
 		}
 		if entries, ok := priority.flows[hasher.Sum32()]; ok {
-			return entries
+			return append([]*flowEntry{}, entries...)
 		}
 		return nil
 	}()

@@ -30,13 +30,13 @@ type meter struct {
 }
 
 func (m *meter) process(data *frame) error {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	
 	length := data.length
 
 	now := time.Now()
 	meterInterval := float64(now.Sub(m.meterTime)) / float64(time.Second)
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
 	if m.flagStats {
 		m.packetCount++

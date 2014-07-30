@@ -188,12 +188,15 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 			for pouts := range serialOut {
 				for _, pout := range pouts {
 					ports := func() []portInternal {
-						pipe.lock.Lock()
-						defer pipe.lock.Unlock()
-
 						var ports []portInternal
 						if pout.outPort != ofp4.OFPP_ALL {
 							ports = make([]portInternal, 0, len(pipe.ports))
+						}
+						
+						pipe.lock.Lock()
+						defer pipe.lock.Unlock()
+						
+						if pout.outPort != ofp4.OFPP_ALL {
 							if outInt, ok := pipe.ports[pout.outPort]; ok {
 								ports = append(ports, outInt)
 							}
@@ -272,10 +275,11 @@ func (pipe Pipeline) AddControlChannel(channel ControlChannel) error {
 }
 
 func (pipe Pipeline) getFlowTables(tableId uint8) map[uint8]*flowTable {
+	buf := make(map[uint8]*flowTable)
+
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
 
-	buf := make(map[uint8]*flowTable)
 	if tableId == ofp4.OFPTT_ALL {
 		for k, v := range pipe.flows {
 			buf[k] = v
@@ -289,10 +293,11 @@ func (pipe Pipeline) getFlowTables(tableId uint8) map[uint8]*flowTable {
 }
 
 func (pipe Pipeline) getGroups(groupId uint32) map[uint32]*group {
+	groups := make(map[uint32]*group)
+
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
 
-	groups := make(map[uint32]*group)
 	if groupId == ofp4.OFPG_ALL {
 		for k, g := range pipe.groups {
 			groups[k] = g
@@ -335,10 +340,11 @@ func (p Pipeline) watchPort(portNo uint32) bool {
 }
 
 func (pipe Pipeline) getMeters(meterId uint32) map[uint32]*meter {
+	meters := make(map[uint32]*meter)
+
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
 
-	meters := make(map[uint32]*meter)
 	if meterId == ofp4.OFPM_ALL {
 		for k, m := range pipe.meters {
 			meters[k] = m
@@ -352,10 +358,11 @@ func (pipe Pipeline) getMeters(meterId uint32) map[uint32]*meter {
 }
 
 func (pipe Pipeline) getPorts(portNo uint32) map[uint32]portInternal {
+	ports := make(map[uint32]portInternal)
+
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
 
-	ports := make(map[uint32]portInternal)
 	if portNo == ofp4.OFPP_ANY || portNo == ofp4.OFPP_ALL {
 		for k, g := range pipe.ports {
 			ports[k] = g

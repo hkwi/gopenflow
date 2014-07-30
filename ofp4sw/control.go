@@ -107,10 +107,11 @@ func (self controller) SetConfig(config uint32) error {
 }
 
 func (self controller) cloneChannels() map[uint32]*channelInternal {
+	ret := make(map[uint32]*channelInternal)
+
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
-	ret := make(map[uint32]*channelInternal)
 	for k, v := range self.channels {
 		ret[k] = v
 	}
