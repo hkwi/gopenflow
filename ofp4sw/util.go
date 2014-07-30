@@ -84,9 +84,7 @@ func NewConnControlChannel(con net.Conn, cb func()) ControlChannel {
 				}
 				length := int(binary.BigEndian.Uint16(head[2:4]))
 				body := make([]byte, length)
-				for i, c := range head {
-					body[i] = c
-				}
+				copy(body, head)
 				for cur := 4; cur < length; {
 					if num, err := con2.Read(body[cur:]); err != nil {
 						return err

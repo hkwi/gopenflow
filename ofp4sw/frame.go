@@ -42,7 +42,7 @@ func (f *frame) process(p Pipeline) []packetOut {
 
 func (f *frame) processTable(tableId uint8, pipe Pipeline) []packetOut {
 	var result []packetOut
-	for _, table := range pipe.getFlowTables(tableId) {
+	if table := pipe.getFlowTable(tableId); table != nil {
 		if entry, priority := table.lookup(*f); entry != nil {
 			f.match = &matchResult{
 				tableId:  tableId,
@@ -71,7 +71,7 @@ func (f *frame) processGroups(groups []groupOut, pipe Pipeline, processed []uint
 				return nil
 			}
 		}
-		for _, group := range pipe.getGroups(gout.groupId) {
+		if group := pipe.getGroup(gout.groupId); group != nil {
 			gf := f.clone()
 			ret := group.process(gf, pipe)
 			result = append(result, ret.outputs...)

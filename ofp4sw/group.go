@@ -55,7 +55,7 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 	var result flowEntryResult
 
 	buckets := make([]bucket, 0, len(g.buckets))
-	func(){
+	func() {
 		g.lock.Lock()
 		defer g.lock.Unlock()
 		buckets = append(buckets, g.buckets...)

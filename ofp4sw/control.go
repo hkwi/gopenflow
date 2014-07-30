@@ -190,7 +190,7 @@ func (self channelInternal) handleConnection(pipe Pipeline) {
 					continue
 				}
 				if pout.outPort <= ofp4.OFPP_MAX {
-					for _, outPort := range pipe.getPorts(pout.outPort) {
+					if outPort := pipe.getPort(pout.outPort); outPort != nil {
 						outPort.Outlet() <- pout
 					}
 				} else if pout.outPort == ofp4.OFPP_ALL {
@@ -528,7 +528,7 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 			data := frame{
 				serialized: eth,
 				length:     len(eth),
-				layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{NoCopy: true}).Layers(),
+				layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
 				inPort:     req.InPort,
 				phyInPort:  pipe.getPortPhysicalPort(req.InPort),
 			}

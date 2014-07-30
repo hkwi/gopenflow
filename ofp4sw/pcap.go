@@ -59,7 +59,7 @@ func NewPcapPort(name string) (*PcapPort, error) {
 	go func() {
 		fsource := (chan<- []byte)(fsource)
 		packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-		packetSource.DecodeOptions = gopacket.NoCopy
+		packetSource.DecodeOptions = gopacket.DecodeOptions{NoCopy: true, Lazy: true}
 		for {
 			if packet, err := packetSource.NextPacket(); err != nil {
 				log.Println("next packet", err)

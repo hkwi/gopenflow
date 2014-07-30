@@ -2,8 +2,8 @@ package ofp4sw
 
 import (
 	"github.com/hkwi/gopenflow/ofp4"
-	"time"
 	"sync"
+	"time"
 )
 
 type packetDrop struct{}
@@ -18,7 +18,7 @@ type meter struct {
 	flagPkts    bool
 	flagBurst   bool
 	flagStats   bool
-	lock *sync.Mutex
+	lock        *sync.Mutex
 	created     time.Time
 	packetCount uint64
 	byteCount   uint64
@@ -249,7 +249,7 @@ func newMeter(msg ofp4.MeterMod) *meter {
 	}
 
 	self := &meter{
-		lock: &sync.Mutex{},
+		lock:        &sync.Mutex{},
 		created:     time.Now(),
 		bands:       bands,
 		highestBand: highestBand,

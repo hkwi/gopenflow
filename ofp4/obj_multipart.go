@@ -991,7 +991,7 @@ func (obj *Desc) UnmarshalBinary(data []byte) error {
 	obj.MfrDesc = string(data[0:DESC_STR_LEN])
 	obj.HwDesc = string(data[DESC_STR_LEN : DESC_STR_LEN*2])
 	obj.SwDesc = string(data[DESC_STR_LEN*2 : DESC_STR_LEN*3])
-	for i,_ := range obj.SerialNum {
+	for i, _ := range obj.SerialNum {
 		obj.SerialNum[i] = data[DESC_STR_LEN*3+i]
 	}
 	obj.DpDesc = string(data[DESC_STR_LEN*3+SERIAL_NUM_LEN : DESC_STR_LEN*4+SERIAL_NUM_LEN])

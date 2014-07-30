@@ -83,7 +83,7 @@ func (priority flowPriority) matchFrame(data frame) *flowEntry {
 	entries := func() []*flowEntry {
 		priority.lock.Lock()
 		defer priority.lock.Unlock()
-	
+
 		hasher := fnv.New32()
 		for _, p1 := range priority.caps {
 			if buf, err := data.getValue(p1); err != nil {
@@ -155,7 +155,7 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 
 	var result flowEntryResult
 	if rule.instMeter != 0 {
-		for _, meter := range pipe.getMeters(rule.instMeter) {
+		if meter := pipe.getMeter(rule.instMeter); meter != nil {
 			if err := meter.process(data); err != nil {
 				if _, ok := err.(*packetDrop); ok {
 					// no log

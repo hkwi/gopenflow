@@ -14,11 +14,11 @@ import (
 )
 
 type Pipeline struct {
-	lock     *sync.Mutex
-	flows    map[uint8]*flowTable
-	ports    map[uint32]portInternal
-	groups   map[uint32]*group
-	meters   map[uint32]*meter
+	lock   *sync.Mutex
+	flows  map[uint8]*flowTable
+	ports  map[uint32]portInternal
+	groups map[uint32]*group
+	meters map[uint32]*meter
 
 	DatapathId uint64
 	flags      uint16 // ofp_config_flags, check capability
@@ -26,11 +26,11 @@ type Pipeline struct {
 
 func NewPipeline() *Pipeline {
 	pipe := Pipeline{
-		lock:     &sync.Mutex{},
-		flows:    make(map[uint8]*flowTable),
-		ports:    make(map[uint32]portInternal),
-		groups:   make(map[uint32]*group),
-		meters:   make(map[uint32]*meter),
+		lock:   &sync.Mutex{},
+		flows:  make(map[uint8]*flowTable),
+		ports:  make(map[uint32]portInternal),
+		groups: make(map[uint32]*group),
+		meters: make(map[uint32]*meter),
 	}
 	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
 	return &pipe
@@ -192,10 +192,10 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 						if pout.outPort != ofp4.OFPP_ALL {
 							ports = make([]portInternal, 0, len(pipe.ports))
 						}
-						
+
 						pipe.lock.Lock()
 						defer pipe.lock.Unlock()
-						
+
 						if pout.outPort != ofp4.OFPP_ALL {
 							if outInt, ok := pipe.ports[pout.outPort]; ok {
 								ports = append(ports, outInt)
@@ -274,8 +274,19 @@ func (pipe Pipeline) AddControlChannel(channel ControlChannel) error {
 	}
 }
 
+func (pipe Pipeline) getFlowTable(tableId uint8) *flowTable {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+	return pipe.flows[tableId]
+}
+
 func (pipe Pipeline) getFlowTables(tableId uint8) map[uint8]*flowTable {
-	buf := make(map[uint8]*flowTable)
+	var buf map[uint8]*flowTable
+	if tableId == ofp4.OFPTT_ALL {
+		buf = make(map[uint8]*flowTable, len(pipe.flows))
+	} else {
+		buf = make(map[uint8]*flowTable, 1)
+	}
 
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
@@ -290,6 +301,12 @@ func (pipe Pipeline) getFlowTables(tableId uint8) map[uint8]*flowTable {
 		}
 	}
 	return buf
+}
+
+func (pipe Pipeline) getGroup(groupId uint32) *group {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+	return pipe.groups[groupId]
 }
 
 func (pipe Pipeline) getGroups(groupId uint32) map[uint32]*group {
@@ -339,6 +356,12 @@ func (p Pipeline) watchPort(portNo uint32) bool {
 	return false
 }
 
+func (pipe Pipeline) getMeter(meterId uint32) *meter {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+	return pipe.meters[meterId]
+}
+
 func (pipe Pipeline) getMeters(meterId uint32) map[uint32]*meter {
 	meters := make(map[uint32]*meter)
 
@@ -355,6 +378,12 @@ func (pipe Pipeline) getMeters(meterId uint32) map[uint32]*meter {
 		}
 	}
 	return meters
+}
+
+func (pipe Pipeline) getPort(portNo uint32) portInternal {
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+	return pipe.ports[portNo]
 }
 
 func (pipe Pipeline) getPorts(portNo uint32) map[uint32]portInternal {
