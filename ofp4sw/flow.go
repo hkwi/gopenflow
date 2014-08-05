@@ -139,8 +139,8 @@ func (priority *flowPriority) rebuildIndex(flows []*flowEntry) {
 }
 
 type flowEntryResult struct {
-	outputs []packetOut
-	groups  []groupOut
+	outputs []*packetOut
+	groups  []*groupOut
 	tableId uint8
 }
 

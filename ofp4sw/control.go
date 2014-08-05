@@ -15,7 +15,6 @@ import (
 type controller struct {
 	lock     *sync.Mutex
 	channels map[uint32]*channelInternal
-	outlet   chan packetOut
 	buffer   map[uint32]*packetOut
 
 	stats       PortStats
@@ -25,61 +24,54 @@ type controller struct {
 }
 
 func newController() *controller {
-	self := &controller{
+	return &controller{
 		lock:        &sync.Mutex{},
-		outlet:      make(chan packetOut, 4),
 		channels:    make(map[uint32]*channelInternal),
 		buffer:      make(map[uint32]*packetOut),
 		missSendLen: 128,
 	}
-	go func() {
-		for pout := range self.outlet {
-			// XXX: need to implement queue here
-			success := false
-			var buffer_id uint32
-			if err := func() error {
-				self.lock.Lock()
-				defer self.lock.Unlock()
-
-				for i := 0; i < 32; i++ {
-					buffer_id = uint32(rand.Int31())
-					if _, ok := self.buffer[buffer_id]; !ok {
-						self.buffer[buffer_id] = &pout
-						return nil
-					}
-				}
-				return errors.New("no buffer_id room")
-			}(); err != nil {
-				log.Println(err)
-			} else {
-				channels := self.cloneChannels()
-				results := make(chan error, len(channels))
-				for _, chanInt := range channels {
-					chanInt := chanInt
-					go func() {
-						results <- chanInt.packetIn(buffer_id, pout)
-					}()
-				}
-				for i := 0; i < len(channels); i++ {
-					result := <-results
-					if result == nil {
-						success = true
-					}
-				}
-			}
-			if success {
-				self.stats.TxPackets++
-				self.stats.TxBytes += uint64(len(pout.data))
-			} else {
-				self.stats.TxDropped++
-			}
-		}
-	}()
-	return self
 }
 
-func (self controller) Outlet() chan<- packetOut {
-	return self.outlet
+func (self *controller) Outlet(pout *packetOut) {
+	// XXX: need to implement queue here
+	success := false
+	var buffer_id uint32
+	if err := func() error {
+		self.lock.Lock()
+		defer self.lock.Unlock()
+
+		for i := 0; i < 32; i++ {
+			buffer_id = uint32(rand.Int31())
+			if _, ok := self.buffer[buffer_id]; !ok {
+				self.buffer[buffer_id] = pout
+				return nil
+			}
+		}
+		return errors.New("no buffer_id room")
+	}(); err != nil {
+		log.Println(err)
+	} else {
+		channels := self.cloneChannels()
+		results := make(chan error, len(channels))
+		for _, chanInt := range channels {
+			chanInt := chanInt
+			go func() {
+				results <- chanInt.packetIn(buffer_id, pout)
+			}()
+		}
+		for i := 0; i < len(channels); i++ {
+			result := <-results
+			if result == nil {
+				success = true
+			}
+		}
+	}
+	if success {
+		self.stats.TxPackets++
+		self.stats.TxBytes += uint64(len(pout.data))
+	} else {
+		self.stats.TxDropped++
+	}
 }
 
 func (self controller) Stats() *PortStats {
@@ -179,7 +171,7 @@ func (self channelInternal) handleConnection(pipe Pipeline) {
 		self.channel.Egress() <- msgbin
 	}
 
-	serialOuts := make(chan chan []packetOut, 4)
+	serialOuts := make(chan chan []*packetOut, 4)
 	// EGRESS
 	go func() {
 		for serialOut := range serialOuts {
@@ -191,24 +183,24 @@ func (self channelInternal) handleConnection(pipe Pipeline) {
 				}
 				if pout.outPort <= ofp4.OFPP_MAX {
 					if outPort := pipe.getPort(pout.outPort); outPort != nil {
-						outPort.Outlet() <- pout
+						outPort.Outlet(pout)
 					}
 				} else if pout.outPort == ofp4.OFPP_ALL {
 					for outPortNo, outPort := range pipe.getPorts(pout.outPort) {
 						if outPortNo != pout.inPort {
-							outPort.Outlet() <- pout
+							outPort.Outlet(pout)
 						}
 					}
 				} else if pout.outPort == ofp4.OFPP_TABLE {
 					pout := pout
-					defer func() {
+					go func() {
 						data := frame{
 							inPort:     pout.inPort,
 							serialized: pout.data,
 							layers:     gopacket.NewPacket(pout.data, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
 							phyInPort:  pipe.getPortPhysicalPort(pout.inPort),
 						}
-						tableOut := make(chan []packetOut, 1)
+						tableOut := make(chan []*packetOut, 1)
 						serialOuts <- tableOut
 						tableOut <- data.process(pipe)
 					}()
@@ -297,14 +289,14 @@ func (self channelInternal) handleConnection(pipe Pipeline) {
 			}
 		}()
 
-		var serialOut chan []packetOut
+		var serialOut chan []*packetOut
 		if ofm.Type == ofp4.OFPT_PACKET_OUT {
-			serialOut = make(chan []packetOut, 1)
+			serialOut = make(chan []*packetOut, 1)
 			serialOuts <- serialOut
 		} else if ofm.Type == ofp4.OFPT_FLOW_MOD {
 			req := ofm.Body.(*ofp4.FlowMod)
 			if req.BufferId != ofp4.OFP_NO_BUFFER {
-				serialOut = make(chan []packetOut, 1)
+				serialOut = make(chan []*packetOut, 1)
 				serialOuts <- serialOut
 			}
 		}
@@ -368,7 +360,7 @@ func (self channelInternal) newXid() (uint32, error) {
 	return 0, errors.New("No room for packet_in xid")
 }
 
-func (self channelInternal) packetIn(buffer_id uint32, pout packetOut) error {
+func (self channelInternal) packetIn(buffer_id uint32, pout *packetOut) error {
 	reason := uint8(ofp4.OFPR_ACTION)
 	if pout.match.priority == 0 && len(pout.match.rule.fields) == 0 {
 		reason = ofp4.OFPR_NO_MATCH
@@ -417,7 +409,7 @@ type xid struct {
 	multi   []ofp4.MultipartRequest
 }
 
-func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pipe Pipeline, serialOut chan []packetOut) [][]byte {
+func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartRequest, pipe Pipeline, serialOut chan []*packetOut) [][]byte {
 	//	log.Println("req", ofm)
 	var respMessages [][]byte
 
@@ -507,7 +499,7 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 		pipe.getController().missSendLen = config.MissSendLen
 	case ofp4.OFPT_PACKET_OUT:
 		req := ofm.Body.(*ofp4.PacketOut)
-		var pouts []packetOut
+		var pouts []*packetOut
 		var eth []byte
 		if req.BufferId == ofp4.OFP_NO_BUFFER {
 			eth = req.Data
@@ -631,7 +623,7 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 			}
 		}
 		if req.BufferId != ofp4.OFP_NO_BUFFER {
-			var pouts []packetOut
+			var pouts []*packetOut
 			if pout := func() *packetOut {
 				ctrl := pipe.getController()
 				ctrl.lock.Lock()
@@ -647,7 +639,7 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 					data := frame{
 						serialized: eth,
 						length:     len(eth),
-						layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
+						layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{NoCopy:true, Lazy:true}).Layers(),
 						inPort:     pout.inPort,
 						phyInPort:  pipe.getPortPhysicalPort(pout.inPort),
 					}

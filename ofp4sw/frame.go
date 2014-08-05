@@ -33,15 +33,15 @@ type frame struct {
 	match      *matchResult
 }
 
-func (f *frame) process(p Pipeline) []packetOut {
+func (f *frame) process(p Pipeline) []*packetOut {
 	// Multiple packet_out may happen and multiple errors may happen. That's why this func does not return an error.
 	// errors will be stored in frame.errors
 	ret := f.processTable(0, p)
 	return ret
 }
 
-func (f *frame) processTable(tableId uint8, pipe Pipeline) []packetOut {
-	var result []packetOut
+func (f *frame) processTable(tableId uint8, pipe Pipeline) []*packetOut {
+	var result []*packetOut
 	if table := pipe.getFlowTable(tableId); table != nil {
 		if entry, priority := table.lookup(*f); entry != nil {
 			f.match = &matchResult{
@@ -62,8 +62,8 @@ func (f *frame) processTable(tableId uint8, pipe Pipeline) []packetOut {
 	return result
 }
 
-func (f *frame) processGroups(groups []groupOut, pipe Pipeline, processed []uint32) []packetOut {
-	var result []packetOut
+func (f *frame) processGroups(groups []*groupOut, pipe Pipeline, processed []uint32) []*packetOut {
+	var result []*packetOut
 	for _, gout := range groups {
 		for _, gid := range processed {
 			if gid == gout.groupId {

@@ -21,8 +21,8 @@ func (a actionOutput) process(data *frame, pipe Pipeline) (*flowEntryResult, err
 		buf = nil // inform output port as tx_error that packet was broken by actions
 	}
 	ret := &flowEntryResult{
-		outputs: []packetOut{
-			packetOut{
+		outputs: []*packetOut{
+			&packetOut{
 				outPort: a.Port,
 				queueId: data.queueId,
 				data:    buf,
@@ -392,8 +392,8 @@ type actionGroup ofp4.ActionGroup
 
 func (a actionGroup) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
 	ret := &flowEntryResult{
-		groups: []groupOut{
-			groupOut{
+		groups: []*groupOut{
+			&groupOut{
 				groupId: a.GroupId,
 				data:    *data,
 			},

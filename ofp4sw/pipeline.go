@@ -61,8 +61,8 @@ type PortState struct {
 type Port interface {
 	Name() string
 	GetPhysicalPort() uint32
-	Ingress() <-chan []byte
-	Egress() chan<- []byte
+	Get([]byte) ([]byte,error) // You may pass a []byte to Get method for reuse.
+	Put([]byte) error
 	State() *PortState
 }
 
@@ -82,7 +82,7 @@ type PortStats struct {
 }
 
 type portInternal interface {
-	Outlet() chan<- packetOut
+	Outlet(*packetOut)
 	Stats() *PortStats
 	State() *PortState
 	GetConfig() uint32
@@ -91,14 +91,26 @@ type portInternal interface {
 
 type normalPort struct {
 	public  Port
-	outlet  chan packetOut
 	stats   PortStats
 	config  uint32
 	created time.Time
 }
 
-func (self normalPort) Outlet() chan<- packetOut {
-	return self.outlet
+func (self *normalPort) Outlet(pout *packetOut) {
+	if pout.data == nil {
+		log.Println("packet serialization error")
+		return
+	}
+	if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
+		self.stats.TxDropped++
+		return
+	}
+	if err := self.public.Put(pout.data); err!=nil {
+		self.stats.TxDropped++
+	} else {
+		self.stats.TxPackets++
+		self.stats.TxBytes += uint64(len(pout.data))
+	}
 }
 
 func (self normalPort) Stats() *PortStats {
@@ -125,37 +137,21 @@ func (self normalPort) State() *PortState {
 }
 
 func (self normalPort) start(pipe Pipeline, portNo uint32) {
-	// EGRESS
-	go func() {
-		// XXX: need to implement queue here
-		for pout := range self.outlet {
-			if pout.data == nil {
-				log.Println("packet serialization error")
-				continue
-			}
-			if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
-				self.stats.TxDropped++
-				continue
-			}
-			select {
-			case self.public.Egress() <- pout.data:
-				self.stats.TxPackets++
-				self.stats.TxBytes += uint64(len(pout.data))
-			default:
-				self.stats.TxDropped++
-			}
-		}
-	}()
-
+	var paralells int = 3
 	// INGRESS
-	serialOuts := make(chan chan []packetOut, 8) // parallel pipeline processing
-	go func() {
-		for eth := range self.public.Ingress() {
-			eth := eth
-			serialOut := make(chan []packetOut, 1)
-			serialOuts <- serialOut
-			go func() {
-				serialOut <- func() []packetOut {
+	serialOuts := make(chan chan []*packetOut, paralells) // parallel pipeline processing
+	for i:=0; i<paralells; i++ {
+		go func(){
+			var eth []byte
+			var err error
+			for {
+				eth,err = self.public.Get(eth)
+				if err != nil {
+					break
+				}
+				serialOut := make(chan []*packetOut, 1)
+				serialOuts <- serialOut
+				serialOut <- func() []*packetOut {
 					if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
 						return nil
 					}
@@ -168,7 +164,7 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 					}
 					pouts := f.process(pipe)
 					if self.config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
-						var newPouts []packetOut
+						newPouts := make([]*packetOut, 0, len(pouts))
 						for _, pout := range pouts {
 							if pout.outPort != ofp4.OFPP_CONTROLLER {
 								newPouts = append(newPouts, pout)
@@ -179,10 +175,9 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 					return pouts
 				}()
 				close(serialOut)
-			}()
-		}
-		close(serialOuts)
-	}()
+			}
+		}()
+	}
 	go func() {
 		for serialOut := range serialOuts {
 			for pouts := range serialOut {
@@ -210,7 +205,7 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 						return ports
 					}()
 					for _, outInt := range ports {
-						outInt.Outlet() <- pout
+						outInt.Outlet(pout)
 					}
 				}
 			}
@@ -222,7 +217,6 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 	portInt := &normalPort{
 		public:  port,
-		outlet:  make(chan packetOut),
 		created: time.Now(),
 	}
 	if err := func() error {

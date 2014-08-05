@@ -1,9 +1,8 @@
 package ofp4sw
 
 import (
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/pcap"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/pcap"
 	"log"
 )
 
@@ -14,8 +13,6 @@ type PcapPort struct {
 	name         string
 	PhysicalPort uint32
 	handle       *pcap.Handle
-	source       <-chan []byte
-	egress       chan<- []byte
 }
 
 func (p PcapPort) Name() string {
@@ -35,50 +32,33 @@ func (p PcapPort) GetPhysicalPort() uint32 {
 	return p.PhysicalPort
 }
 
-func (p PcapPort) Ingress() <-chan []byte {
-	return p.source
-}
-
-func (p PcapPort) Egress() chan<- []byte {
-	return p.egress
-}
-
 func NewPcapPort(name string) (*PcapPort, error) {
-	handle, err := pcap.OpenLive(name, 16000, false, -1)
+	handle, err := pcap.Open(name, []interface{}{pcap.TimeoutOption(8)})
 	if err != nil {
 		return nil, err
 	}
-	fsource := make(chan []byte)
-	fout := make(chan []byte, 1600)
 	port := &PcapPort{
 		name:   name,
 		handle: handle,
-		source: (<-chan []byte)(fsource),
-		egress: (chan<- []byte)(fout),
 	}
-	go func() {
-		fsource := (chan<- []byte)(fsource)
-		packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-		packetSource.DecodeOptions = gopacket.DecodeOptions{NoCopy: true, Lazy: true}
-		for {
-			if packet, err := packetSource.NextPacket(); err != nil {
-				log.Println("next packet", err)
-				break
-			} else {
-				fsource <- packet.Data()
-			}
-		}
-		handle.Close()
-	}()
-	go func() {
-		fout := (<-chan []byte)(fout)
-		for b := range fout {
-			if err := handle.WritePacketData(b); err != nil {
-				log.Print(err)
-				break
-			}
-		}
-		handle.Close()
-	}()
 	return port, nil
+}
+
+func (self PcapPort) Get(pkt []byte) ([]byte, error) {
+	for {
+		if data,err:=self.handle.Get(pkt, 8); err!=nil {
+			switch e:=err.(type) {
+			case pcap.Timeout:
+				// continue
+			default:
+				return nil,e
+			}
+		} else {
+			return data, nil
+		}
+	}
+}
+
+func (self PcapPort) Put(pkt []byte) error {
+	return self.handle.Put(pkt)
 }
