@@ -130,10 +130,10 @@ char* libpcap_get(pcap_t *handle, int msec, int *pktlen, int *caplen, const u_ch
 import "C"
 
 import (
-	"unsafe"
 	"errors"
-	"sync"
 	"reflect"
+	"sync"
+	"unsafe"
 )
 
 type ShortSnaplen string
@@ -147,7 +147,7 @@ Handle is a handle for pcap_t. Call Open() to create this object.
 */
 type Handle struct {
 	handle *C.struct_pcap_t
-	lock *sync.Mutex
+	lock   *sync.Mutex
 }
 
 type TimeoutOption int
@@ -155,18 +155,18 @@ type SnaplenOption int
 type PromiscOption int
 type BufferSizeOption int
 
-func Open(name string, opts []interface{}) (*Handle,error) {
+func Open(name string, opts []interface{}) (*Handle, error) {
 	var sourceName *C.char
-	if len(name)>0 {
+	if len(name) > 0 {
 		sourceName = C.CString(name)
 		defer C.free(unsafe.Pointer(sourceName))
 	}
 	errbuf := (*C.char)(C.malloc(C.PCAP_ERRBUF_SIZE))
 	defer C.free(unsafe.Pointer(errbuf))
-	
+
 	var copts C.struct_libpcap_option
-	for _,opt := range opts {
-		switch o:=opt.(type) {
+	for _, opt := range opts {
+		switch o := opt.(type) {
 		case TimeoutOption:
 			copts.flags |= C.OPTION_FLAG_TIMEOUT
 			copts.timeout = C.int(o)
@@ -182,12 +182,12 @@ func Open(name string, opts []interface{}) (*Handle,error) {
 			return nil, errors.New("Unknown option")
 		}
 	}
-	self := &Handle {
+	self := &Handle{
 		handle: C.libpcap_open(sourceName, copts, errbuf),
-		lock: &sync.Mutex{},
+		lock:   &sync.Mutex{},
 	}
 	if self.handle == nil {
-		return nil, errors.New(C.GoString(errbuf));
+		return nil, errors.New(C.GoString(errbuf))
 	}
 	return self, nil
 }
@@ -195,7 +195,7 @@ func Open(name string, opts []interface{}) (*Handle,error) {
 func (self Handle) Close() {
 	self.lock.Lock()
 	defer self.lock.Unlock()
-	
+
 	if self.handle != nil {
 		C.pcap_close(self.handle)
 		self.handle = nil
@@ -214,10 +214,10 @@ Gets a packet and stores into the buffer. The buffer size will be modified after
 func (self Handle) Get(pkt []byte, msec int) ([]byte, error) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
-	
+
 	var pktlen, caplen C.int
 	var data *C.u_char
-	if estr := C.libpcap_get(self.handle, C.int(msec), &pktlen, &caplen, &data); estr!=nil {
+	if estr := C.libpcap_get(self.handle, C.int(msec), &pktlen, &caplen, &data); estr != nil {
 		return nil, errors.New(C.GoString(estr))
 	}
 	if len(pkt) >= int(caplen) {
@@ -237,7 +237,7 @@ func (self Handle) Get(pkt []byte, msec int) ([]byte, error) {
 func (self *Handle) Put(pkt []byte) error {
 	// XXX: non-portable
 	data := unsafe.Pointer((*reflect.SliceHeader)(unsafe.Pointer(&pkt)).Data)
-	if rc := C.pcap_sendpacket(self.handle, (*C.u_char)(data), C.int(len(pkt))); rc==-1 {
+	if rc := C.pcap_sendpacket(self.handle, (*C.u_char)(data), C.int(len(pkt))); rc == -1 {
 		return errors.New(C.GoString(C.pcap_geterr(self.handle)))
 	} else if rc == 0 {
 		return nil

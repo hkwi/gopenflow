@@ -639,7 +639,7 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 					data := frame{
 						serialized: eth,
 						length:     len(eth),
-						layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{NoCopy:true, Lazy:true}).Layers(),
+						layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{NoCopy: true, Lazy: true}).Layers(),
 						inPort:     pout.inPort,
 						phyInPort:  pipe.getPortPhysicalPort(pout.inPort),
 					}

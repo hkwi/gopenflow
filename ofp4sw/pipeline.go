@@ -61,7 +61,7 @@ type PortState struct {
 type Port interface {
 	Name() string
 	GetPhysicalPort() uint32
-	Get([]byte) ([]byte,error) // You may pass a []byte to Get method for reuse.
+	Get([]byte) ([]byte, error) // You may pass a []byte to Get method for reuse.
 	Put([]byte) error
 	State() *PortState
 }
@@ -105,7 +105,7 @@ func (self *normalPort) Outlet(pout *packetOut) {
 		self.stats.TxDropped++
 		return
 	}
-	if err := self.public.Put(pout.data); err!=nil {
+	if err := self.public.Put(pout.data); err != nil {
 		self.stats.TxDropped++
 	} else {
 		self.stats.TxPackets++
@@ -140,12 +140,12 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 	var paralells int = 3
 	// INGRESS
 	serialOuts := make(chan chan []*packetOut, paralells) // parallel pipeline processing
-	for i:=0; i<paralells; i++ {
-		go func(){
+	for i := 0; i < paralells; i++ {
+		go func() {
 			var eth []byte
 			var err error
 			for {
-				eth,err = self.public.Get(eth)
+				eth, err = self.public.Get(eth)
 				if err != nil {
 					break
 				}

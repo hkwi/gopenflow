@@ -46,12 +46,12 @@ func NewPcapPort(name string) (*PcapPort, error) {
 
 func (self PcapPort) Get(pkt []byte) ([]byte, error) {
 	for {
-		if data,err:=self.handle.Get(pkt, 8); err!=nil {
-			switch e:=err.(type) {
+		if data, err := self.handle.Get(pkt, 8); err != nil {
+			switch e := err.(type) {
 			case pcap.Timeout:
 				// continue
 			default:
-				return nil,e
+				return nil, e
 			}
 		} else {
 			return data, nil
