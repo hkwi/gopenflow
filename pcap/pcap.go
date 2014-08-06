@@ -1,7 +1,10 @@
+/*
+Package pcap implements openflow port.
+*/
 package pcap
 
 /*
-//#cgo linux CFLAGS: -DNONBLOCK
+#cgo linux CFLAGS: -DNONBLOCK
 #cgo linux LDFLAGS: -lpcap
 #cgo freebsd LDFLAGS: -lpcap
 #cgo darwin LDFLAGS: -lpcap
@@ -15,8 +18,6 @@ package pcap
 #include <pcap/pcap.h>
 #include <string.h>
 #include <errno.h>
-
-#include <stdio.h>
 
 enum libpcap_option_flag {
 	OPTION_FLAG_TIMEOUT = 1,
