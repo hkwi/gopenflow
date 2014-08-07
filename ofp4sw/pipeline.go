@@ -33,6 +33,12 @@ func NewPipeline() *Pipeline {
 		meters: make(map[uint32]*meter),
 	}
 	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			pipe.validate(time.Now())
+		}
+	}()
 	return &pipe
 }
 

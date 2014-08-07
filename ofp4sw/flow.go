@@ -33,6 +33,7 @@ type flowEntry struct {
 	cookie      uint64
 	packetCount uint64
 	byteCount   uint64
+	touched     time.Time
 	created     time.Time
 
 	flags       uint16 // OFPFF_
@@ -73,6 +74,7 @@ func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
 				defer table.lock.Unlock()
 				table.matchCount++
 			}()
+			en.touched = time.Now()
 			return en, prio.priority
 		}
 	}
@@ -194,6 +196,16 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 		}
 	}
 	return result
+}
+
+func (self flowEntry) valid(now time.Time) bool {
+	if self.idleTimeout != 0 && now.Sub(self.touched) > time.Duration(self.idleTimeout)*time.Second {
+		return false
+	}
+	if self.hardTimeout != 0 && now.Sub(self.created) > time.Duration(self.hardTimeout)*time.Second {
+		return false
+	}
+	return true
 }
 
 func (entry *flowEntry) importInstructions(instructions []ofp4.Instruction) error {
@@ -680,4 +692,40 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 	priority.rebuildIndex(flows)
 	table.activeCount++
 	return nil
+}
+
+func (self Pipeline) validate(now time.Time) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	for _, table := range self.flows {
+		table := table
+		go func() {
+			table.lock.Lock()
+			defer table.lock.Unlock()
+
+			for _, prio := range table.priorities {
+				prio := prio
+				go func() {
+					prio.lock.Lock()
+					defer prio.lock.Unlock()
+
+					do_rebuild := false
+					var validFlows []*flowEntry
+					for _, flows := range prio.flows {
+						for _, flow := range flows {
+							if flow.valid(now) {
+								validFlows = append(validFlows, flow)
+							} else {
+								do_rebuild = true
+							}
+						}
+					}
+					if do_rebuild {
+						prio.rebuildIndex(validFlows)
+					}
+				}()
+			}
+		}()
+	}
 }
