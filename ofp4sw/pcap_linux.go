@@ -38,75 +38,12 @@ void* get_hwaddr(int fd, char *name, int *hwaddr_len){
 		}
 	}
 	if (0 == ioctl(fd, SIOCGIFHWADDR, &ifr)) {
-		char *hwaddr = NULL;
-		if ( ifr.ifr_hwaddr.sa_family == AF_PACKET ) {
-			*hwaddr_len = ETH_ALEN;
-			hwaddr = malloc(ETH_ALEN);
-			memmove(hwaddr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
-		}
+		*hwaddr_len = ETH_ALEN;
+		char *hwaddr = malloc(ETH_ALEN);
+		memmove(hwaddr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
 		return hwaddr;
 	}
 	return NULL;
-}
-
-unsigned int get_flags(char *name) {
-	int fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-
-	unsigned int flags = 0;
-
-	struct {
-		struct nlmsghdr nlh;
-		struct ifinfomsg ifm;
-		struct rtattr ext_req __attribute__ ((aligned(NLMSG_ALIGNTO)));
-		__u32 ext_filter_mask;
-	} req;
-	memset(&req, 0, sizeof(req));
-	req.nlh.nlmsg_len = sizeof(req);
-	req.nlh.nlmsg_type = RTM_GETLINK;
-	req.nlh.nlmsg_flags = NLM_F_DUMP|NLM_F_REQUEST;
-	req.ifm.ifi_family = AF_PACKET;
-
-	if (-1 != send(fd, &req, sizeof(req), 0)){
-		int done = 0;
-		char buf[16384];
-		do {
-			ssize_t sz = recv(fd, buf, sizeof(buf), 0);
-			if (-1 == sz){
-				break;
-			}
-			struct nlmsghdr *h = (struct nlmsghdr*)buf;
-			int i;
-			for(i=0; i<sz; i+=h->nlmsg_len){
-				h = (struct nlmsghdr*)(buf+i);
-				if (h->nlmsg_type == NLMSG_DONE) {
-					done = 1;
-					break;
-				} else if (h->nlmsg_type == NLMSG_ERROR) {
-					break;
-				} else {
-					struct ifinfomsg *ifi = (struct ifinfomsg*)(h+1);
-					struct rtattr *attr = (struct rtattr*)(ifi+1);
-					while ( (char*)attr < (char*)h + h->nlmsg_len ) {
-						if(attr->rta_type==IFLA_IFNAME){
-							if(0 == strncmp((char*)(attr+1), name, IFNAMSIZ)){
-								done = 1;
-								flags = ifi->ifi_flags;
-								break;
-							}
-						}
-						if ( attr->rta_len == 0 ){
-							break;
-						} else {
-							attr = (struct rtattr*)((char*)attr + attr->rta_len);
-						}
-					}
-				}
-				if ( done != 0 ){ break; }
-			}
-		} while (done==0);
-	}
-	close(fd);
-	return flags;
 }
 
 */
@@ -117,6 +54,26 @@ import (
 	"unsafe"
 )
 
+var supportedSpeed map[C.__u32]uint32 = map[C.__u32]uint32{
+	C.SUPPORTED_10baseT_Half:       10000,
+	C.SUPPORTED_10baseT_Full:       10000,
+	C.SUPPORTED_100baseT_Half:      100000,
+	C.SUPPORTED_100baseT_Full:      100000,
+	C.SUPPORTED_1000baseT_Half:     1000000,
+	C.SUPPORTED_1000baseT_Full:     1000000,
+	C.SUPPORTED_10000baseT_Full:    10000000,
+	C.SUPPORTED_2500baseX_Full:     2500000,
+	C.SUPPORTED_1000baseKX_Full:    1000000,
+	C.SUPPORTED_10000baseKX4_Full:  10000000,
+	C.SUPPORTED_10000baseKR_Full:   10000000,
+	C.SUPPORTED_10000baseR_FEC:     10000000,
+	C.SUPPORTED_20000baseMLD2_Full: 20000000,
+	C.SUPPORTED_20000baseKR2_Full:  20000000,
+	C.SUPPORTED_40000baseKR4_Full:  40000000,
+	C.SUPPORTED_40000baseCR4_Full:  40000000,
+	C.SUPPORTED_40000baseSR4_Full:  40000000,
+	C.SUPPORTED_40000baseLR4_Full:  40000000,
+}
 var supportedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
 	C.SUPPORTED_10baseT_Half:       ofp4.OFPPF_10MB_HD,
 	C.SUPPORTED_10baseT_Full:       ofp4.OFPPF_10MB_FD,
@@ -166,36 +123,24 @@ var advertisedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
 	C.ADVERTISED_40000baseLR4_Full:  ofp4.OFPPF_40GB_FD,
 }
 
-func pcapPortState(name string) (*PortState, error) {
-	state := &PortState{}
-
+func pcapPortState(name string, state *PortState) error {
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
-
-	if flags, err := C.get_flags(cname); err != nil {
-		return nil, err
-	} else {
-		live := true
-		if flags&C.IFF_LOWER_UP == 0 {
-			state.LinkDown = true
-			live = false
-		}
-		if flags&C.IFF_UP == 0 {
-			state.Blocked = true
-			live = false
-		}
-		state.Live = live
-	}
 
 	fd := C.socket(C.AF_INET, C.SOCK_DGRAM, 0)
 	defer C.close(fd)
 
 	ecmd := C.struct_ethtool_cmd{cmd: C.ETHTOOL_GSET}
 	if r, err := C.ethtool_cmd_call(fd, cname, &ecmd); err != nil {
-		return nil, err
+		return err
 	} else if r != 0 {
-		return nil, errors.New("ethtool_cmd_call error")
+		return errors.New("ethtool_cmd_call error")
 	} else {
+		for k, v := range supportedSpeed {
+			if ecmd.supported&k != 0 {
+				state.MaxSpeed = v
+			}
+		}
 		state.Supported = 0
 		for k, v := range supportedConvert {
 			if ecmd.supported&k != 0 {
@@ -216,6 +161,7 @@ func pcapPortState(name string) (*PortState, error) {
 		var curr uint32
 		switch C.ethtool_cmd_speed(&ecmd) {
 		case C.SPEED_10:
+			state.CurrSpeed = 10000
 			switch ecmd.duplex {
 			case C.DUPLEX_HALF:
 				curr |= ofp4.OFPPF_10MB_HD
@@ -225,6 +171,7 @@ func pcapPortState(name string) (*PortState, error) {
 				curr |= ofp4.OFPPF_OTHER
 			}
 		case C.SPEED_100:
+			state.CurrSpeed = 100000
 			switch ecmd.duplex {
 			case C.DUPLEX_HALF:
 				curr |= ofp4.OFPPF_100MB_HD
@@ -234,6 +181,7 @@ func pcapPortState(name string) (*PortState, error) {
 				curr |= ofp4.OFPPF_OTHER
 			}
 		case C.SPEED_1000:
+			state.CurrSpeed = 1000000
 			switch ecmd.duplex {
 			case C.DUPLEX_HALF:
 				curr |= ofp4.OFPPF_1GB_HD
@@ -243,6 +191,7 @@ func pcapPortState(name string) (*PortState, error) {
 				curr |= ofp4.OFPPF_OTHER
 			}
 		case C.SPEED_10000:
+			state.CurrSpeed = 1000000
 			switch ecmd.duplex {
 			case C.DUPLEX_FULL:
 				curr |= ofp4.OFPPF_10GB_FD
@@ -265,7 +214,7 @@ func pcapPortState(name string) (*PortState, error) {
 	}
 	var cHwaddrLen C.int
 	if cHwaddr, err := C.get_hwaddr(fd, cname, &cHwaddrLen); err != nil {
-		return nil, err
+		return err
 	} else {
 		hwAddr := C.GoBytes(unsafe.Pointer(cHwaddr), cHwaddrLen)
 		for i, _ := range state.HwAddr {
@@ -275,5 +224,5 @@ func pcapPortState(name string) (*PortState, error) {
 		}
 		C.free(cHwaddr)
 	}
-	return state, nil
+	return nil
 }

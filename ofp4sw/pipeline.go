@@ -25,21 +25,22 @@ type Pipeline struct {
 }
 
 func NewPipeline() *Pipeline {
-	pipe := Pipeline{
+	pipe := &Pipeline{
 		lock:   &sync.Mutex{},
 		flows:  make(map[uint8]*flowTable),
 		ports:  make(map[uint32]portInternal),
 		groups: make(map[uint32]*group),
 		meters: make(map[uint32]*meter),
 	}
-	pipe.ports[ofp4.OFPP_CONTROLLER] = newController()
+	controller := newController(pipe)
+	pipe.ports[ofp4.OFPP_CONTROLLER] = controller
 	go func() {
 		for {
 			time.Sleep(time.Second)
 			pipe.validate(time.Now())
 		}
 	}()
-	return &pipe
+	return pipe
 }
 
 type packetOut struct {
@@ -54,6 +55,7 @@ type packetOut struct {
 }
 
 type PortState struct {
+	Name       string
 	LinkDown   bool
 	Blocked    bool
 	Live       bool
@@ -62,14 +64,24 @@ type PortState struct {
 	Peer       uint32
 	Curr       uint32
 	HwAddr     [6]byte
+	Mtu        uint32
+	CurrSpeed  uint32 // kbps
+	MaxSpeed   uint32 // kbps
+}
+
+type PortStateListener interface {
+	PortChange(*PortState, uint8) error
 }
 
 type Port interface {
 	Name() string
 	GetPhysicalPort() uint32
-	Get([]byte) ([]byte, error) // You may pass a []byte to Get method for reuse.
-	Put([]byte) error
-	State() *PortState
+	Get([]byte) ([]byte, error) // Ingress. You may pass a []byte to Get method for reuse.
+	Put([]byte) error           // Egress.
+	// Implementation should notify port_status when starting with OFPPR_ADD.
+	AddStateListener(PortStateListener) error
+	// Implementation should notify port_status with OFPPR_DELETE before removal.
+	RemoveStateListener(PortStateListener) error
 }
 
 type PortStats struct {
@@ -96,10 +108,12 @@ type portInternal interface {
 }
 
 type normalPort struct {
+	pipe    *Pipeline
 	public  Port
 	stats   PortStats
 	config  uint32
 	created time.Time
+	state   PortState // copy of current state
 }
 
 func (self *normalPort) Outlet(pout *packetOut) {
@@ -119,6 +133,14 @@ func (self *normalPort) Outlet(pout *packetOut) {
 	}
 }
 
+func (self *normalPort) PortChange(state *PortState, reason uint8) error {
+	if self.state != *state {
+		self.state = *state
+		self.pipe.portChange(self, reason)
+	}
+	return nil
+}
+
 func (self normalPort) Stats() *PortStats {
 	return &self.stats
 }
@@ -127,19 +149,17 @@ func (self normalPort) GetConfig() uint32 {
 	return self.config
 }
 
-func (self normalPort) SetConfig(config uint32) error {
+func (self *normalPort) SetConfig(config uint32) error {
+	prev := self.config
 	self.config = config
+	if prev != self.config {
+		self.pipe.portChange(self, ofp4.OFPPR_MODIFY)
+	}
 	return nil
 }
 
 func (self normalPort) State() *PortState {
-	var info PortState
-	info = *self.public.State()
-
-	if self.config&ofp4.OFPPC_PORT_DOWN != 0 || info.LinkDown {
-		info.Live = false
-	}
-	return &info
+	return &self.state
 }
 
 func (self normalPort) start(pipe Pipeline, portNo uint32) {
@@ -219,9 +239,21 @@ func (self normalPort) start(pipe Pipeline, portNo uint32) {
 	}()
 }
 
+func (self Pipeline) portChange(port portInternal, reason uint8) {
+	ctrl := self.getController()
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	for k, p := range self.ports {
+		if p == port {
+			ctrl.portChange(k, port, reason)
+		}
+	}
+}
+
 // AddPort adds a normal openflow port into the pipeline.
 func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 	portInt := &normalPort{
+		pipe:    &pipe,
 		public:  port,
 		created: time.Now(),
 	}
@@ -253,7 +285,7 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 		return err
 	}
 	portInt.start(pipe, portNo)
-	// XXX: trigger ofp_port_status
+	port.AddStateListener(portInt)
 	return nil
 }
 

@@ -21,18 +21,36 @@ type controller struct {
 	config      uint32
 	missSendLen uint16
 	desc        ofp4.Desc
+	pipe        *Pipeline
 }
 
-func newController() *controller {
+func newController(pipe *Pipeline) *controller {
 	return &controller{
 		lock:        &sync.Mutex{},
 		channels:    make(map[uint32]*channelInternal),
 		buffer:      make(map[uint32]*packetOut),
 		missSendLen: 128,
+		pipe:        pipe,
 	}
 }
 
 func (self *controller) Outlet(pout *packetOut) {
+	if meter := self.pipe.getMeter(ofp4.OFPM_CONTROLLER); meter != nil {
+		data := &frame{
+			inPort:     pout.inPort,
+			serialized: pout.data,
+			layers:     gopacket.NewPacket(pout.data, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
+			phyInPort:  self.pipe.getPortPhysicalPort(pout.inPort),
+		}
+		if err := meter.process(data); err != nil {
+			if _, ok := err.(*packetDrop); ok {
+				// no log
+			} else {
+				log.Println(err)
+			}
+			return
+		}
+	}
 	// XXX: need to implement queue here
 	success := false
 	var buffer_id uint32
@@ -71,6 +89,34 @@ func (self *controller) Outlet(pout *packetOut) {
 		self.stats.TxBytes += uint64(len(pout.data))
 	} else {
 		self.stats.TxDropped++
+	}
+}
+
+func (self controller) portChange(portNo uint32, port portInternal, reason uint8) {
+	channels := self.cloneChannels()
+	results := make(chan error, len(channels))
+	for _, chanInt := range channels {
+		chanInt := chanInt
+		go func() {
+			results <- chanInt.portChange(portNo, port, reason)
+		}()
+	}
+	for i := 0; i < len(channels); i++ {
+		_ = <-results
+	}
+}
+
+func (self controller) sendFlowRem(tableId uint8, priority uint16, flow *flowEntry, reason uint8) {
+	channels := self.cloneChannels()
+	results := make(chan error, len(channels))
+	for _, chanInt := range channels {
+		chanInt := chanInt
+		go func() {
+			results <- chanInt.sendFlowRem(tableId, priority, flow, reason)
+		}()
+	}
+	for i := 0; i < len(channels); i++ {
+		_ = <-results
 	}
 }
 
@@ -403,6 +449,111 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *packetOut) error {
 	}
 }
 
+func (self channelInternal) portChange(portNo uint32, port portInternal, reason uint8) error {
+	if self.portStatusMask[0]&(1<<reason) != 0 {
+		return nil
+	}
+	xid, e1 := self.newXid()
+	if e1 != nil {
+		return e1
+	}
+
+	var state uint32
+	portState := port.State()
+	if portState.LinkDown {
+		state |= ofp4.OFPPS_LINK_DOWN
+	}
+	if portState.Blocked {
+		state |= ofp4.OFPPS_BLOCKED
+	}
+	if portState.Live {
+		state |= ofp4.OFPPS_LIVE
+	}
+
+	msg := ofp4.Message{
+		Header: ofp4.Header{
+			Version: 4,
+			Type:    ofp4.OFPT_PORT_STATUS,
+			Xid:     xid,
+		},
+		Body: ofp4.PortStatus{
+			Reason: reason,
+			Desc: ofp4.Port{
+				PortNo:     portNo,
+				HwAddr:     portState.HwAddr,
+				Name:       portState.Name,
+				Config:     port.GetConfig(),
+				State:      state,
+				Curr:       portState.Curr,
+				Advertised: portState.Advertised,
+				Supported:  portState.Supported,
+				Peer:       portState.Peer,
+				CurrSpeed:  portState.CurrSpeed,
+				MaxSpeed:   portState.MaxSpeed,
+			},
+		},
+	}
+	msgbin, e2 := msg.MarshalBinary()
+	if e2 != nil {
+		return e2
+	}
+	select {
+	case self.channel.Egress() <- msgbin:
+		return nil
+	default:
+		return errors.New("busy channel")
+	}
+}
+
+func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *flowEntry, reason uint8) error {
+	if self.flowRemovedMask[0]&(1<<reason) != 0 {
+		return nil
+	}
+	xid, e1 := self.newXid()
+	if e1 != nil {
+		return e1
+	}
+	fields, e2 := matchList(flow.fields).MarshalBinary()
+	if e2 != nil {
+		return e2
+	}
+
+	dur := time.Now().Sub(flow.created)
+	msg := ofp4.Message{
+		Header: ofp4.Header{
+			Version: 4,
+			Type:    ofp4.OFPT_FLOW_REMOVED,
+			Xid:     xid,
+		},
+		Body: ofp4.FlowRemoved{
+			Cookie:       flow.cookie,
+			Priority:     priority,
+			Reason:       reason,
+			TableId:      tableId,
+			DurationSec:  uint32(dur / time.Second),
+			DurationNsec: uint32(dur % time.Second), // time.Nanosecond == 1
+			IdleTimeout:  flow.idleTimeout,
+			HardTimeout:  flow.hardTimeout,
+			PacketCount:  flow.packetCount,
+			ByteCount:    flow.byteCount,
+			Match: ofp4.Match{
+				Type:      ofp4.OFPMT_OXM,
+				OxmFields: fields,
+			},
+		},
+	}
+	msgbin, e3 := msg.MarshalBinary()
+	if e3 != nil {
+		return e3
+	}
+	select {
+	case self.channel.Egress() <- msgbin:
+		return nil
+	default:
+		return errors.New("busy channel")
+	}
+}
+
 type xid struct {
 	oftype  uint8
 	release []chan bool
@@ -576,16 +727,16 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 					filter.opStrict = true
 				}
 				for _, stat := range pipe.filterFlows(filter) {
-					entry := stat.entry
+					flow := stat.flow
 					if err := func() error {
-						entry.lock.Lock()
-						defer entry.lock.Unlock()
+						flow.lock.Lock()
+						defer flow.lock.Unlock()
 
 						if req.Flags&ofp4.OFPFF_RESET_COUNTS != 0 {
-							entry.packetCount = 0
-							entry.byteCount = 0
+							flow.packetCount = 0
+							flow.byteCount = 0
 						}
-						return entry.importInstructions(req.Instructions)
+						return flow.importInstructions(req.Instructions)
 					}(); err != nil {
 						if e, ok := err.(*ofp4.Error); ok {
 							respMessages = append(respMessages, createError(ofm,
@@ -615,9 +766,8 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 					filter.opStrict = true
 				}
 				for _, stat := range pipe.filterFlows(filter) {
-					entry := stat.entry
-					if entry.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
-						// XXX:
+					if stat.flow.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
+						pipe.getController().sendFlowRem(stat.tableId, stat.priority, stat.flow, ofp4.OFPRR_DELETE)
 					}
 				}
 			}
@@ -758,7 +908,7 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 					for _, f := range pipe.filterFlows(filter) {
 						hit := false
 						for _, seen := range flows {
-							if f.entry == seen.entry {
+							if f.flow == seen.flow {
 								hit = true
 								break
 							}
@@ -770,8 +920,8 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 				}
 			}
 			for _, f := range flows {
-				duration := time.Now().Sub(f.entry.created)
-				if buf, e := matchList(f.entry.fields).MarshalBinary(); e != nil {
+				duration := time.Now().Sub(f.flow.created)
+				if buf, e := matchList(f.flow.fields).MarshalBinary(); e != nil {
 					log.Print(e)
 				} else {
 					msg := ofp4.FlowStats{
@@ -779,17 +929,17 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 						DurationSec:  uint32(duration.Seconds()),
 						DurationNsec: uint32(duration.Nanoseconds() % int64(time.Second)),
 						Priority:     f.priority,
-						IdleTimeout:  f.entry.idleTimeout,
-						HardTimeout:  f.entry.hardTimeout,
-						Flags:        f.entry.flags, // OFPFF_
-						Cookie:       f.entry.cookie,
-						PacketCount:  f.entry.packetCount,
-						ByteCount:    f.entry.byteCount,
+						IdleTimeout:  f.flow.idleTimeout,
+						HardTimeout:  f.flow.hardTimeout,
+						Flags:        f.flow.flags, // OFPFF_
+						Cookie:       f.flow.cookie,
+						PacketCount:  f.flow.packetCount,
+						ByteCount:    f.flow.byteCount,
 						Match: ofp4.Match{
 							Type:      ofp4.OFPMT_OXM,
 							OxmFields: buf,
 						},
-						Instructions: f.entry.exportInstructions(),
+						Instructions: f.flow.exportInstructions(),
 					}
 					multiRes = append(multiRes, &msg)
 				}
@@ -820,8 +970,8 @@ func (self channelInternal) handle(ofm ofp4.Message, multi []ofp4.MultipartReque
 				}
 				var msg ofp4.AggregateStatsReply
 				for _, f := range pipe.filterFlows(filter) {
-					msg.PacketCount += f.entry.packetCount
-					msg.ByteCount += f.entry.byteCount
+					msg.PacketCount += f.flow.packetCount
+					msg.ByteCount += f.flow.byteCount
 					msg.FlowCount++
 				}
 				multiRes = append(multiRes, &msg)

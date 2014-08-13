@@ -151,8 +151,12 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 		rule.lock.Lock()
 		defer rule.lock.Unlock()
 
-		rule.packetCount++
-		rule.byteCount += uint64(data.length)
+		if rule.flags&ofp4.OFPFF_NO_PKT_COUNTS == 0 {
+			rule.packetCount++
+		}
+		if rule.flags&ofp4.OFPFF_NO_BYT_COUNTS == 0 {
+			rule.byteCount += uint64(data.length)
+		}
 	}()
 
 	var result flowEntryResult
@@ -198,14 +202,14 @@ func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
 	return result
 }
 
-func (self flowEntry) valid(now time.Time) bool {
+func (self flowEntry) valid(now time.Time) int {
 	if self.idleTimeout != 0 && now.Sub(self.touched) > time.Duration(self.idleTimeout)*time.Second {
-		return false
+		return ofp4.OFPRR_IDLE_TIMEOUT
 	}
 	if self.hardTimeout != 0 && now.Sub(self.created) > time.Duration(self.hardTimeout)*time.Second {
-		return false
+		return ofp4.OFPRR_HARD_TIMEOUT
 	}
-	return true
+	return -1
 }
 
 func (entry *flowEntry) importInstructions(instructions []ofp4.Instruction) error {
@@ -460,7 +464,7 @@ type flowFilter struct {
 type flowStats struct {
 	tableId  uint8
 	priority uint16
-	entry    *flowEntry
+	flow     *flowEntry
 }
 
 func (pipe Pipeline) filterFlows(req flowFilter) []flowStats {
@@ -579,7 +583,7 @@ func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
 				stat := flowStats{
 					tableId:  tableId,
 					priority: p.priority,
-					entry:    flow,
+					flow:     flow,
 				}
 				hits = append(hits, stat)
 			} else {
@@ -714,10 +718,14 @@ func (self Pipeline) validate(now time.Time) {
 					var validFlows []*flowEntry
 					for _, flows := range prio.flows {
 						for _, flow := range flows {
-							if flow.valid(now) {
+							reason := flow.valid(now)
+							if reason == -1 {
 								validFlows = append(validFlows, flow)
 							} else {
 								do_rebuild = true
+								if flow.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
+									//
+								}
 							}
 						}
 					}
