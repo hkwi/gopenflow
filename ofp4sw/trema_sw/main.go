@@ -33,21 +33,17 @@ func main() {
 		}
 	}
 	for {
-		if addrs, err := net.LookupHost(host); err != nil {
+		if addr,err:=net.ResolveIPAddr("ip", host); err!=nil {
 			panic(err)
 		} else {
-			for _, addr := range addrs {
-				if ip := net.ParseIP(addr); ip != nil {
-					if con, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: ip, Port: port}); err != nil {
-						log.Print(err)
-					} else {
-						channel := ofp4sw.NewIoControlChannel(con, con)
-						if err := pipe.AddControl(channel); err != nil {
-							log.Print(err)
-						} else {
-							log.Print(channel.Wait())
-						}
-					}
+			if con, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
+				log.Print(err)
+			} else {
+				channel := ofp4sw.NewIoControlChannel(con, con)
+				if err := pipe.AddControl(channel); err != nil {
+					log.Print(err)
+				} else {
+					log.Print(channel.Wait())
 				}
 			}
 		}
