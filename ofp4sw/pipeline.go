@@ -4,84 +4,125 @@ Package ofp4sw implements openflow 1.3 switch.
 package ofp4sw
 
 import (
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
 	"log"
 	"sync"
 	"time"
+	//	"math"
 )
 
 type Pipeline struct {
-	lock   *sync.Mutex
-	flows  map[uint8]*flowTable
-	ports  map[uint32]portInternal
-	groups map[uint32]*group
-	meters map[uint32]*meter
+	lock     *sync.RWMutex
+	flows    map[uint8]*flowTable
+	ports    map[uint32]portInternal
+	groups   map[uint32]*group
+	meters   map[uint32]*meter
+	datapath chan MapReducable
 
 	DatapathId uint64
+	Desc       ofp4.Desc
 	flags      uint16 // ofp_config_flags, check capability
 }
 
 func NewPipeline() *Pipeline {
-	pipe := &Pipeline{
-		lock:   &sync.Mutex{},
-		flows:  make(map[uint8]*flowTable),
-		ports:  make(map[uint32]portInternal),
-		groups: make(map[uint32]*group),
-		meters: make(map[uint32]*meter),
+	self := &Pipeline{
+		lock:     &sync.RWMutex{},
+		flows:    make(map[uint8]*flowTable),
+		ports:    make(map[uint32]portInternal),
+		groups:   make(map[uint32]*group),
+		meters:   make(map[uint32]*meter),
+		datapath: make(chan MapReducable),
 	}
-	controller := newController(pipe)
-	pipe.ports[ofp4.OFPP_CONTROLLER] = controller
+	controller := newController(self)
+	self.ports[ofp4.OFPP_CONTROLLER] = controller
 	go func() {
 		for {
 			time.Sleep(time.Second)
-			pipe.validate(time.Now())
+			self.validate(time.Now())
 		}
 	}()
-	return pipe
+	go MapReduce(self.datapath, 4) // XXX: NUM_CPUS
+	return self
 }
 
-type packetOut struct {
-	outPort uint32
-	queueId uint32
-	data    []byte
-	// below for OFPT_PACKET_IN
-	maxLen uint16
-	match  *matchResult
-	// below for OFPP_TABLE
-	inPort uint32
+func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
+	portInt := &normalPort{
+		close:   make(chan error),
+		public:  port,
+		created: time.Now(),
+		reason:  ofp4.OFPPR_ADD,
+	}
+
+	if err := func() error {
+		pipe.lock.Lock()
+		defer pipe.lock.Unlock()
+
+		if portNo == ofp4.OFPP_ANY || portNo == 0 {
+			portNo = 1
+			for existingPortNo, _ := range pipe.ports {
+				if existingPortNo > ofp4.OFPP_MAX {
+					continue // skip special ports
+				}
+				if existingPortNo >= portNo {
+					portNo = existingPortNo + 1
+				}
+				if portNo > ofp4.OFPP_MAX {
+					return errors.New("No room for port id")
+				}
+			}
+		} else {
+			if _, exists := pipe.ports[portNo]; exists {
+				return errors.New("portNo already used")
+			}
+		}
+		pipe.ports[portNo] = portInt
+		return nil
+	}(); err != nil {
+		return err
+	}
+
+	// port lifecyele
+	go func() {
+		ctrl := pipe.getController()
+		phyInPort := port.PhysicalPort()
+		for {
+			select {
+			case _ = <-portInt.close:
+				portInt.reason = ofp4.OFPRR_DELETE
+				ctrl.portChange(portNo, portInt)
+				return
+			case pkt := <-port.Ingress():
+				if portInt.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
+					continue
+				}
+				pipe.datapath <- &flowTableWork{
+					data: &frame{
+						serialized: pkt,
+						inPort:     portNo,
+						phyInPort:  phyInPort,
+					},
+					pipe:    &pipe,
+					tableId: 0,
+				}
+			case state := <-port.Watch():
+				if state != nil && portInt.state != *state {
+					portInt.state = *state
+					ctrl.portChange(portNo, portInt)
+					portInt.reason = ofp4.OFPPR_MODIFY
+				}
+			}
+		}
+		pipe.lock.Lock()
+		defer pipe.lock.Unlock()
+		delete(pipe.ports, portNo)
+	}()
+	return nil
 }
 
-type PortState struct {
-	Name       string
-	LinkDown   bool
-	Blocked    bool
-	Live       bool
-	Advertised uint32
-	Supported  uint32
-	Peer       uint32
-	Curr       uint32
-	HwAddr     [6]byte
-	Mtu        uint32
-	CurrSpeed  uint32 // kbps
-	MaxSpeed   uint32 // kbps
-}
-
-type PortStateListener interface {
-	PortChange(*PortState, uint8) error
-}
-
-type Port interface {
-	Name() string
-	GetPhysicalPort() uint32
-	Get([]byte) ([]byte, error) // Ingress. You may pass a []byte to Get method for reuse.
-	Put([]byte) error           // Egress.
-	// Implementation should notify port_status when starting with OFPPR_ADD.
-	AddStateListener(PortStateListener) error
-	// Implementation should notify port_status with OFPPR_DELETE before removal.
-	RemoveStateListener(PortStateListener) error
+func (self *Pipeline) AddControl(channel ControlChannel) error {
+	// XXX: extend for aux channel
+	return self.getController().addChannel(channel)
 }
 
 type PortStats struct {
@@ -100,45 +141,40 @@ type PortStats struct {
 }
 
 type portInternal interface {
-	Outlet(*packetOut)
+	Outlet(*outputToPort)
 	Stats() *PortStats
 	State() *PortState
 	GetConfig() uint32
-	SetConfig(uint32) error
+	SetConfig(uint32)
 }
 
 type normalPort struct {
-	pipe    *Pipeline
+	close   chan error
 	public  Port
 	stats   PortStats
 	config  uint32
 	created time.Time
 	state   PortState // copy of current state
+	reason  uint8
 }
 
-func (self *normalPort) Outlet(pout *packetOut) {
-	if pout.data == nil {
-		log.Println("packet serialization error")
+func (self *normalPort) Outlet(pout *outputToPort) {
+	pkt, err := pout.data.data()
+	if err != nil {
+		log.Println(err)
 		return
 	}
 	if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
 		self.stats.TxDropped++
 		return
 	}
-	if err := self.public.Put(pout.data); err != nil {
+	if err := self.public.Egress(pkt); err != nil {
 		self.stats.TxDropped++
+		log.Print(err)
 	} else {
 		self.stats.TxPackets++
-		self.stats.TxBytes += uint64(len(pout.data))
+		self.stats.TxBytes += uint64(len(pkt))
 	}
-}
-
-func (self *normalPort) PortChange(state *PortState, reason uint8) error {
-	if self.state != *state {
-		self.state = *state
-		self.pipe.portChange(self, reason)
-	}
-	return nil
 }
 
 func (self normalPort) Stats() *PortStats {
@@ -149,144 +185,13 @@ func (self normalPort) GetConfig() uint32 {
 	return self.config
 }
 
-func (self *normalPort) SetConfig(config uint32) error {
-	prev := self.config
+// we must trigger portChange() outside of SetConfig()
+func (self *normalPort) SetConfig(config uint32) {
 	self.config = config
-	if prev != self.config {
-		self.pipe.portChange(self, ofp4.OFPPR_MODIFY)
-	}
-	return nil
 }
 
 func (self normalPort) State() *PortState {
 	return &self.state
-}
-
-func (self normalPort) start(pipe Pipeline, portNo uint32) {
-	var paralells int = 3
-	// INGRESS
-	serialOuts := make(chan chan []*packetOut, paralells) // parallel pipeline processing
-	for i := 0; i < paralells; i++ {
-		go func() {
-			var eth []byte
-			var err error
-			for {
-				eth, err = self.public.Get(eth)
-				if err != nil {
-					break
-				}
-				serialOut := make(chan []*packetOut, 1)
-				serialOuts <- serialOut
-				serialOut <- func() []*packetOut {
-					if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
-						return nil
-					}
-					f := frame{
-						inPort:     portNo,
-						phyInPort:  self.public.GetPhysicalPort(),
-						serialized: eth,
-						length:     len(eth),
-						layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.NoCopy).Layers(),
-					}
-					pouts := f.process(pipe)
-					if self.config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
-						newPouts := make([]*packetOut, 0, len(pouts))
-						for _, pout := range pouts {
-							if pout.outPort != ofp4.OFPP_CONTROLLER {
-								newPouts = append(newPouts, pout)
-							}
-						}
-						pouts = newPouts
-					}
-					return pouts
-				}()
-				close(serialOut)
-			}
-		}()
-	}
-	go func() {
-		for serialOut := range serialOuts {
-			for pouts := range serialOut {
-				for _, pout := range pouts {
-					ports := func() []portInternal {
-						var ports []portInternal
-						if pout.outPort != ofp4.OFPP_ALL {
-							ports = make([]portInternal, 0, len(pipe.ports))
-						}
-
-						pipe.lock.Lock()
-						defer pipe.lock.Unlock()
-
-						if pout.outPort != ofp4.OFPP_ALL {
-							if outInt, ok := pipe.ports[pout.outPort]; ok {
-								ports = append(ports, outInt)
-							}
-						} else {
-							for outPortNo, outInt := range pipe.ports {
-								if outPortNo <= ofp4.OFPP_MAX && portNo != outPortNo {
-									ports = append(ports, outInt)
-								}
-							}
-						}
-						return ports
-					}()
-					for _, outInt := range ports {
-						outInt.Outlet(pout)
-					}
-				}
-			}
-		}
-	}()
-}
-
-func (self Pipeline) portChange(port portInternal, reason uint8) {
-	ctrl := self.getController()
-	self.lock.Lock()
-	defer self.lock.Unlock()
-	for k, p := range self.ports {
-		if p == port {
-			ctrl.portChange(k, port, reason)
-		}
-	}
-}
-
-// AddPort adds a normal openflow port into the pipeline.
-func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
-	portInt := &normalPort{
-		pipe:    &pipe,
-		public:  port,
-		created: time.Now(),
-	}
-	if err := func() error {
-		pipe.lock.Lock()
-		defer pipe.lock.Unlock()
-
-		if portNo != ofp4.OFPP_ANY {
-			if _, exists := pipe.ports[portNo]; exists {
-				return errors.New("portNo already used")
-			}
-		} else {
-			portNo = uint32(1)
-			for existingPortNo, _ := range pipe.ports {
-				if existingPortNo > ofp4.OFPP_MAX {
-					continue // skip special ports
-				}
-				if existingPortNo >= portNo {
-					portNo = existingPortNo + 1
-				}
-				if portNo > ofp4.OFPP_MAX {
-					return errors.New("No room for port id")
-				}
-			}
-		}
-		pipe.ports[portNo] = portInt
-		return nil
-	}(); err != nil {
-		return err
-	}
-	portInt.start(pipe, portNo)
-	port.AddStateListener(portInt)
-	return nil
 }
 
 func (pipe Pipeline) getController() *controller {
@@ -296,14 +201,6 @@ func (pipe Pipeline) getController() *controller {
 		}
 	}
 	return nil
-}
-
-func (pipe Pipeline) AddControlChannel(channel ControlChannel) error {
-	if ctrl := pipe.getController(); ctrl != nil {
-		return ctrl.addControlChannel(channel, pipe)
-	} else {
-		return errors.New("OFPP_CONTROLLER not registered")
-	}
 }
 
 func (pipe Pipeline) getFlowTable(tableId uint8) *flowTable {
@@ -442,7 +339,7 @@ func (pipe Pipeline) getPortPhysicalPort(portNo uint32) uint32 {
 
 	if portInt, ok := pipe.ports[portNo]; ok {
 		if port, ok := portInt.(*normalPort); ok {
-			return port.public.GetPhysicalPort()
+			return port.public.PhysicalPort()
 		}
 	}
 	return 0

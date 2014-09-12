@@ -1,34 +1,169 @@
 package ofp4sw
 
 import (
-	"bytes"
-	"encoding/binary"
 	"github.com/hkwi/gopenflow/ofp4"
-	"hash/fnv"
-	"log"
+	"sort"
 	"sync"
 	"time"
 )
 
+func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
+	if req.TableId > ofp4.OFPTT_MAX {
+		return ofp4.Error{
+			Type: ofp4.OFPET_FLOW_MOD_FAILED,
+			Code: ofp4.OFPFMFC_BAD_TABLE_ID,
+		}
+	}
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	var table *flowTable
+	if trial, ok := pipe.flows[req.TableId]; ok {
+		table = trial
+	} else {
+		table = &flowTable{
+			lock: &sync.RWMutex{},
+		}
+		pipe.flows[req.TableId] = table
+	}
+	return table.addFlowEntry(req)
+}
+
+func (self Pipeline) validate(now time.Time) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	for _, table := range self.flows {
+		table := table
+		go func() {
+			table.lock.Lock()
+			defer table.lock.Unlock()
+
+			for _, prio := range table.priorities {
+				prio := prio
+				go func() {
+					prio.lock.Lock()
+					defer prio.lock.Unlock()
+
+					do_rebuild := false
+					var validFlows []*flowEntry
+					for _, flows := range prio.flows {
+						for _, flow := range flows {
+							reason := flow.valid(now)
+							if reason == -1 {
+								validFlows = append(validFlows, flow)
+							} else {
+								do_rebuild = true
+								if flow.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
+									//
+								}
+							}
+						}
+					}
+					if do_rebuild {
+						prio.rebuildIndex(validFlows)
+					}
+				}()
+			}
+		}()
+	}
+}
+
 type flowTable struct {
-	lock *sync.Mutex
-	// list by priority
-	priorities  []*flowPriority
-	activeCount uint32
+	lock        *sync.RWMutex   // for counters and collections
+	priorities  []*flowPriority // sorted list by priority
+	activeCount uint32          // number of entries
 	lookupCount uint64
 	matchCount  uint64
 	config      uint32
 }
 
+func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
+	flow, err := newFlowEntry(req)
+	if err != nil {
+		return err
+	}
+
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	var priority *flowPriority
+	i := sort.Search(len(self.priorities), func(k int) bool {
+		return self.priorities[k].priority <= req.Priority // descending order
+	})
+	if i == len(self.priorities) || self.priorities[i].priority != req.Priority {
+		priority = &flowPriority{
+			lock:     &sync.RWMutex{},
+			priority: req.Priority,
+			flows:    make(map[uint32][]*flowEntry),
+		}
+		self.priorities = append(self.priorities, nil)
+		copy(self.priorities[i+1:], self.priorities[i:])
+		self.priorities[i] = priority
+	} else {
+		priority = self.priorities[i]
+	}
+
+	priority.lock.Lock()
+	defer priority.lock.Unlock()
+
+	if (req.Flags & ofp4.OFPFF_CHECK_OVERLAP) != 0 {
+		key := capKey(priority.caps, flow.fields)
+		if flows, ok := priority.flows[key]; ok {
+			for _, f := range flows {
+				if overlap(f.fields, flow.fields) {
+					return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
+				}
+			}
+		}
+	}
+	// always rebuild the flow rule set
+	flows := []*flowEntry{flow}
+	for _, fs := range priority.flows {
+		flows = append(flows, fs...)
+	}
+	priority.rebuildIndex(flows)
+	self.activeCount++
+	return nil
+}
+
 type flowPriority struct {
-	lock     *sync.Mutex
+	lock     *sync.RWMutex // for collections
 	priority uint16
-	caps     []match
+	caps     []match                 // mask common to all flows in this priority
 	flows    map[uint32][]*flowEntry // entries in the same priority
 }
 
+/* invoke this method inside a mutex guard. */
+func (self *flowPriority) rebuildIndex(flows []*flowEntry) {
+	var caps []match
+	hashed := make(map[uint32][]*flowEntry)
+
+	for i, flow := range flows {
+		if i == 0 {
+			caps = flow.fields
+		} else {
+			caps = capMask(caps, flow.fields)
+		}
+	}
+	for _, flow := range flows {
+		key := capKey(caps, flow.fields)
+		if ent, ok := hashed[key]; ok {
+			hashed[key] = append(ent, flow)
+		} else {
+			hashed[key] = []*flowEntry{flow}
+		}
+	}
+	for key, flows := range hashed {
+		sort.Sort(flowEntryList(flows))
+		hashed[key] = flows
+	}
+	self.caps = caps
+	self.flows = hashed
+}
+
 type flowEntry struct {
-	lock        *sync.Mutex
+	lock        *sync.RWMutex // for counters
 	fields      []match
 	cookie      uint64
 	packetCount uint64
@@ -48,158 +183,23 @@ type flowEntry struct {
 	instGoto     uint8
 }
 
-type match struct {
-	field uint64
-	mask  []byte
-	value []byte
-}
-
-type lookupResult struct {
-	entry    *flowEntry
-	priority uint16
-}
-
-func (table *flowTable) lookup(data frame) (*flowEntry, uint16) {
-	priorities := make([]*flowPriority, 0, len(table.priorities))
-	func() {
-		table.lock.Lock()
-		defer table.lock.Unlock()
-		table.lookupCount++
-		priorities = append(priorities, table.priorities...)
-	}()
-	for _, prio := range priorities {
-		if en := prio.matchFrame(data); en != nil {
-			func() {
-				table.lock.Lock()
-				defer table.lock.Unlock()
-				table.matchCount++
-			}()
-			en.touched = time.Now()
-			return en, prio.priority
-		}
+func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
+	var reqMatch matchList
+	if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
+		return nil, err
 	}
-	return nil, 0
-}
-
-func (priority flowPriority) matchFrame(data frame) *flowEntry {
-	entries := func() []*flowEntry {
-		priority.lock.Lock()
-		defer priority.lock.Unlock()
-
-		hasher := fnv.New32()
-		for _, p1 := range priority.caps {
-			if buf, err := data.getValue(p1); err != nil {
-				log.Println(err)
-				return nil
-			} else {
-				hasher.Write(maskBytes(buf, p1.mask))
-			}
-		}
-		if entries, ok := priority.flows[hasher.Sum32()]; ok {
-			return append([]*flowEntry{}, entries...)
-		}
-		return nil
-	}()
-	for _, entry := range entries {
-		hit := true
-		for _, field := range entry.fields {
-			if !field.match(data) {
-				hit = false
-				break
-			}
-		}
-		if hit {
-			return entry
-		}
+	entry := &flowEntry{
+		lock:        &sync.RWMutex{},
+		fields:      []match(reqMatch),
+		cookie:      req.Cookie,
+		created:     time.Now(),
+		idleTimeout: req.IdleTimeout,
+		hardTimeout: req.HardTimeout,
 	}
-	return nil
-}
-
-func (priority *flowPriority) rebuildIndex(flows []*flowEntry) {
-	var cap []match
-	for i, flow := range flows {
-		if i == 0 {
-			cap = flow.fields
-		} else {
-			cap = capMask(cap, flow.fields)
-		}
+	if err := entry.importInstructions(req.Instructions); err != nil {
+		return nil, err
 	}
-	for k, _ := range priority.flows {
-		delete(priority.flows, k)
-	}
-
-	priority.caps = cap
-	for _, flow := range flows {
-		key := capKey(cap, flow.fields)
-		if ent, ok := priority.flows[key]; ok {
-			// XXX: reorder for longest match
-			priority.flows[key] = append(ent, flow)
-		} else {
-			priority.flows[key] = []*flowEntry{flow}
-		}
-	}
-}
-
-type flowEntryResult struct {
-	outputs []*packetOut
-	groups  []*groupOut
-	tableId uint8
-}
-
-func (rule *flowEntry) process(data *frame, pipe Pipeline) flowEntryResult {
-	func() {
-		rule.lock.Lock()
-		defer rule.lock.Unlock()
-
-		if rule.flags&ofp4.OFPFF_NO_PKT_COUNTS == 0 {
-			rule.packetCount++
-		}
-		if rule.flags&ofp4.OFPFF_NO_BYT_COUNTS == 0 {
-			rule.byteCount += uint64(data.length)
-		}
-	}()
-
-	var result flowEntryResult
-	if rule.instMeter != 0 {
-		if meter := pipe.getMeter(rule.instMeter); meter != nil {
-			if err := meter.process(data); err != nil {
-				if _, ok := err.(*packetDrop); ok {
-					// no log
-				} else {
-					log.Println(err)
-				}
-				return result
-			}
-		}
-	}
-	for _, act := range rule.instApply {
-		if aret, err := act.process(data, pipe); err != nil {
-			log.Print(err)
-		} else if aret != nil {
-			result.groups = append(result.groups, aret.groups...)
-			result.outputs = append(result.outputs, aret.outputs...)
-		}
-	}
-	if rule.instClear {
-		data.actionSet = make(map[uint16]action)
-	}
-	if rule.instWrite != nil {
-		for k, v := range rule.instWrite {
-			data.actionSet[k] = v
-		}
-	}
-	if rule.instMetadata != nil {
-		data.metadata = rule.instMetadata.apply(data.metadata)
-	}
-	if rule.instGoto != 0 {
-		result.tableId = rule.instGoto
-	} else {
-		if aret := actionSet(data.actionSet).process(data, pipe); aret != nil {
-			result.groups = append(result.groups, aret.groups...)
-			result.outputs = append(result.outputs, aret.outputs...)
-		}
-	}
-	return result
+	return entry, nil
 }
 
 func (self flowEntry) valid(now time.Time) int {
@@ -283,6 +283,23 @@ func (entry *flowEntry) exportInstructions() []ofp4.Instruction {
 	return insts
 }
 
+// sort.Interface
+type flowEntryList []*flowEntry
+
+func (self flowEntryList) Len() int {
+	return len([]*flowEntry(self))
+}
+
+func (self flowEntryList) Less(i, j int) bool {
+	l := []*flowEntry(self)
+	return len(expandMatch(l[i].fields)) > len(expandMatch(l[j].fields))
+}
+
+func (self flowEntryList) Swap(i, j int) {
+	l := []*flowEntry(self)
+	l[i], l[j] = l[j], l[i]
+}
+
 type metadataInstruction struct {
 	metadata uint64
 	mask     uint64
@@ -292,162 +309,9 @@ func (m metadataInstruction) apply(value uint64) uint64 {
 	return m.metadata&m.mask | value&^m.mask
 }
 
-func (m match) match(data frame) bool {
-	if value, err := data.getValue(m); err == nil {
-		if bytes.Compare(maskBytes(value, m.mask), m.value) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func maskBytes(value, mask []byte) []byte {
-	ret := make([]byte, len(value))
-	for i, _ := range ret {
-		ret[i] = value[i] & mask[i]
-	}
-	return ret
-}
-
-func (m match) matchMatch(wide []match) bool {
-	for _, w := range wide {
-		if w.field == m.field {
-			if bytes.Compare(maskBytes(m.value, w.mask), maskBytes(w.value, w.mask)) == 0 {
-				return true
-			} else {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func overlap(f1, f2 []match) bool {
-	mask := capMask(f1, f2)
-	for _, m := range mask {
-		for _, m1 := range f1 {
-			if m1.field == m.field {
-				for _, m2 := range f2 {
-					if m2.field == m.field {
-						if bytes.Compare(maskBytes(m1.value, m.mask), maskBytes(m2.value, m.mask)) != 0 {
-							return false
-						}
-					}
-				}
-			}
-		}
-	}
-	return true
-}
-
-func capMask(f1, f2 []match) []match {
-	var ret []match
-	for _, m1 := range f1 {
-		for _, m2 := range f2 {
-			if m1.field == m2.field {
-				maskFull := true
-				mask := make([]byte, len(m1.mask))
-				value := make([]byte, len(m1.mask))
-				for i, _ := range mask {
-					mask[i] = m1.mask[i] & m2.mask[i]
-					e1 := m1.value[i] & mask[i]
-					e2 := m2.value[i] & mask[i]
-					if e1 != e2 {
-						mask[i] ^= e1 ^ e2
-						value[i] = (e1 & e2) &^ (e1 ^ e2)
-					}
-					if mask[i] != 0 {
-						maskFull = false
-					}
-				}
-				if !maskFull {
-					ret = append(ret, match{
-						field: m1.field,
-						mask:  mask,
-						value: value,
-					})
-				}
-			}
-		}
-	}
-	return ret
-}
-
-func capKey(cap []match, f []match) uint32 {
-	var buf []byte
-	for _, m1 := range cap {
-		for _, m2 := range f {
-			if m1.field == m2.field {
-				value := make([]byte, len(m2.value))
-				for i, _ := range value {
-					value[i] = m2.value[i] & (m1.mask[i] & m2.mask[i])
-				}
-				buf = append(buf, value...)
-			}
-		}
-	}
-	hasher := fnv.New32()
-	if _, err := hasher.Write(buf); err != nil {
-		return 0
-	}
-	return hasher.Sum32()
-}
-
-type matchList []match
-
-func (ms matchList) MarshalBinary() ([]byte, error) {
-	var ret []byte
-	for _, m := range []match(ms) {
-		hdr := make([]byte, 4)
-		binary.BigEndian.PutUint16(hdr[0:2], 0x8000)
-		if ofp4.OxmHaveMask(uint16(m.field)) {
-			hdr[2] = uint8(m.field)<<1 | uint8(1)
-			hdr[3] = uint8(len(m.value) + len(m.mask))
-			ret = append(ret, hdr...)
-			ret = append(ret, m.value...)
-			ret = append(ret, m.mask...)
-		} else {
-			hdr[2] = uint8(m.field<<1) | uint8(0)
-			hdr[3] = uint8(len(m.value))
-			ret = append(ret, hdr...)
-			ret = append(ret, m.value...)
-		}
-	}
-	return ret, nil
-}
-
-func (ms *matchList) UnmarshalBinary(s []byte) error {
-	var ret []match
-	for cur := 0; cur+4 < len(s); {
-		length := int(s[cur+3])
-		if length == 0 { // OFPAT_SET_FIELD has padding
-			break
-		}
-		if binary.BigEndian.Uint16(s[cur:cur+2]) == 0x8000 {
-			m := match{}
-			m.field = uint64(s[cur+2] >> 1)
-			if s[cur+2]&0x01 == 0 {
-				m.value = s[cur+4 : cur+4+length]
-				m.mask = make([]byte, length)
-				for i, _ := range m.mask {
-					m.mask[i] = 0xFF
-				}
-			} else {
-				m.value = s[cur+4 : cur+4+length/2]
-				m.mask = s[cur+4+length/2 : cur+4+length]
-			}
-			ret = append(ret, m)
-		} else {
-			log.Print("oxm_class", s[cur:])
-		}
-		cur += 4 + length
-	}
-	*ms = matchList(ret)
-	return nil
-}
-
-//////////// ofp_flow_stats
-
+/*
+flowFilter will be used in querying and or deleting flows in flow tables.
+*/
 type flowFilter struct {
 	opUnregister bool
 	opStrict     bool
@@ -468,65 +332,86 @@ type flowStats struct {
 }
 
 func (pipe Pipeline) filterFlows(req flowFilter) []flowStats {
-	pipe.lock.Lock()
-	defer pipe.lock.Unlock()
+	pipe.lock.RLock()
+	defer pipe.lock.RUnlock()
 
 	return pipe.filterFlowsInside(req)
 }
 
-func (p Pipeline) filterFlowsInside(req flowFilter) []flowStats {
+/*
+filterFlowsInside filters flow entries in the flow tables without a mutex guard.
+
+Please make sure that you invoke this method inside a mutex guard.
+This is because group, meter deletion will also remove associated flows, and the
+mutex is aquired in that operation, outside of filterFlowsInside.
+*/
+func (pipe Pipeline) filterFlowsInside(req flowFilter) []flowStats {
 	var stats []flowStats
-	waits := 0
-	ch2 := make(chan []flowStats)
-	for i, table := range p.flows {
-		if req.tableId == ofp4.OFPTT_ALL || req.tableId == i {
-			i2 := i
-			table2 := table
+	if req.tableId == ofp4.OFPTT_ALL {
+		waits := 0
+		reducer := make(chan []flowStats)
+		for tableId, table := range pipe.flows {
+			tableId := tableId
+			table := table
 			go func() {
-				ch2 <- table2.filterFlows(req, i2)
+				reducer <- table.filterFlows(req, tableId)
 			}()
 			waits++
 		}
-	}
-	for i := 0; i < waits; i++ {
-		stats = append(stats, <-ch2...)
+		for i := 0; i < waits; i++ {
+			stats = append(stats, <-reducer...)
+		}
+	} else {
+		if table, ok := pipe.flows[req.tableId]; ok {
+			stats = table.filterFlows(req, req.tableId)
+		}
 	}
 	return stats
 }
 
-func (t flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {
-	t.lock.Lock()
-	defer t.lock.Unlock()
+func (table flowTable) filterFlows(req flowFilter, tableId uint8) []flowStats {
+	if req.opUnregister {
+		table.lock.Lock()
+		defer table.lock.Unlock()
+	} else {
+		table.lock.RLock()
+		defer table.lock.RUnlock()
+	}
 
 	waits := 0
-	ch := make(chan []flowStats)
-	for _, prio := range t.priorities {
+	reducer := make(chan []flowStats)
+	for _, prio := range table.priorities {
 		if req.opStrict && prio.priority != req.priority {
 			continue
 		}
 		prio := prio
 		go func() {
-			ch <- prio.filterFlows(req, tableId)
+			reducer <- prio.filterFlows(req, tableId)
 		}()
 		waits++
 	}
 	var stats []flowStats
 	for i := 0; i < waits; i++ {
-		stats = append(stats, <-ch...)
+		stats = append(stats, <-reducer...)
 	}
 	if req.opUnregister {
-		t.activeCount -= uint32(len(stats))
+		table.activeCount -= uint32(len(stats))
 	}
 	return stats
 }
 
-func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+func (prio *flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
+	if req.opUnregister {
+		prio.lock.Lock()
+		defer prio.lock.Unlock()
+	} else {
+		prio.lock.RLock()
+		defer prio.lock.RUnlock()
+	}
 
 	var hits []flowStats
 	var miss []*flowEntry
-	for _, flows := range p.flows {
+	for _, flows := range prio.flows {
 		for _, flow := range flows {
 			hit := func() bool {
 				if (flow.cookie & req.cookieMask) != (req.cookie & req.cookieMask) {
@@ -582,7 +467,7 @@ func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
 			if hit {
 				stat := flowStats{
 					tableId:  tableId,
-					priority: p.priority,
+					priority: prio.priority,
 					flow:     flow,
 				}
 				hits = append(hits, stat)
@@ -592,148 +477,7 @@ func (p flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats {
 		}
 	}
 	if req.opUnregister {
-		p.rebuildIndex(miss)
+		prio.rebuildIndex(miss)
 	}
 	return hits
-}
-
-///// flow entry operation
-
-func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
-	var reqMatch matchList
-	if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
-		return nil, err
-	}
-	entry := &flowEntry{
-		lock:        &sync.Mutex{},
-		fields:      []match(reqMatch),
-		cookie:      req.Cookie,
-		created:     time.Now(),
-		idleTimeout: req.IdleTimeout,
-		hardTimeout: req.HardTimeout,
-	}
-	if err := entry.importInstructions(req.Instructions); err != nil {
-		return nil, err
-	}
-	return entry, nil
-}
-
-func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
-	if req.TableId > ofp4.OFPTT_MAX {
-		return ofp4.Error{
-			Type: ofp4.OFPET_FLOW_MOD_FAILED,
-			Code: ofp4.OFPFMFC_BAD_TABLE_ID,
-		}
-	}
-
-	var flow *flowEntry
-	if tflow, err := newFlowEntry(req); err != nil {
-		return err
-	} else {
-		flow = tflow
-	}
-
-	pipe.lock.Lock()
-	defer pipe.lock.Unlock()
-
-	var table *flowTable
-	if trial, ok := pipe.flows[req.TableId]; ok {
-		table = trial
-	} else {
-		table = &flowTable{
-			lock: &sync.Mutex{},
-		}
-		pipe.flows[req.TableId] = table
-	}
-
-	table.lock.Lock()
-	defer table.lock.Unlock()
-
-	var split int
-	var priority *flowPriority
-	for i, prio := range table.priorities { // descending order
-		if prio.priority > req.Priority {
-			split = i
-		} else if prio.priority == req.Priority {
-			priority = prio
-		} else {
-			break
-		}
-	}
-	if priority == nil {
-		priority = &flowPriority{
-			lock:     &sync.Mutex{},
-			flows:    make(map[uint32][]*flowEntry),
-			priority: req.Priority,
-		}
-		table.priorities = append(table.priorities, nil)
-		copy(table.priorities[split+1:], table.priorities[split:])
-		table.priorities[split] = priority
-		// NOTE: inserting. below does not work.
-		// table.priorities = append(append(table.priorities[:split], priority), table.priorities[split:]...)
-	}
-
-	priority.lock.Lock()
-	defer priority.lock.Unlock()
-
-	key := capKey(priority.caps, flow.fields)
-	if ent, ok := priority.flows[key]; ok {
-		overlaps := false
-		for _, f := range ent {
-			if overlap(f.fields, flow.fields) {
-				overlaps = true
-				break
-			}
-		}
-		if overlaps && (req.Flags&ofp4.OFPFF_CHECK_OVERLAP) != uint16(0) {
-			return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
-		}
-	}
-	flows := []*flowEntry{flow}
-	for _, fs := range priority.flows {
-		flows = append(flows, fs...)
-	}
-	priority.rebuildIndex(flows)
-	table.activeCount++
-	return nil
-}
-
-func (self Pipeline) validate(now time.Time) {
-	self.lock.Lock()
-	defer self.lock.Unlock()
-
-	for _, table := range self.flows {
-		table := table
-		go func() {
-			table.lock.Lock()
-			defer table.lock.Unlock()
-
-			for _, prio := range table.priorities {
-				prio := prio
-				go func() {
-					prio.lock.Lock()
-					defer prio.lock.Unlock()
-
-					do_rebuild := false
-					var validFlows []*flowEntry
-					for _, flows := range prio.flows {
-						for _, flow := range flows {
-							reason := flow.valid(now)
-							if reason == -1 {
-								validFlows = append(validFlows, flow)
-							} else {
-								do_rebuild = true
-								if flow.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
-									//
-								}
-							}
-						}
-					}
-					if do_rebuild {
-						prio.rebuildIndex(validFlows)
-					}
-				}()
-			}
-		}()
-	}
 }

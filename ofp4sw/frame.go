@@ -10,93 +10,42 @@ import (
 	"hash/fnv"
 	"log"
 	"net"
+	"time"
 )
-
-type matchResult struct {
-	tableId  uint8
-	priority uint16
-	rule     *flowEntry
-}
 
 // data associated with a packet, which is
 // alive while the packet travels the pipeline
 type frame struct {
-	layers     []gopacket.Layer
-	serialized []byte // cache
-	length     int    // cache
+	// serialized or layers may be 0 length(or nil), not both at a time.
+	serialized []byte
+	layers     []gopacket.Layer // Not a gopacket.Packet, because Data() returns original packet bytes even when layers were modified.
 	inPort     uint32
 	phyInPort  uint32
 	metadata   uint64
 	tunnelId   uint64
 	queueId    uint32
 	actionSet  map[uint16]action
-	match      *matchResult
 }
 
-func (f *frame) process(p Pipeline) []*packetOut {
-	// Multiple packet_out may happen and multiple errors may happen. That's why this func does not return an error.
-	// errors will be stored in frame.errors
-	ret := f.processTable(0, p)
-	return ret
-}
-
-func (f *frame) processTable(tableId uint8, pipe Pipeline) []*packetOut {
-	var result []*packetOut
-	if table := pipe.getFlowTable(tableId); table != nil {
-		if entry, priority := table.lookup(*f); entry != nil {
-			f.match = &matchResult{
-				tableId:  tableId,
-				priority: priority,
-				rule:     entry,
-			}
-			ret := entry.process(f, pipe)
-			result = append(result, ret.outputs...)
-			result = append(result, f.processGroups(ret.groups, pipe, nil)...)
-			if ret.tableId != 0 {
-				result = append(result, f.processTable(ret.tableId, pipe)...)
-			}
-		} else {
-			// really table-miss, drop
-		}
+// useLayers makes sure that layers are available, and invalidate serialized buffer for future layer modification.
+func (self *frame) useLayers() {
+	if len(self.layers) == 0 {
+		self.layers = gopacket.NewPacket(self.serialized, layers.LayerTypeEthernet, gopacket.NoCopy).Layers()
 	}
-	return result
+	self.serialized = self.serialized[:0]
 }
 
-func (f *frame) processGroups(groups []*groupOut, pipe Pipeline, processed []uint32) []*packetOut {
-	var result []*packetOut
-	for _, gout := range groups {
-		for _, gid := range processed {
-			if gid == gout.groupId {
-				log.Printf("group loop detected")
-				return nil
-			}
-		}
-		if group := pipe.getGroup(gout.groupId); group != nil {
-			gf := f.clone()
-			ret := group.process(gf, pipe)
-			result = append(result, ret.outputs...)
-			result = append(result, gf.processGroups(ret.groups, pipe, append(processed, gout.groupId))...)
-		}
-	}
-	return result
-}
-
-func (f frame) data() ([]byte, error) {
-	if f.serialized == nil {
-		buf := gopacket.NewSerializeBuffer()
-		ls := make([]gopacket.SerializableLayer, len(f.layers))
+func (self *frame) data() ([]byte, error) {
+	if len(self.serialized) == 0 {
+		ls := make([]gopacket.SerializableLayer, len(self.layers))
 
 		var network gopacket.NetworkLayer
-		for i, layer := range f.layers {
+		for i, layer := range self.layers {
 			switch l := layer.(type) {
 			case *layers.IPv4:
-				if network == nil {
-					network = l
-				}
+				network = l
 			case *layers.IPv6:
-				if network == nil {
-					network = l
-				}
+				network = l
 			case *layers.TCP:
 				l.SetNetworkLayerForChecksum(network)
 			case *layers.UDP:
@@ -112,36 +61,38 @@ func (f frame) data() ([]byte, error) {
 				return nil, errors.New(fmt.Sprint("non serializableLayer", layer))
 			}
 		}
-		if err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}, ls...); err != nil {
+
+		buf := gopacket.NewSerializeBuffer()
+		err := gopacket.SerializeLayers(buf, gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}, ls...)
+		if err != nil {
 			return nil, err
-		} else {
-			f.serialized = buf.Bytes()
-			if len(f.serialized) != f.length {
-				log.Println("frame length shortcut may be broken")
-			}
 		}
+		self.serialized = buf.Bytes()
 	}
-	return f.serialized, nil
+	return self.serialized, nil
 }
 
-func (f frame) clone() *frame {
-	var eth []byte
-	if f.serialized != nil {
-		eth = f.serialized
-	} else {
-		if frameBytes, err := f.data(); err != nil {
-			log.Println(err)
-		} else {
-			eth = frameBytes
+func (self frame) clone() *frame {
+	frameBytes, err := self.data()
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+	var actionSet map[uint16]action
+	if self.actionSet != nil {
+		actionSet = make(map[uint16]action)
+		for k, v := range self.actionSet {
+			actionSet[k] = v
 		}
 	}
 	return &frame{
-		inPort:     f.inPort,
-		phyInPort:  f.phyInPort,
-		length:     len(eth),
-		serialized: eth,
-		layers:     gopacket.NewPacket(eth, layers.LayerTypeEthernet, gopacket.DecodeOptions{}).Layers(),
-		actionSet:  make(map[uint16]action),
+		serialized: frameBytes,
+		inPort:     self.inPort,
+		phyInPort:  self.phyInPort,
+		metadata:   self.metadata,
+		tunnelId:   self.tunnelId,
+		queueId:    self.queueId,
+		actionSet:  actionSet,
 	}
 }
 
@@ -188,6 +139,8 @@ func (f frame) hash() uint32 {
 }
 
 func (data frame) getValue(m match) ([]byte, error) {
+	data.useLayers()
+
 	switch m.field {
 	default:
 		return nil, errors.New("unknown oxm field")
@@ -559,7 +512,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 }
 
 func (data *frame) setValue(m match) error {
-	data.serialized = nil
+	data.useLayers()
 
 	switch m.field {
 	default:
@@ -932,4 +885,291 @@ func toMatchBytes(value interface{}) (data []byte, err error) {
 		}
 	}
 	return
+}
+
+func expandMatch(obj []match) []match {
+	x := make(map[uint64]*match)
+	for _, m := range obj {
+		for h := &m; h != nil; h = matchImplied(h.field) {
+			x[h.field] = h
+		}
+	}
+	u := make([]match, 0, len(x))
+	for _, m := range x {
+		u = append(u, *m)
+	}
+	return u
+}
+
+func matchImplied(field uint64) *match {
+	var ext *match
+	switch field {
+	case ofp4.OFPXMT_OFB_IPV4_SRC, ofp4.OFPXMT_OFB_IPV4_DST:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ETH_TYPE,
+			[]byte{0x80, 0x00},
+			[]byte{0xFF, 0xFF},
+		}
+	case ofp4.OFPXMT_OFB_TCP_SRC, ofp4.OFPXMT_OFB_TCP_DST:
+		ext = &match{
+			ofp4.OFPXMT_OFB_IP_PROTO,
+			[]byte{0x06},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_UDP_SRC, ofp4.OFPXMT_OFB_UDP_DST:
+		ext = &match{
+			ofp4.OFPXMT_OFB_IP_PROTO,
+			[]byte{0x11},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_SCTP_SRC, ofp4.OFPXMT_OFB_SCTP_DST:
+		ext = &match{
+			ofp4.OFPXMT_OFB_IP_PROTO,
+			[]byte{0x84},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_ICMPV4_TYPE, ofp4.OFPXMT_OFB_ICMPV4_CODE:
+		ext = &match{
+			ofp4.OFPXMT_OFB_IP_PROTO,
+			[]byte{0x01},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_ARP_OP,
+		ofp4.OFPXMT_OFB_ARP_SPA, ofp4.OFPXMT_OFB_ARP_TPA,
+		ofp4.OFPXMT_OFB_ARP_SHA, ofp4.OFPXMT_OFB_ARP_THA:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ETH_TYPE,
+			[]byte{0x08, 0x06},
+			[]byte{0xFF, 0xFF},
+		}
+	case ofp4.OFPXMT_OFB_IPV6_SRC, ofp4.OFPXMT_OFB_IPV6_DST, ofp4.OFPXMT_OFB_IPV6_FLABEL:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ETH_TYPE,
+			[]byte{0x86, 0xDD},
+			[]byte{0xFF, 0xFF},
+		}
+	case ofp4.OFPXMT_OFB_ICMPV6_TYPE, ofp4.OFPXMT_OFB_ICMPV6_CODE:
+		ext = &match{
+			ofp4.OFPXMT_OFB_IP_PROTO,
+			[]byte{0x3A},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ICMPV6_TYPE,
+			[]byte{135},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ICMPV6_TYPE,
+			[]byte{136},
+			[]byte{0xFF},
+		}
+	case ofp4.OFPXMT_OFB_PBB_ISID:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ETH_TYPE,
+			[]byte{0x88, 0xE7},
+			[]byte{0xFF, 0xFF},
+		}
+	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
+		ext = &match{
+			ofp4.OFPXMT_OFB_ETH_TYPE,
+			[]byte{0x86, 0xDD},
+			[]byte{0xFF, 0xFF},
+		}
+	}
+	return ext
+}
+
+type flowTableWork struct {
+	data *frame
+	// ref
+	pipe    *Pipeline
+	tableId uint8
+	// results
+	outputs   []*outputToPort
+	nextTable uint8
+}
+
+func (self *flowTableWork) Map() Reducable {
+	// clear
+	self.outputs = self.outputs[:0]
+	self.nextTable = 0
+
+	// lookup phase
+	var entry *flowEntry
+	var priority uint16
+	table := self.pipe.getFlowTable(self.tableId)
+
+	if table == nil {
+		return self
+	}
+	func() {
+		table.lock.Lock()
+		defer table.lock.Unlock()
+		table.lookupCount++
+	}()
+	func() {
+		table.lock.RLock()
+		defer table.lock.RUnlock()
+		for _, prio := range table.priorities {
+			entry, priority = func() (*flowEntry, uint16) {
+				hasher := fnv.New32()
+				prio.lock.RLock()
+				defer prio.lock.RUnlock()
+				for _, cap := range prio.caps {
+					if buf, err := self.data.getValue(cap); err != nil {
+						log.Println(err)
+						return nil, 0
+					} else {
+						hasher.Write(maskBytes(buf, cap.mask))
+					}
+				}
+				if flows, ok := prio.flows[hasher.Sum32()]; ok {
+					for _, flow := range flows {
+						hit := true
+						for _, field := range flow.fields {
+							if !field.match(*self.data) {
+								hit = false
+								break
+							}
+						}
+						if hit {
+							return flow, prio.priority
+						}
+					}
+				}
+				return nil, 0
+			}()
+			if entry != nil {
+				return
+			}
+		}
+		return
+	}()
+	// execution
+	var groups []*outputToGroup
+	if entry != nil {
+		func() {
+			table.lock.Lock()
+			defer table.lock.Unlock()
+			table.matchCount++
+		}()
+		func() {
+			entry.lock.Lock()
+			defer entry.lock.Unlock()
+			if entry.flags&ofp4.OFPFF_NO_PKT_COUNTS == 0 {
+				entry.packetCount++
+			}
+			if entry.flags&ofp4.OFPFF_NO_BYT_COUNTS == 0 {
+				if eth, err := self.data.data(); err != nil {
+					log.Print(err)
+				} else {
+					entry.byteCount += uint64(len(eth))
+				}
+			}
+			entry.touched = time.Now()
+		}()
+
+		pipe := self.pipe
+		if entry.instMeter != 0 {
+			if meter := pipe.getMeter(entry.instMeter); meter != nil {
+				if err := meter.process(self.data); err != nil {
+					if _, ok := err.(*packetDrop); ok {
+						// no log
+					} else {
+						log.Println(err)
+					}
+					return self
+				}
+			}
+		}
+
+		for _, act := range entry.instApply {
+			if pout, gout, err := act.process(self.data); err != nil {
+				log.Print(err)
+			} else {
+				if pout != nil {
+					pout.tableId = self.tableId
+					if priority == 0 && len(entry.fields) == 0 {
+						pout.reason = ofp4.OFPR_NO_MATCH
+					}
+					self.outputs = append(self.outputs, pout)
+				}
+				if gout != nil {
+					groups = append(groups, gout)
+				}
+			}
+		}
+		if entry.instClear {
+			self.data.actionSet = make(map[uint16]action)
+		}
+		if entry.instWrite != nil {
+			for k, v := range entry.instWrite {
+				self.data.actionSet[k] = v
+			}
+		}
+		if entry.instMetadata != nil {
+			self.data.metadata = entry.instMetadata.apply(self.data.metadata)
+		}
+		if entry.instGoto != 0 {
+			self.nextTable = entry.instGoto
+		} else {
+			pouts, gouts := actionSet(self.data.actionSet).process(self.data)
+			self.outputs = append(self.outputs, pouts...)
+			groups = append(groups, gouts...)
+		}
+	}
+	// process groups if any
+	if len(groups) > 0 {
+		self.outputs = append(self.outputs, self.pipe.groupToOutput(groups, nil)...)
+	}
+	return self
+}
+
+/* groupToOutput is for recursive call */
+func (self Pipeline) groupToOutput(groups []*outputToGroup, processed []uint32) []*outputToPort {
+	var result []*outputToPort
+	for _, gout := range groups {
+		for _, gid := range processed {
+			if gid == gout.groupId {
+				log.Printf("group loop detected")
+				return nil
+			}
+		}
+		if group := self.getGroup(gout.groupId); group != nil {
+			p, g := group.process(gout.data, self)
+			processed := append(processed, gout.groupId)
+			result = append(result, p...)
+			result = append(result, self.groupToOutput(g, processed)...)
+		}
+	}
+	return result
+}
+
+func (self *flowTableWork) Reduce() {
+	// packet out for a specific table execution should be in-order.
+	for _, output := range self.outputs {
+		if output.outPort == ofp4.OFPP_CONTROLLER {
+			inPort := self.pipe.getPort(output.data.inPort)
+			if inPort != nil {
+				config := inPort.GetConfig()
+				if config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
+					continue
+				}
+			}
+		}
+		for _, port := range self.pipe.getPorts(output.outPort) {
+			port.Outlet(output)
+		}
+	}
+	if self.nextTable != 0 {
+		self.tableId = self.nextTable
+		defer func() {
+			self.pipe.datapath <- self
+		}()
+	} else {
+		// atexit
+	}
 }

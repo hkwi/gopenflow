@@ -8,40 +8,46 @@ import (
 	"log"
 )
 
+type outputToPort struct {
+	data    *frame
+	outPort uint32
+	maxLen  uint16
+	tableId uint8
+	reason  uint8
+}
+
+type outputToGroup struct {
+	data    *frame // there may be aditional process
+	groupId uint32
+}
+
 type action interface {
-	process(f *frame, pipe Pipeline) (*flowEntryResult, error)
+	process(f *frame) (*outputToPort, *outputToGroup, error)
 }
 
 type actionOutput ofp4.ActionOutput
 
-func (a actionOutput) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	buf, err := data.data()
-	if err != nil {
-		log.Print(err)
-		buf = nil // inform output port as tx_error that packet was broken by actions
+func (a actionOutput) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	if buff := data.clone(); buff == nil {
+		return nil, nil, errors.New("frame clone failed")
+	} else {
+		return &outputToPort{
+			data:    buff,
+			outPort: a.Port,
+			maxLen:  a.MaxLen,
+			reason:  ofp4.OFPR_ACTION,
+		}, nil, nil
 	}
-	ret := &flowEntryResult{
-		outputs: []*packetOut{
-			&packetOut{
-				outPort: a.Port,
-				queueId: data.queueId,
-				data:    buf,
-				maxLen:  a.MaxLen,
-				match:   data.match,
-			},
-		},
-	}
-	return ret, nil
 }
 
 type actionGeneric ofp4.ActionGeneric
 
-func (a actionGeneric) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	data.serialized = nil
+func (a actionGeneric) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	data.useLayers()
 
 	switch a.Type {
 	default:
-		return nil, ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
+		return nil, nil, ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
 	case ofp4.OFPAT_COPY_TTL_OUT:
 		var ttl uint8
 		found := 0
@@ -62,7 +68,7 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 			}
 		}
 		if found > 1 {
-			func() {
+			func() { // for direct exit from switch
 				for _, layer := range data.layers {
 					switch clayer := layer.(type) {
 					case *layers.MPLS:
@@ -81,7 +87,7 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 	case ofp4.OFPAT_COPY_TTL_IN:
 		var ttl uint8
 		found := 0
-		func() {
+		func() { // for direct exit from switch
 			for _, layer := range data.layers {
 				switch clayer := layer.(type) {
 				case *layers.MPLS:
@@ -135,13 +141,13 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 				}
 				if found {
 					if i < 1 {
-						return nil, errors.New("bare vlan")
+						return nil, nil, errors.New("bare vlan")
 					}
 					base := data.layers[i-1]
 					if base.LayerType() == layers.LayerTypeEthernet {
 						base.(*layers.Ethernet).EthernetType = ethertype
 					} else {
-						return nil, errors.New("unsupported")
+						return nil, nil, errors.New("unsupported")
 					}
 					continue
 				}
@@ -149,13 +155,12 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 			buf = append(buf, layer)
 		}
 		if found {
-			data.length -= 4
 			data.layers = buf
 		} else {
-			return nil, errors.New("pop vlan failed")
+			return nil, nil, errors.New("pop vlan failed")
 		}
 	case ofp4.OFPAT_DEC_NW_TTL:
-		func() {
+		func() { // for direct exit from switch
 			for _, layer := range data.layers {
 				switch clayer := layer.(type) {
 				case *layers.IPv4:
@@ -198,25 +203,23 @@ func (a actionGeneric) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 			buf = append(buf, layer)
 		}
 		if found {
-			data.length -= 18
 			data.layers = buf
 		} else {
-			return nil, errors.New("pop vlan failed")
+			return nil, nil, errors.New("pop vlan failed")
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 type actionPush ofp4.ActionPush
 
-func (a actionPush) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	data.serialized = nil
+func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	data.useLayers()
 
 	var buf []gopacket.Layer
 	found := false
 	switch a.Type {
 	case ofp4.OFPAT_PUSH_VLAN:
-		data.length += 4
 		for i, layer := range data.layers {
 			buf = append(buf, layer)
 
@@ -239,7 +242,6 @@ func (a actionPush) process(data *frame, pipe Pipeline) (*flowEntryResult, error
 			}
 		}
 	case ofp4.OFPAT_PUSH_MPLS:
-		data.length += 4
 		for i, layer := range data.layers {
 			if found == false {
 				var ttl uint8
@@ -266,7 +268,7 @@ func (a actionPush) process(data *frame, pipe Pipeline) (*flowEntryResult, error
 					} else if base.LayerType() == layers.LayerTypeDot1Q {
 						base.(*layers.Dot1Q).Type = layers.EthernetType(a.Ethertype)
 					} else {
-						return nil, errors.New("unsupported")
+						return nil, nil, errors.New("unsupported")
 					}
 					if mpls != nil {
 						buf = append(buf, &layers.MPLS{
@@ -287,7 +289,6 @@ func (a actionPush) process(data *frame, pipe Pipeline) (*flowEntryResult, error
 			buf = append(buf, layer)
 		}
 	case ofp4.OFPAT_PUSH_PBB:
-		data.length += 18
 		for _, layer := range data.layers {
 			buf = append(buf, layer)
 			if found == false {
@@ -306,20 +307,20 @@ func (a actionPush) process(data *frame, pipe Pipeline) (*flowEntryResult, error
 			}
 		}
 	default:
-		return nil, ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
+		return nil, nil, ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
 	}
 	if found {
 		data.layers = buf
 	} else {
-		return nil, errors.New("push vlan failed")
+		return nil, nil, errors.New("push vlan failed")
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 type actionPopMpls ofp4.ActionPopMpls
 
-func (a actionPopMpls) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	data.serialized = nil
+func (a actionPopMpls) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	data.useLayers()
 
 	var buf []gopacket.Layer
 	found := false
@@ -328,7 +329,7 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 		if found == false {
 			if layer.LayerType() == layers.LayerTypeMPLS {
 				if i < 1 {
-					return nil, errors.New("pop mpls failed due to packet format")
+					return nil, nil, errors.New("pop mpls failed due to packet format")
 				}
 				base := data.layers[i-1]
 				if base.LayerType() == layers.LayerTypeEthernet {
@@ -336,7 +337,7 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 				} else if base.LayerType() == layers.LayerTypeDot1Q {
 					base.(*layers.Dot1Q).Type = layers.EthernetType(a.Ethertype)
 				} else {
-					return nil, errors.New("unsupported")
+					return nil, nil, errors.New("unsupported")
 				}
 
 				if t, ok := layer.(*layers.MPLS); ok {
@@ -352,95 +353,89 @@ func (a actionPopMpls) process(data *frame, pipe Pipeline) (*flowEntryResult, er
 		buf = append(buf, layer)
 	}
 	if found {
-		data.length -= 4
 		data.layers = buf
 		if reparse {
-			if buf, err := data.data(); err != nil {
-				return nil, err
+			if serialized, err := data.data(); err != nil {
+				return nil, nil, err
 			} else {
-				data.layers = gopacket.NewPacket(buf, layers.LayerTypeEthernet, gopacket.Default).Layers()
+				data.serialized = serialized
+				data.layers = buf[:0]
 			}
 		}
 	} else {
-		return nil, errors.New("pop mpls failed")
+		return nil, nil, errors.New("pop mpls failed")
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 type actionSetQueue ofp4.ActionSetQueue
 
-func (a actionSetQueue) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
+func (a actionSetQueue) process(data *frame) (*outputToPort, *outputToGroup, error) {
 	data.queueId = a.QueueId
-	return nil, nil
+	return nil, nil, nil
 }
 
 type actionMplsTtl ofp4.ActionMplsTtl
 
-func (a actionMplsTtl) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	data.serialized = nil
+func (a actionMplsTtl) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	data.useLayers()
 
 	for _, layer := range data.layers {
 		if layer.LayerType() == layers.LayerTypeMPLS {
 			layer.(*layers.MPLS).TTL = a.MplsTtl
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
-	return nil, errors.New("set mpls ttl failed")
+	return nil, nil, errors.New("set mpls ttl failed")
 }
 
 type actionGroup ofp4.ActionGroup
 
-func (a actionGroup) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	ret := &flowEntryResult{
-		groups: []*groupOut{
-			&groupOut{
-				groupId: a.GroupId,
-				data:    *data,
-			},
-		},
-	}
-	return ret, nil
+func (a actionGroup) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	return nil, &outputToGroup{
+		data:    data.clone(),
+		groupId: a.GroupId,
+	}, nil
 }
 
 type actionNwTtl ofp4.ActionNwTtl
 
-func (a actionNwTtl) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	data.serialized = nil
+func (a actionNwTtl) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	data.useLayers()
 
 	for _, layer := range data.layers {
 		switch t := layer.(type) {
 		case *layers.IPv4:
 			t.TTL = a.NwTtl
-			return nil, nil
+			return nil, nil, nil
 		case *layers.IPv6:
 			t.HopLimit = a.NwTtl
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
-	return nil, errors.New("set nw ttl failed")
+	return nil, nil, errors.New("set nw ttl failed")
 }
 
 type actionSetField ofp4.ActionSetField
 
-func (a actionSetField) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	data.serialized = nil
+func (a actionSetField) process(data *frame) (*outputToPort, *outputToGroup, error) {
 	var ms matchList
 	if err := ms.UnmarshalBinary(a.Field); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else {
 		for _, m := range []match(ms) {
 			if err := data.setValue(m); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 type actionExperimenter ofp4.ActionExperimenter
 
-func (a actionExperimenter) process(data *frame, pipe Pipeline) (*flowEntryResult, error) {
-	return nil, nil
+func (a actionExperimenter) process(data *frame) (*outputToPort, *outputToGroup, error) {
+	return nil, nil, nil
 }
 
 type actionList []action
@@ -595,19 +590,18 @@ var actionSetOrder = [...]uint16{
 	ofp4.OFPAT_OUTPUT,
 }
 
-func (obj actionSet) process(data *frame, pipe Pipeline) *flowEntryResult {
-	var ret *flowEntryResult
+func (obj actionSet) process(data *frame) (pouts []*outputToPort, gouts []*outputToGroup) {
 	actions := map[uint16]action(obj)
 	for _, k := range actionSetOrder {
 		if act, ok := actions[k]; ok {
-			if aret, err := act.process(data, pipe); err != nil {
+			if pout, gout, err := act.process(data); err != nil {
 				log.Print(err)
-			} else if aret != nil {
-				if ret != nil {
-					ret.groups = append(ret.groups, aret.groups...)
-					ret.outputs = append(ret.outputs, aret.outputs...)
-				} else {
-					ret = aret
+			} else {
+				if pout != nil {
+					pouts = append(pouts, pout)
+				}
+				if gout != nil {
+					gouts = append(gouts, gout)
 				}
 			}
 			if k == ofp4.OFPAT_GROUP {
@@ -615,5 +609,5 @@ func (obj actionSet) process(data *frame, pipe Pipeline) *flowEntryResult {
 			}
 		}
 	}
-	return ret
+	return
 }

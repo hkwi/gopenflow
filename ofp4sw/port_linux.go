@@ -51,8 +51,138 @@ import "C"
 import (
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/pcap"
+	"log"
+	"sync"
+	"syscall"
 	"unsafe"
 )
+
+type NamedPort struct {
+	lock         *sync.RWMutex
+	hwAddr       [6]byte
+	name         string
+	physicalPort uint32
+	close        chan error
+	ingress      chan []byte
+	watch        chan *PortState
+	handle       *pcap.Handle
+}
+
+func (self NamedPort) Name() string {
+	return self.name
+}
+
+func (self NamedPort) PhysicalPort() uint32 {
+	return self.physicalPort
+}
+
+func (self NamedPort) Ingress() <-chan []byte {
+	return self.ingress
+}
+
+func (self NamedPort) Egress(pkt []byte) error {
+	if self.handle != nil {
+		return self.handle.Put(pkt)
+	}
+	return errors.New("not open")
+}
+
+func (self NamedPort) Watch() <-chan *PortState {
+	return self.watch
+}
+
+func NewNamedPort(name string) *NamedPort {
+	self := &NamedPort{
+		name:    name,
+		lock:    &sync.RWMutex{},
+		ingress: make(chan []byte),
+		watch:   make(chan *PortState),
+	}
+	go func() {
+		netdevWatch := make(chan NetdevUpdate)
+		if err := IfplugdAddListener(netdevWatch); err != nil {
+			log.Print(err)
+			return
+		}
+		if evs, err := IfplugdGet(); err != nil {
+			log.Print(err)
+			return
+		} else {
+			for _, ev := range evs {
+				self.handleNetdev(ev)
+			}
+		}
+		func() {
+			for {
+				select {
+				case <-self.close:
+					return
+				case ev, ok := <-netdevWatch:
+					if ok {
+						self.handleNetdev(ev)
+					} else {
+						return
+					}
+				}
+			}
+		}()
+		_ = IfplugdRemoveListener(netdevWatch)
+		if self.handle != nil {
+			self.handle.Close()
+		}
+		close(self.ingress)
+		close(self.watch)
+	}()
+	return self
+}
+
+func (self *NamedPort) handleNetdev(ev NetdevUpdate) {
+	if ev.Name == self.name {
+		state := &PortState{
+			Name:     ev.Name,
+			LinkDown: !ev.LowerUp,
+			Blocked:  !ev.Up,
+			Live:     ev.Running,
+			Mtu:      ev.Mtu,
+		}
+		if ev.Type == syscall.RTM_NEWLINK {
+			if ev.Up && self.handle == nil {
+				if handle, err := pcap.Open(self.name, []interface{}{pcap.TimeoutOption(8)}); err != nil {
+					log.Print(err)
+					return
+				} else {
+					self.handle = handle
+					go func() {
+						defer func() {
+							log.Print(recover())
+						}()
+						for {
+							if data, err := handle.Get(nil, 8); err != nil {
+								switch e := err.(type) {
+								case pcap.Timeout:
+									// continue
+								default:
+									log.Print(e)
+									return
+								}
+							} else {
+								self.ingress <- data
+							}
+						}
+					}()
+				}
+			}
+			pcapPortState(self.name, state)
+		} else {
+			if self.handle != nil {
+				self.handle.Close()
+				self.handle = nil
+			}
+		}
+		self.watch <- state
+	}
+}
 
 var supportedSpeed map[C.__u32]uint32 = map[C.__u32]uint32{
 	C.SUPPORTED_10baseT_Half:       10000,
@@ -137,7 +267,7 @@ func pcapPortState(name string, state *PortState) error {
 		return errors.New("ethtool_cmd_call error")
 	} else {
 		for k, v := range supportedSpeed {
-			if ecmd.supported&k != 0 {
+			if ecmd.supported&k != 0 && v > state.MaxSpeed {
 				state.MaxSpeed = v
 			}
 		}

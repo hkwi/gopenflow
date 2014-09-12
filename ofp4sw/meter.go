@@ -30,7 +30,12 @@ type meter struct {
 }
 
 func (m *meter) process(data *frame) error {
-	length := data.length
+	var length int
+	if eth, err := data.data(); err != nil {
+		return err
+	} else {
+		length = len(eth)
+	}
 
 	now := time.Now()
 	meterInterval := float64(now.Sub(m.meterTime)) / float64(time.Second)

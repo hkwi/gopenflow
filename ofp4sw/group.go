@@ -6,11 +6,6 @@ import (
 	"sync"
 )
 
-type groupOut struct {
-	groupId uint32
-	data    frame
-}
-
 type bucket struct {
 	weight     uint16
 	watchPort  uint32
@@ -46,28 +41,25 @@ func (b bucket) toMessage() (ofp4.Bucket, error) {
 }
 
 type group struct {
-	lock      *sync.Mutex
+	lock      *sync.RWMutex
 	groupType uint8
 	buckets   []bucket
 }
 
-func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
-	var result flowEntryResult
-
+func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gouts []*outputToGroup) {
 	buckets := make([]bucket, 0, len(g.buckets))
 	func() {
-		g.lock.Lock()
-		defer g.lock.Unlock()
+		g.lock.RLock()
+		defer g.lock.RUnlock()
 		buckets = append(buckets, g.buckets...)
 	}()
 
 	switch g.groupType {
 	case ofp4.OFPGT_ALL, ofp4.OFPGT_INDIRECT:
 		for _, b := range buckets {
-			fdata := data.clone()
-			ret := actionSet(b.actionSet).process(fdata, pipe)
-			result.outputs = append(result.outputs, ret.outputs...)
-			result.groups = append(result.groups, ret.groups...)
+			p, g := actionSet(b.actionSet).process(data)
+			pouts = append(pouts, p...)
+			gouts = append(gouts, g...)
 		}
 	case ofp4.OFPGT_SELECT:
 		weightSum := float64(0)
@@ -79,10 +71,9 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 		for _, b := range buckets {
 			weightSum += float64(b.weight)
 			if step <= weightSum {
-				fdata := data.clone()
-				ret := actionSet(b.actionSet).process(fdata, pipe)
-				result.outputs = append(result.outputs, ret.outputs...)
-				result.groups = append(result.groups, ret.groups...)
+				p, g := actionSet(b.actionSet).process(data)
+				pouts = append(pouts, p...)
+				gouts = append(gouts, g...)
 				break
 			}
 		}
@@ -91,8 +82,8 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 			live := false
 			if b.watchPort != ofp4.OFPP_ANY {
 				live = func() bool {
-					pipe.lock.Lock()
-					defer pipe.lock.Unlock()
+					pipe.lock.RLock()
+					defer pipe.lock.RUnlock()
 
 					if pipe.watchPort(b.watchPort) {
 						return true
@@ -102,8 +93,8 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 			}
 			if b.watchGroup != ofp4.OFPG_ANY {
 				live = func() bool {
-					pipe.lock.Lock()
-					defer pipe.lock.Unlock()
+					pipe.lock.RLock()
+					defer pipe.lock.RUnlock()
 
 					if pipe.watchGroup(b.watchGroup) {
 						return true
@@ -113,14 +104,14 @@ func (g *group) process(data *frame, pipe Pipeline) flowEntryResult {
 			}
 			if live {
 				fdata := data.clone()
-				ret := actionSet(b.actionSet).process(fdata, pipe)
-				result.outputs = append(result.outputs, ret.outputs...)
-				result.groups = append(result.groups, ret.groups...)
+				p, g := actionSet(b.actionSet).process(fdata)
+				pouts = append(pouts, p...)
+				gouts = append(gouts, g...)
 				break
 			}
 		}
 	}
-	return result
+	return
 }
 
 func (pipe *Pipeline) addGroup(req ofp4.GroupMod) error {
@@ -136,7 +127,7 @@ func (pipe *Pipeline) addGroup(req ofp4.GroupMod) error {
 		return &ofp4.Error{ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_GROUP_EXISTS, nil}
 	} else {
 		pipe.groups[req.GroupId] = &group{
-			lock:      &sync.Mutex{},
+			lock:      &sync.RWMutex{},
 			groupType: req.Type,
 			buckets:   buckets,
 		}
