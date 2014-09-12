@@ -84,6 +84,12 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 
 	// port lifecyele
 	go func() {
+		defer func() {
+			pipe.lock.Lock()
+			defer pipe.lock.Unlock()
+			delete(pipe.ports, portNo)
+		}()
+
 		ctrl := pipe.getController()
 		phyInPort := port.PhysicalPort()
 		for {
@@ -113,9 +119,6 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 				}
 			}
 		}
-		pipe.lock.Lock()
-		defer pipe.lock.Unlock()
-		delete(pipe.ports, portNo)
 	}()
 	return nil
 }

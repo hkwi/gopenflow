@@ -1097,8 +1097,8 @@ func (self *flowTableWork) Map() Reducable {
 			} else {
 				if pout != nil {
 					pout.tableId = self.tableId
-					if priority == 0 && len(entry.fields) == 0 && !self.data.isInvalid() {
-						pout.reason = ofp4.OFPR_NO_MATCH
+					if priority == 0 && len(entry.fields) == 0 {
+						pout.tableMiss = true
 					}
 					self.outputs = append(self.outputs, pout)
 				}

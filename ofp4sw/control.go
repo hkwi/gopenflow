@@ -33,6 +33,13 @@ func newController(pipe *Pipeline) *controller {
 
 /* OFPT_PACKET_IN async message */
 func (self *controller) Outlet(pout *outputToPort) {
+	// fixup
+	if pout.reason == ofp4.OFPR_INVALID_TTL {
+		pout.maxLen = self.missSendLen
+	} else if pout.tableMiss {
+		pout.reason = ofp4.OFPR_NO_MATCH
+	}
+
 	if meter := self.pipe.getMeter(ofp4.OFPM_CONTROLLER); meter != nil {
 		if err := meter.process(pout.data); err != nil {
 			if _, ok := err.(*packetDrop); ok {
@@ -165,11 +172,12 @@ func (self *controller) addChannel(channel ControlChannel) error {
 	worker := make(chan MapReducable)
 	go MapReduce(worker, 4)
 	go func() {
+		defer close(worker)
+
 		multipartCollect := make(map[uint32][]encoding.BinaryMarshaler)
 		for {
 			select {
 			case <-chanInt.close:
-				close(worker)
 				return
 			case msg := <-channel.Ingress():
 				if msg == nil { // ingress closed
@@ -262,8 +270,6 @@ func (self *controller) addChannel(channel ControlChannel) error {
 				}
 			}
 		}
-		close(worker)
-		return
 	}()
 	return nil
 }

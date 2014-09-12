@@ -1,6 +1,6 @@
-package ofp4sw
-
 // +build linux,cgo
+
+package ofp4sw
 
 /*
 #include <stdlib.h>

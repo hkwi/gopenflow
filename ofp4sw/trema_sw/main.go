@@ -1,9 +1,9 @@
+// +build linux
+
 /*
 Package trema_sw implements trema-switch like command line interface.
 */
 package main
-
-// +build linux
 
 import (
 	"flag"

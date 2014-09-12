@@ -9,11 +9,12 @@ import (
 )
 
 type outputToPort struct {
-	data    *frame
-	outPort uint32
-	maxLen  uint16
-	tableId uint8
-	reason  uint8
+	data      *frame
+	outPort   uint32
+	maxLen    uint16
+	tableId   uint8
+	reason    uint8
+	tableMiss bool
 }
 
 type outputToGroup struct {
@@ -124,7 +125,6 @@ func (a actionGeneric) process(data *frame) (*outputToPort, *outputToGroup, erro
 					pout := &outputToPort{
 						data:    data.clone(),
 						outPort: ofp4.OFPP_CONTROLLER,
-						maxLen:  a.MaxLen,
 						reason:  ofp4.OFPR_INVALID_TTL,
 					}
 					// invalidate the frame
@@ -452,7 +452,6 @@ func (a *actionList) fromMessage(msg []ofp4.Action) error {
 		switch act := mact.(type) {
 		default:
 			return errors.New("unknown action")
-			continue
 		case *ofp4.ActionGeneric:
 			actions[i] = (*actionGeneric)(act)
 		case *ofp4.ActionOutput:
@@ -517,7 +516,11 @@ func (a *actionSet) fromMessage(msg []ofp4.Action) error {
 	for _, mact := range msg {
 		switch act := mact.(type) {
 		default:
-			return ofp4.Error{ofp4.OFPET_BAD_ACTION, ofp4.OFPBAC_BAD_TYPE, nil}
+			return &ofp4.Error{
+				Type: ofp4.OFPET_BAD_ACTION,
+				Code: ofp4.OFPBAC_BAD_TYPE,
+				Data: nil,
+			}
 		case *ofp4.ActionGeneric:
 			actions[act.Type] = (*actionGeneric)(act)
 		case *ofp4.ActionOutput:
@@ -550,7 +553,11 @@ func (a actionSet) toMessage() (actions []ofp4.Action, err error) {
 	for _, mact := range map[uint16]action(a) {
 		switch act := mact.(type) {
 		default:
-			err = ofp4.Error{ofp4.OFPET_BAD_ACTION, ofp4.OFPBAC_BAD_TYPE, nil}
+			err = &ofp4.Error{
+				Type: ofp4.OFPET_BAD_ACTION,
+				Code: ofp4.OFPBAC_BAD_TYPE,
+				Data: nil,
+			}
 			return
 		case *actionGeneric:
 			actions[i] = (*ofp4.ActionGeneric)(act)
