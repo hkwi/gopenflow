@@ -17,6 +17,7 @@ import (
 // alive while the packet travels the pipeline
 type frame struct {
 	// serialized or layers may be 0 length(or nil), not both at a time.
+	// If both are 0, then it is INVALID packet, this may happen on TTL decrement.
 	serialized []byte
 	layers     []gopacket.Layer // Not a gopacket.Packet, because Data() returns original packet bytes even when layers were modified.
 	inPort     uint32
@@ -25,6 +26,10 @@ type frame struct {
 	tunnelId   uint64
 	queueId    uint32
 	actionSet  map[uint16]action
+}
+
+func (self frame) isInvalid() bool {
+	return len(self.serialized) == 0 && len(self.layers) == 0
 }
 
 // useLayers makes sure that layers are available, and invalidate serialized buffer for future layer modification.
@@ -76,7 +81,7 @@ func (self frame) clone() *frame {
 	frameBytes, err := self.data()
 	if err != nil {
 		log.Println(err)
-		return nil
+		// in this case, returned data will be not nil but isInvalid().
 	}
 	var actionSet map[uint16]action
 	if self.actionSet != nil {
@@ -1092,7 +1097,7 @@ func (self *flowTableWork) Map() Reducable {
 			} else {
 				if pout != nil {
 					pout.tableId = self.tableId
-					if priority == 0 && len(entry.fields) == 0 {
+					if priority == 0 && len(entry.fields) == 0 && !self.data.isInvalid() {
 						pout.reason = ofp4.OFPR_NO_MATCH
 					}
 					self.outputs = append(self.outputs, pout)
@@ -1100,6 +1105,9 @@ func (self *flowTableWork) Map() Reducable {
 				if gout != nil {
 					groups = append(groups, gout)
 				}
+			}
+			if self.data.isInvalid() {
+				return self
 			}
 		}
 		if entry.instClear {

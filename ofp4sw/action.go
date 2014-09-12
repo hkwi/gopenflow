@@ -28,16 +28,12 @@ type action interface {
 type actionOutput ofp4.ActionOutput
 
 func (a actionOutput) process(data *frame) (*outputToPort, *outputToGroup, error) {
-	if buff := data.clone(); buff == nil {
-		return nil, nil, errors.New("frame clone failed")
-	} else {
-		return &outputToPort{
-			data:    buff,
-			outPort: a.Port,
-			maxLen:  a.MaxLen,
-			reason:  ofp4.OFPR_ACTION,
-		}, nil, nil
-	}
+	return &outputToPort{
+		data:    data.clone(),
+		outPort: a.Port,
+		maxLen:  a.MaxLen,
+		reason:  ofp4.OFPR_ACTION,
+	}, nil, nil
 }
 
 type actionGeneric ofp4.ActionGeneric
@@ -121,10 +117,20 @@ func (a actionGeneric) process(data *frame) (*outputToPort, *outputToGroup, erro
 		for _, layer := range data.layers {
 			switch clayer := layer.(type) {
 			case *layers.MPLS:
-				if clayer.TTL > 1 {
+				if clayer.TTL > 0 {
 					clayer.TTL--
-				} else {
-					// packet_in ?
+				}
+				if clayer.TTL == 0 {
+					pout := &outputToPort{
+						data:    data.clone(),
+						outPort: ofp4.OFPP_CONTROLLER,
+						maxLen:  a.MaxLen,
+						reason:  ofp4.OFPR_INVALID_TTL,
+					}
+					// invalidate the frame
+					data.serialized = data.serialized[:0]
+					data.layers = nil
+					return pout, nil, nil
 				}
 			}
 		}
@@ -603,6 +609,9 @@ func (obj actionSet) process(data *frame) (pouts []*outputToPort, gouts []*outpu
 				if gout != nil {
 					gouts = append(gouts, gout)
 				}
+			}
+			if data.isInvalid() {
+				return
 			}
 			if k == ofp4.OFPAT_GROUP {
 				break // skip OFPAT_OUTPUT if OFPAT_GROUP found
