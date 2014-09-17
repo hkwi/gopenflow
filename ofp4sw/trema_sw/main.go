@@ -12,6 +12,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"bufio"
 )
 
 func main() {
@@ -35,17 +36,19 @@ func main() {
 	for {
 		if addr,err:=net.ResolveIPAddr("ip", host); err!=nil {
 			panic(err)
+		} else if con,err:=net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
+			log.Print(err)
 		} else {
-			if con, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
+			channel := ofp4sw.NewIoControlChannel(bufio.NewReaderSize(con, 1<<20), con)
+			if err := pipe.AddControl(channel); err != nil {
 				log.Print(err)
 			} else {
-				channel := ofp4sw.NewIoControlChannel(con, con)
-				if err := pipe.AddControl(channel); err != nil {
-					log.Print(err)
-				} else {
-					log.Print(channel.Wait())
-				}
+				log.Print(channel.Wait())
 			}
+			if err := pipe.RemoveControl(channel); err!=nil {
+				panic(err)
+			}
+			con.Close()
 		}
 		time.Sleep(5 * time.Second)
 	}

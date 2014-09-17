@@ -128,6 +128,10 @@ func (self *Pipeline) AddControl(channel ControlChannel) error {
 	return self.getController().addChannel(channel)
 }
 
+func (self *Pipeline) RemoveControl(channel ControlChannel) error {
+	return self.getController().removeChannel(channel)
+}
+
 type PortStats struct {
 	RxPackets  uint64
 	TxPackets  uint64

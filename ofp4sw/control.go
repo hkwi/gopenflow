@@ -2,11 +2,11 @@ package ofp4sw
 
 import (
 	"encoding"
+	"encoding/binary"
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
 	"log"
 	"math"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -15,6 +15,7 @@ type controller struct {
 	lock     *sync.RWMutex
 	channels []*channelInternal
 	buffer   map[uint32]*outputToPort
+	nextBufferId uint32
 
 	stats       PortStats
 	config      uint32
@@ -56,8 +57,9 @@ func (self *controller) Outlet(pout *outputToPort) {
 		self.lock.Lock()
 		defer self.lock.Unlock()
 
-		for i := 0; i < 32; i++ {
-			buffer_id = uint32(rand.Int31())
+		for len(self.buffer) != math.MaxUint32 {
+			buffer_id = self.nextBufferId
+			self.nextBufferId++
 			if _, ok := self.buffer[buffer_id]; !ok {
 				self.buffer[buffer_id] = pout
 				return nil
@@ -82,7 +84,6 @@ func (self *controller) Outlet(pout *outputToPort) {
 			}()
 		}
 	}()
-
 	var success bool
 	for _, result := range results {
 		err := <-result
@@ -150,6 +151,19 @@ func (self controller) sendFlowRem(tableId uint8, priority uint16, flow *flowEnt
 	}
 }
 
+func (self *controller) removeChannel(channel ControlChannel) error {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	
+	for i,c := range self.channels {
+		if c.channel == channel {
+			self.channels = append(self.channels[:i], self.channels[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("Not found")
+}
+
 func (self *controller) addChannel(channel ControlChannel) error {
 	// TODO: if parent control channel was given, allocate auxiliary id
 	chanInt := &channelInternal{
@@ -176,98 +190,94 @@ func (self *controller) addChannel(channel ControlChannel) error {
 
 		multipartCollect := make(map[uint32][]encoding.BinaryMarshaler)
 		for {
-			select {
-			case <-chanInt.close:
+			msg,err := channel.Ingress()
+			if err != nil {
 				return
-			case msg := <-channel.Ingress():
-				if msg == nil { // ingress closed
-					return
-				}
-				var ofm ofp4.Message
-				if err := ofm.UnmarshalBinary(msg); err != nil {
-					log.Println(err)
-					return
-				}
-				reply := ofmReply{ctrl: self, channel: channel, req: &ofm}
-				switch ofm.Type {
-				case ofp4.OFPT_ECHO_REQUEST:
-					worker <- &ofmEcho{reply}
-				case ofp4.OFPT_EXPERIMENTER:
-					worker <- &ofmExperimenter{reply}
-				case ofp4.OFPT_FEATURES_REQUEST:
-					worker <- &ofmFeaturesRequest{reply}
-				case ofp4.OFPT_GET_CONFIG_REQUEST:
-					worker <- &ofmGetConfigRequest{reply}
-				case ofp4.OFPT_SET_CONFIG:
-					worker <- &ofmSetConfig{reply}
-				case ofp4.OFPT_PACKET_OUT:
-					worker <- &ofmPacketOut{ofmOutput{reply, nil}}
-				case ofp4.OFPT_FLOW_MOD:
-					worker <- &ofmFlowMod{ofmOutput{reply, nil}}
-				case ofp4.OFPT_GROUP_MOD:
-					worker <- &ofmGroupMod{reply}
-				case ofp4.OFPT_PORT_MOD:
-					worker <- &ofmPortMod{reply}
-				case ofp4.OFPT_TABLE_MOD:
-					worker <- &ofmTableMod{reply}
-				case ofp4.OFPT_MULTIPART_REQUEST:
-					req := ofm.Body.(*ofp4.MultipartRequest)
-					multipartCollect[ofm.Xid] = append(multipartCollect[ofm.Xid], req.Body)
-					if req.Flags&ofp4.OFPMPF_REQ_MORE == 0 {
-						mreply := ofmMulti{reply, multipartCollect[ofm.Xid], nil}
-						delete(multipartCollect, ofm.Xid)
+			}
+			var ofm ofp4.Message
+			if err := ofm.UnmarshalBinary(msg); err != nil {
+				log.Println(err)
+				return
+			}
+			reply := ofmReply{ctrl: self, channel: channel, req: &ofm }
+			switch ofm.Type {
+			case ofp4.OFPT_ECHO_REQUEST:
+				worker <- &ofmEcho{reply}
+			case ofp4.OFPT_EXPERIMENTER:
+				worker <- &ofmExperimenter{reply}
+			case ofp4.OFPT_FEATURES_REQUEST:
+				worker <- &ofmFeaturesRequest{reply}
+			case ofp4.OFPT_GET_CONFIG_REQUEST:
+				worker <- &ofmGetConfigRequest{reply}
+			case ofp4.OFPT_SET_CONFIG:
+				worker <- &ofmSetConfig{reply}
+			case ofp4.OFPT_PACKET_OUT:
+				worker <- &ofmPacketOut{ofmOutput{reply, nil}}
+			case ofp4.OFPT_FLOW_MOD:
+				worker <- &ofmFlowMod{ofmOutput{reply, nil}}
+			case ofp4.OFPT_GROUP_MOD:
+				worker <- &ofmGroupMod{reply}
+			case ofp4.OFPT_PORT_MOD:
+				worker <- &ofmPortMod{reply}
+			case ofp4.OFPT_TABLE_MOD:
+				worker <- &ofmTableMod{reply}
+			case ofp4.OFPT_MULTIPART_REQUEST:
+				req := ofm.Body.(*ofp4.MultipartRequest)
+				multipartCollect[ofm.Xid] = append(multipartCollect[ofm.Xid], req.Body)
+				if req.Flags&ofp4.OFPMPF_REQ_MORE == 0 {
+					mreply := ofmMulti{reply, multipartCollect[ofm.Xid], nil}
+					delete(multipartCollect, ofm.Xid)
 
-						// capture
-						switch req.Type {
-						case ofp4.OFPMP_DESC:
-							worker <- &ofmMpDesc{mreply}
-						case ofp4.OFPMP_TABLE:
-							worker <- &ofmMpTable{mreply}
-						case ofp4.OFPMP_GROUP_DESC:
-							worker <- &ofmMpGroupDesc{mreply}
-						case ofp4.OFPMP_GROUP_FEATURES:
-							worker <- &ofmMpGroupFeatures{mreply}
-						case ofp4.OFPMP_METER_FEATURES:
-							worker <- &ofmMpMeterFeatures{mreply}
-						case ofp4.OFPMP_PORT_DESC:
-							worker <- &ofmMpPortDesc{mreply}
-						case ofp4.OFPMP_FLOW:
-							worker <- &ofmMpFlow{mreply}
-						case ofp4.OFPMP_AGGREGATE:
-							worker <- &ofmMpAggregate{mreply}
-						case ofp4.OFPMP_PORT_STATS:
-							worker <- &ofmMpPortStats{mreply}
-						case ofp4.OFPMP_QUEUE:
-							worker <- &ofmMpQueue{mreply}
-						case ofp4.OFPMP_GROUP:
-							worker <- &ofmMpGroup{mreply}
-						case ofp4.OFPMP_METER:
-							worker <- &ofmMpMeter{mreply}
-						case ofp4.OFPMP_METER_CONFIG:
-							worker <- &ofmMpMeterConfig{mreply}
-						case ofp4.OFPMP_TABLE_FEATURES:
-							worker <- &ofmMpTableFeatures{mreply}
-						case ofp4.OFPMP_EXPERIMENTER:
-							worker <- &ofmMpExperimenter{mreply}
-						default:
-							panic("unknown ofp_multipart_request.type")
-						}
+					// capture
+					switch req.Type {
+					case ofp4.OFPMP_DESC:
+						worker <- &ofmMpDesc{mreply}
+					case ofp4.OFPMP_TABLE:
+						worker <- &ofmMpTable{mreply}
+					case ofp4.OFPMP_GROUP_DESC:
+						worker <- &ofmMpGroupDesc{mreply}
+					case ofp4.OFPMP_GROUP_FEATURES:
+						worker <- &ofmMpGroupFeatures{mreply}
+					case ofp4.OFPMP_METER_FEATURES:
+						worker <- &ofmMpMeterFeatures{mreply}
+					case ofp4.OFPMP_PORT_DESC:
+						worker <- &ofmMpPortDesc{mreply}
+					case ofp4.OFPMP_FLOW:
+						worker <- &ofmMpFlow{mreply}
+					case ofp4.OFPMP_AGGREGATE:
+						worker <- &ofmMpAggregate{mreply}
+					case ofp4.OFPMP_PORT_STATS:
+						worker <- &ofmMpPortStats{mreply}
+					case ofp4.OFPMP_QUEUE:
+						worker <- &ofmMpQueue{mreply}
+					case ofp4.OFPMP_GROUP:
+						worker <- &ofmMpGroup{mreply}
+					case ofp4.OFPMP_METER:
+						worker <- &ofmMpMeter{mreply}
+					case ofp4.OFPMP_METER_CONFIG:
+						worker <- &ofmMpMeterConfig{mreply}
+					case ofp4.OFPMP_TABLE_FEATURES:
+						worker <- &ofmMpTableFeatures{mreply}
+					case ofp4.OFPMP_EXPERIMENTER:
+						worker <- &ofmMpExperimenter{mreply}
+					default:
+						panic("unknown ofp_multipart_request.type")
 					}
-				case ofp4.OFPT_BARRIER_REQUEST:
-					worker <- &ofmBarrierRequest{reply}
-				case ofp4.OFPT_QUEUE_GET_CONFIG_REQUEST:
-					worker <- &ofmQueueGetConfigRequest{reply}
-				case ofp4.OFPT_ROLE_REQUEST:
-					worker <- &ofmRoleRequest{reply}
-				case ofp4.OFPT_GET_ASYNC_REQUEST:
-					worker <- &ofmGetAsyncRequest{reply}
-				case ofp4.OFPT_SET_ASYNC:
-					worker <- &ofmSetAsync{reply}
-				case ofp4.OFPT_METER_MOD:
-					worker <- &ofmMeterMod{reply}
-				default:
-					panic("unknown ofp_header.type")
 				}
+			case ofp4.OFPT_BARRIER_REQUEST:
+				worker <- &ofmBarrierRequest{reply}
+			case ofp4.OFPT_QUEUE_GET_CONFIG_REQUEST:
+				worker <- &ofmQueueGetConfigRequest{reply}
+			case ofp4.OFPT_ROLE_REQUEST:
+				worker <- &ofmRoleRequest{reply}
+			case ofp4.OFPT_GET_ASYNC_REQUEST:
+				worker <- &ofmGetAsyncRequest{reply}
+			case ofp4.OFPT_SET_ASYNC:
+				worker <- &ofmSetAsync{reply}
+			case ofp4.OFPT_METER_MOD:
+				worker <- &ofmMeterMod{reply}
+			default:
+				panic("unknown ofp_header.type")
 			}
 		}
 	}()
@@ -298,8 +308,8 @@ func (self controller) SetConfig(config uint32) {
 }
 
 type ControlChannel interface {
-	Ingress() <-chan []byte
-	Egress() chan<- []byte
+	Ingress() ([]byte, error)
+	Egress([]byte) error
 }
 
 type channelInternal struct {
@@ -330,14 +340,16 @@ func (self *channelInternal) hello() error {
 		}
 		if msgbin, err := msg.MarshalBinary(); err != nil {
 			return err
-		} else {
-			self.channel.Egress() <- msgbin
+		} else if err:=self.channel.Egress(msgbin); err!=nil {
+			return err
 		}
 	}
 
 	{ // RECV hello
 		var ofm ofp4.Message
-		if err := ofm.UnmarshalBinary(<-self.channel.Ingress()); err != nil {
+		if buf,err := self.channel.Ingress(); err!=nil{
+			return err
+		} else if err := ofm.UnmarshalBinary(buf); err != nil {
 			return err
 		}
 		satisfied := false
@@ -378,9 +390,8 @@ func (self *channelInternal) hello() error {
 			if msgbin, err := msg.MarshalBinary(); err != nil {
 				return err
 			} else {
-				self.channel.Egress() <- msgbin
+				return self.channel.Egress(msgbin)
 			}
-			return err
 		}
 	}
 	return nil
@@ -400,13 +411,55 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 	if self.packetInMask[0]&(1<<pout.reason) != 0 {
 		return nil
 	}
-	data, err := pout.data.data()
+	data := pout.data
+	eth, err := data.data()
 	if err != nil {
 		return err
 	}
-	totalLen := len(data)
+	totalLen := len(eth)
 	if int(pout.maxLen) < totalLen {
-		data = data[:pout.maxLen]
+		eth = eth[:pout.maxLen]
+	}
+	assocMatch := []match{}
+	{
+		m := match{
+			field: ofp4.OFPXMT_OFB_IN_PORT,
+			mask: []byte{ 255, 255, 255, 255 },
+			value: []byte{ 0, 0, 0, 0 },
+		}
+		binary.BigEndian.PutUint32(m.value, data.inPort)
+		assocMatch = append(assocMatch, m)
+	}
+	if data.phyInPort!=0 && data.phyInPort!=data.inPort {
+		m := match{
+			field: ofp4.OFPXMT_OFB_IN_PHY_PORT,
+			mask: []byte{ 255, 255, 255, 255 },
+			value: []byte{ 0, 0, 0, 0 },
+		}
+		binary.BigEndian.PutUint32(m.value, data.phyInPort)
+		assocMatch = append(assocMatch, m)
+	}
+	if data.tunnelId!=0 {
+		m := match{
+			field: ofp4.OFPXMT_OFB_TUNNEL_ID,
+			mask: []byte{ 255, 255, 255, 255, 255, 255, 255, 255 },
+			value: []byte{ 0, 0, 0, 0, 0, 0, 0, 0 },
+		}
+		binary.BigEndian.PutUint64(m.value, data.tunnelId)
+		assocMatch = append(assocMatch, m)
+	}
+	if data.metadata!=0 {
+		m := match{
+			field: ofp4.OFPXMT_OFB_METADATA,
+			mask: []byte{ 255, 255, 255, 255, 255, 255, 255, 255 },
+			value: []byte{ 0, 0, 0, 0, 0, 0, 0, 0 },
+		}
+		binary.BigEndian.PutUint64(m.value, data.metadata)
+		assocMatch = append(assocMatch, m)
+	}
+	fields, e2 := matchList(assocMatch).MarshalBinary()
+	if e2 != nil {
+		return e2
 	}
 	msg := ofp4.Message{
 		Header: ofp4.Header{
@@ -417,20 +470,19 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 		Body: ofp4.PacketIn{
 			BufferId: buffer_id,
 			TotalLen: uint16(totalLen),
+			Match: ofp4.Match {
+				Type: ofp4.OFPMT_OXM,
+				OxmFields: fields,
+			},
 			Reason:   pout.reason,
 			TableId:  pout.tableId,
-			Data:     data,
+			Data:     eth,
 		},
 	}
 	if msgbin, err := msg.MarshalBinary(); err != nil {
 		return err
 	} else {
-		select {
-		case self.channel.Egress() <- msgbin:
-			return nil
-		default:
-			return errors.New("busy channel")
-		}
+		return self.channel.Egress(msgbin)
 	}
 }
 
@@ -479,12 +531,7 @@ func (self *channelInternal) portChange(portNo uint32, port portInternal) error 
 	if e2 != nil {
 		return e2
 	}
-	select {
-	case self.channel.Egress() <- msgbin:
-		return nil
-	default:
-		return errors.New("busy channel")
-	}
+	return self.channel.Egress(msgbin)
 }
 
 func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *flowEntry, reason uint8) error {
@@ -524,12 +571,7 @@ func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *fl
 	if e3 != nil {
 		return e3
 	}
-	select {
-	case self.channel.Egress() <- msgbin:
-		return nil
-	default:
-		return errors.New("busy channel")
-	}
+	return self.channel.Egress(msgbin)
 }
 
 type ofmReply struct {
@@ -564,9 +606,10 @@ func (self *ofmReply) createError(ofpet uint16, code uint16) {
 }
 
 func (self ofmReply) Reduce() {
-	egress := self.channel.Egress()
 	for _, resp := range self.resps {
-		egress <- resp
+		if err:=self.channel.Egress(resp); err!=nil {
+			log.Print(err)
+		}
 	}
 }
 
@@ -767,14 +810,19 @@ func (self ofmOutput) Reduce() {
 	pipe := self.ctrl.pipe
 
 	for _, output := range self.outputs {
-		if output.outPort == ofp4.OFPP_CONTROLLER {
+		if output.outPort <= ofp4.OFPP_MAX {
+			if port:=pipe.getPort(output.outPort); port!=nil {
+				port.Outlet(output)
+			}
+		} else if output.outPort == ofp4.OFPP_CONTROLLER {
 			config := pipe.getPort(output.data.inPort).GetConfig()
 			if config&(ofp4.OFPPC_NO_PACKET_IN) != 0 {
 				continue
 			}
-		}
-		for _, port := range pipe.getPorts(output.outPort) {
-			port.Outlet(output)
+		} else {
+			for _, port := range pipe.getPorts(output.outPort) {
+				port.Outlet(output)
+			}
 		}
 	}
 	self.ofmReply.Reduce()

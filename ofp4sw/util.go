@@ -1,11 +1,8 @@
 package ofp4sw
 
 import (
-	"bufio"
 	"encoding/binary"
 	"io"
-	"log"
-	"net"
 )
 
 type MapReducable interface {
@@ -47,17 +44,58 @@ func MapReduce(works chan MapReducable, workers int) {
 }
 
 type IoControlChannel struct {
-	ingress chan []byte
-	egress  chan []byte
+	hint [4]byte
+	reader io.Reader
+	writer io.Writer
 	close   chan error
 }
 
-func (self IoControlChannel) Ingress() <-chan []byte {
-	return self.ingress
+func (self IoControlChannel) Ingress() ([]byte,error) {
+	head := self.hint[:]
+	for cur := 0; cur < 4; {
+		if num, err := self.reader.Read(head[cur:]); err != nil {
+			func(){
+				defer func(){ recover() }()
+				self.close <- err
+				close(self.close)
+			}()
+			return nil,err
+		} else {
+			cur += num
+		}
+	}
+	length := int(binary.BigEndian.Uint16(head[2:4]))
+	body := make([]byte, length)
+	copy(body, head)
+	for cur := 4; cur < length; {
+		if num, err := self.reader.Read(body[cur:]); err != nil {
+			func(){
+				defer func(){ recover() }()
+				self.close <- err
+				close(self.close)
+			}()
+			return nil, err
+		} else {
+			cur += num
+		}
+	}
+	return body, nil
 }
 
-func (self IoControlChannel) Egress() chan<- []byte {
-	return self.egress
+func (self IoControlChannel) Egress(msg []byte) error {
+	for cur:=0; cur<len(msg); {
+		if nn,err:= self.writer.Write(msg); err!=nil {
+			func(){
+				defer func(){ recover() }()
+				self.close <- err
+				close(self.close)
+			}()
+			return err
+		} else {
+			cur += nn
+		}
+	}
+	return nil
 }
 
 func (self IoControlChannel) Wait() error {
@@ -66,57 +104,14 @@ func (self IoControlChannel) Wait() error {
 
 func NewIoControlChannel(reader io.Reader, writer io.Writer) *IoControlChannel {
 	self := &IoControlChannel{
-		ingress: make(chan []byte),
-		egress:  make(chan []byte),
-		close:   make(chan error, 2),
+		reader: reader,
+		writer: writer,
+		close:   make(chan error),
 	}
-	go func() {
-		for msg := range self.egress {
-			for len(msg) > 0 {
-				if nn, err := writer.Write(msg); err != nil {
-					self.close <- err
-					return
-				} else {
-					msg = msg[nn:]
-				}
-			}
-		}
-	}()
-	go func() {
-		reader := bufio.NewReader(reader)
-		head := make([]byte, 4)
-		for {
-			err := func() error {
-				for cur := 0; cur < 4; {
-					if num, err := reader.Read(head[cur:]); err != nil {
-						return err
-					} else {
-						cur += num
-					}
-				}
-				length := int(binary.BigEndian.Uint16(head[2:4]))
-				body := make([]byte, length)
-				copy(body, head)
-				for cur := 4; cur < length; {
-					if num, err := reader.Read(body[cur:]); err != nil {
-						return err
-					} else {
-						cur += num
-					}
-				}
-				self.ingress <- body
-				return nil
-			}()
-			if err != nil {
-				self.close <- err
-				break
-			}
-		}
-		close(self.ingress)
-	}()
 	return self
 }
 
+/*
 type controlChannelCommon struct {
 	ingress chan []byte
 	egress  chan []byte
@@ -220,3 +215,4 @@ func (channel connControlChannel) Close() {
 	channel.callback()
 	panic("Close called")
 }
+*/
