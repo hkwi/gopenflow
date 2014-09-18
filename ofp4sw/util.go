@@ -44,22 +44,22 @@ func MapReduce(works chan MapReducable, workers int) {
 }
 
 type IoControlChannel struct {
-	hint [4]byte
+	hint   [4]byte
 	reader io.Reader
 	writer io.Writer
-	close   chan error
+	close  chan error
 }
 
-func (self IoControlChannel) Ingress() ([]byte,error) {
+func (self IoControlChannel) Ingress() ([]byte, error) {
 	head := self.hint[:]
 	for cur := 0; cur < 4; {
 		if num, err := self.reader.Read(head[cur:]); err != nil {
-			func(){
-				defer func(){ recover() }()
+			func() {
+				defer func() { recover() }()
 				self.close <- err
 				close(self.close)
 			}()
-			return nil,err
+			return nil, err
 		} else {
 			cur += num
 		}
@@ -69,8 +69,8 @@ func (self IoControlChannel) Ingress() ([]byte,error) {
 	copy(body, head)
 	for cur := 4; cur < length; {
 		if num, err := self.reader.Read(body[cur:]); err != nil {
-			func(){
-				defer func(){ recover() }()
+			func() {
+				defer func() { recover() }()
 				self.close <- err
 				close(self.close)
 			}()
@@ -83,10 +83,10 @@ func (self IoControlChannel) Ingress() ([]byte,error) {
 }
 
 func (self IoControlChannel) Egress(msg []byte) error {
-	for cur:=0; cur<len(msg); {
-		if nn,err:= self.writer.Write(msg); err!=nil {
-			func(){
-				defer func(){ recover() }()
+	for cur := 0; cur < len(msg); {
+		if nn, err := self.writer.Write(msg); err != nil {
+			func() {
+				defer func() { recover() }()
 				self.close <- err
 				close(self.close)
 			}()
@@ -106,7 +106,7 @@ func NewIoControlChannel(reader io.Reader, writer io.Writer) *IoControlChannel {
 	self := &IoControlChannel{
 		reader: reader,
 		writer: writer,
-		close:   make(chan error),
+		close:  make(chan error),
 	}
 	return self
 }

@@ -12,9 +12,9 @@ import (
 )
 
 type controller struct {
-	lock     *sync.RWMutex
-	channels []*channelInternal
-	buffer   map[uint32]*outputToPort
+	lock         *sync.RWMutex
+	channels     []*channelInternal
+	buffer       map[uint32]*outputToPort
 	nextBufferId uint32
 
 	stats       PortStats
@@ -154,8 +154,8 @@ func (self controller) sendFlowRem(tableId uint8, priority uint16, flow *flowEnt
 func (self *controller) removeChannel(channel ControlChannel) error {
 	self.lock.Lock()
 	defer self.lock.Unlock()
-	
-	for i,c := range self.channels {
+
+	for i, c := range self.channels {
 		if c.channel == channel {
 			self.channels = append(self.channels[:i], self.channels[i+1:]...)
 			return nil
@@ -190,7 +190,7 @@ func (self *controller) addChannel(channel ControlChannel) error {
 
 		multipartCollect := make(map[uint32][]encoding.BinaryMarshaler)
 		for {
-			msg,err := channel.Ingress()
+			msg, err := channel.Ingress()
 			if err != nil {
 				return
 			}
@@ -199,7 +199,7 @@ func (self *controller) addChannel(channel ControlChannel) error {
 				log.Println(err)
 				return
 			}
-			reply := ofmReply{ctrl: self, channel: channel, req: &ofm }
+			reply := ofmReply{ctrl: self, channel: channel, req: &ofm}
 			switch ofm.Type {
 			case ofp4.OFPT_ECHO_REQUEST:
 				worker <- &ofmEcho{reply}
@@ -340,14 +340,14 @@ func (self *channelInternal) hello() error {
 		}
 		if msgbin, err := msg.MarshalBinary(); err != nil {
 			return err
-		} else if err:=self.channel.Egress(msgbin); err!=nil {
+		} else if err := self.channel.Egress(msgbin); err != nil {
 			return err
 		}
 	}
 
 	{ // RECV hello
 		var ofm ofp4.Message
-		if buf,err := self.channel.Ingress(); err!=nil{
+		if buf, err := self.channel.Ingress(); err != nil {
 			return err
 		} else if err := ofm.UnmarshalBinary(buf); err != nil {
 			return err
@@ -424,35 +424,35 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 	{
 		m := match{
 			field: ofp4.OFPXMT_OFB_IN_PORT,
-			mask: []byte{ 255, 255, 255, 255 },
-			value: []byte{ 0, 0, 0, 0 },
+			mask:  []byte{255, 255, 255, 255},
+			value: []byte{0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint32(m.value, data.inPort)
 		assocMatch = append(assocMatch, m)
 	}
-	if data.phyInPort!=0 && data.phyInPort!=data.inPort {
+	if data.phyInPort != 0 && data.phyInPort != data.inPort {
 		m := match{
 			field: ofp4.OFPXMT_OFB_IN_PHY_PORT,
-			mask: []byte{ 255, 255, 255, 255 },
-			value: []byte{ 0, 0, 0, 0 },
+			mask:  []byte{255, 255, 255, 255},
+			value: []byte{0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint32(m.value, data.phyInPort)
 		assocMatch = append(assocMatch, m)
 	}
-	if data.tunnelId!=0 {
+	if data.tunnelId != 0 {
 		m := match{
 			field: ofp4.OFPXMT_OFB_TUNNEL_ID,
-			mask: []byte{ 255, 255, 255, 255, 255, 255, 255, 255 },
-			value: []byte{ 0, 0, 0, 0, 0, 0, 0, 0 },
+			mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
+			value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint64(m.value, data.tunnelId)
 		assocMatch = append(assocMatch, m)
 	}
-	if data.metadata!=0 {
+	if data.metadata != 0 {
 		m := match{
 			field: ofp4.OFPXMT_OFB_METADATA,
-			mask: []byte{ 255, 255, 255, 255, 255, 255, 255, 255 },
-			value: []byte{ 0, 0, 0, 0, 0, 0, 0, 0 },
+			mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
+			value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint64(m.value, data.metadata)
 		assocMatch = append(assocMatch, m)
@@ -470,13 +470,13 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 		Body: ofp4.PacketIn{
 			BufferId: buffer_id,
 			TotalLen: uint16(totalLen),
-			Match: ofp4.Match {
-				Type: ofp4.OFPMT_OXM,
+			Match: ofp4.Match{
+				Type:      ofp4.OFPMT_OXM,
 				OxmFields: fields,
 			},
-			Reason:   pout.reason,
-			TableId:  pout.tableId,
-			Data:     eth,
+			Reason:  pout.reason,
+			TableId: pout.tableId,
+			Data:    eth,
 		},
 	}
 	if msgbin, err := msg.MarshalBinary(); err != nil {
@@ -607,7 +607,7 @@ func (self *ofmReply) createError(ofpet uint16, code uint16) {
 
 func (self ofmReply) Reduce() {
 	for _, resp := range self.resps {
-		if err:=self.channel.Egress(resp); err!=nil {
+		if err := self.channel.Egress(resp); err != nil {
 			log.Print(err)
 		}
 	}
@@ -811,7 +811,7 @@ func (self ofmOutput) Reduce() {
 
 	for _, output := range self.outputs {
 		if output.outPort <= ofp4.OFPP_MAX {
-			if port:=pipe.getPort(output.outPort); port!=nil {
+			if port := pipe.getPort(output.outPort); port != nil {
 				port.Outlet(output)
 			}
 		} else if output.outPort == ofp4.OFPP_CONTROLLER {

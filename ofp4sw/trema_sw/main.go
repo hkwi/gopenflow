@@ -6,13 +6,13 @@ Package trema_sw implements trema-switch like command line interface.
 package main
 
 import (
+	"bufio"
 	"flag"
 	"github.com/hkwi/gopenflow/ofp4sw"
 	"log"
 	"net"
 	"strings"
 	"time"
-	"bufio"
 )
 
 func main() {
@@ -34,9 +34,9 @@ func main() {
 		}
 	}
 	for {
-		if addr,err:=net.ResolveIPAddr("ip", host); err!=nil {
+		if addr, err := net.ResolveIPAddr("ip", host); err != nil {
 			panic(err)
-		} else if con,err:=net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
+		} else if con, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
 			log.Print(err)
 		} else {
 			channel := ofp4sw.NewIoControlChannel(bufio.NewReaderSize(con, 1<<20), con)
@@ -45,7 +45,7 @@ func main() {
 			} else {
 				log.Print(channel.Wait())
 			}
-			if err := pipe.RemoveControl(channel); err!=nil {
+			if err := pipe.RemoveControl(channel); err != nil {
 				panic(err)
 			}
 			con.Close()
