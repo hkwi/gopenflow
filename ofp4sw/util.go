@@ -3,6 +3,7 @@ package ofp4sw
 import (
 	"encoding/binary"
 	"io"
+	"sync"
 )
 
 type MapReducable interface {
@@ -47,18 +48,20 @@ type IoControlChannel struct {
 	hint   [4]byte
 	reader io.Reader
 	writer io.Writer
-	close  chan error
+	lock *sync.Cond
+	closed error
+}
+
+func (self IoControlChannel) Close() {
+	self.lock.Broadcast()
 }
 
 func (self IoControlChannel) Ingress() ([]byte, error) {
 	head := self.hint[:]
 	for cur := 0; cur < 4; {
 		if num, err := self.reader.Read(head[cur:]); err != nil {
-			func() {
-				defer func() { recover() }()
-				self.close <- err
-				close(self.close)
-			}()
+			self.closed = err
+			self.Close()
 			return nil, err
 		} else {
 			cur += num
@@ -69,11 +72,8 @@ func (self IoControlChannel) Ingress() ([]byte, error) {
 	copy(body, head)
 	for cur := 4; cur < length; {
 		if num, err := self.reader.Read(body[cur:]); err != nil {
-			func() {
-				defer func() { recover() }()
-				self.close <- err
-				close(self.close)
-			}()
+			self.closed = err
+			self.Close()
 			return nil, err
 		} else {
 			cur += num
@@ -85,11 +85,8 @@ func (self IoControlChannel) Ingress() ([]byte, error) {
 func (self IoControlChannel) Egress(msg []byte) error {
 	for cur := 0; cur < len(msg); {
 		if nn, err := self.writer.Write(msg); err != nil {
-			func() {
-				defer func() { recover() }()
-				self.close <- err
-				close(self.close)
-			}()
+			self.closed = err
+			self.Close()
 			return err
 		} else {
 			cur += nn
@@ -99,14 +96,18 @@ func (self IoControlChannel) Egress(msg []byte) error {
 }
 
 func (self IoControlChannel) Wait() error {
-	return <-self.close
+	self.lock.L.Lock()
+	defer self.lock.L.Unlock()
+	
+	self.lock.Wait()
+	return self.closed
 }
 
 func NewIoControlChannel(reader io.Reader, writer io.Writer) *IoControlChannel {
 	self := &IoControlChannel{
 		reader: reader,
 		writer: writer,
-		close:  make(chan error),
+		lock:  sync.NewCond(&sync.Mutex{}),
 	}
 	return self
 }

@@ -104,26 +104,39 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 		priority = self.priorities[i]
 	}
 
+	block_fields := matchList(expandMatch(flow.fields))
+	sort.Sort(block_fields)
+	
 	priority.lock.Lock()
 	defer priority.lock.Unlock()
 
-	if (req.Flags & ofp4.OFPFF_CHECK_OVERLAP) != 0 {
-		key := capKey(priority.caps, flow.fields)
-		if flows, ok := priority.flows[key]; ok {
-			for _, f := range flows {
-				if overlap(f.fields, flow.fields) {
+	key := capKey(priority.caps, flow.fields)
+
+	flows := []*flowEntry{flow} // prepare for rebuild
+	for k, fs := range priority.flows {
+		if k == key {
+			for _, f := range fs {
+				if req.Flags&ofp4.OFPFF_CHECK_OVERLAP != 0 && overlap(f.fields, flow.fields) {
 					return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
 				}
+				
+				test_fields := matchList(f.fields)
+				sort.Sort(test_fields)
+				
+				if ! block_fields.Equal(test_fields) {
+					flows = append(flows, f)
+				}else if req.Flags&ofp4.OFPFF_RESET_COUNTS == 0 {
+					flow.packetCount = f.packetCount
+					flow.byteCount = f.byteCount
+				}
 			}
+		} else {
+			flows = append(flows, fs...)
 		}
 	}
-	// always rebuild the flow rule set
-	flows := []*flowEntry{flow}
-	for _, fs := range priority.flows {
-		flows = append(flows, fs...)
-	}
+	
 	priority.rebuildIndex(flows)
-	self.activeCount++
+	self.activeCount = uint32(len(flows))
 	return nil
 }
 

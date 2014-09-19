@@ -167,3 +167,61 @@ func (ms *matchList) UnmarshalBinary(s []byte) error {
 	*ms = matchList(ret)
 	return nil
 }
+
+func (self matchList) Len() int {
+	return len([]match(self))
+}
+
+func (self matchList) Less(i, j int) bool {
+	inner := []match(self)
+	if inner[i].field != inner[j].field {
+		return inner[i].field < inner[j].field
+	}
+	if len(inner[i].value) != len(inner[j].value) {
+		return len(inner[i].value) < len(inner[i].value)
+	}
+	if len(inner[i].mask) != len(inner[j].mask) {
+		return len(inner[i].mask) < len(inner[i].mask)
+	}
+	for k,_ := range inner[i].value {
+		if inner[i].value[k] != inner[j].value[k] {
+			return inner[i].value[k] < inner[j].value[k]
+		}
+	}
+	for k,_ := range inner[i].mask {
+		if inner[i].mask[k] != inner[j].mask[k] {
+			return inner[i].mask[k] > inner[j].mask[k]
+		}
+	}
+	return false
+}
+
+func (self matchList) Swap(i,j int) {
+	inner := []match(self)
+	inner[i], inner[j] = inner[j], inner[i]
+	return
+}
+
+func (self matchList) Equal(target matchList) bool {
+	a := []match(self)
+	b := []match(target)
+	if len(a) != len(b) {
+		return false
+	}
+	for _,x := range(a) {
+		hit := func() bool {
+			for _,y := range(b) {
+				if x.field == x.field &&
+					bytes.Equal(x.value, y.value) &&
+					bytes.Equal(x.mask, y.mask) {
+					return true
+				}
+			}
+			return false
+		}()
+		if !hit {
+			return false
+		}
+	}
+	return true
+}
