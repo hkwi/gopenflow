@@ -75,7 +75,7 @@ type flowTable struct {
 	activeCount uint32          // number of entries
 	lookupCount uint64
 	matchCount  uint64
-	config      uint32
+	feature     flowTableFeature
 }
 
 func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
@@ -106,7 +106,7 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 
 	block_fields := matchList(expandMatch(flow.fields))
 	sort.Sort(block_fields)
-	
+
 	priority.lock.Lock()
 	defer priority.lock.Unlock()
 
@@ -119,13 +119,13 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 				if req.Flags&ofp4.OFPFF_CHECK_OVERLAP != 0 && overlap(f.fields, flow.fields) {
 					return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
 				}
-				
+
 				test_fields := matchList(f.fields)
 				sort.Sort(test_fields)
-				
-				if ! block_fields.Equal(test_fields) {
+
+				if !block_fields.Equal(test_fields) {
 					flows = append(flows, f)
-				}else if req.Flags&ofp4.OFPFF_RESET_COUNTS == 0 {
+				} else if req.Flags&ofp4.OFPFF_RESET_COUNTS == 0 {
 					flow.packetCount = f.packetCount
 					flow.byteCount = f.byteCount
 				}
@@ -134,7 +134,7 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 			flows = append(flows, fs...)
 		}
 	}
-	
+
 	priority.rebuildIndex(flows)
 	self.activeCount = uint32(len(flows))
 	return nil

@@ -102,72 +102,74 @@ func (self frame) clone() *frame {
 }
 
 func (f frame) hash() uint32 {
-	hashKeys := [...]uint64{ofp4.OFPXMT_OFB_ETH_DST,
-		ofp4.OFPXMT_OFB_ETH_SRC,
-		ofp4.OFPXMT_OFB_ETH_TYPE,
-		ofp4.OFPXMT_OFB_VLAN_VID,
-		ofp4.OFPXMT_OFB_VLAN_PCP,
-		ofp4.OFPXMT_OFB_IP_DSCP,
-		ofp4.OFPXMT_OFB_IP_ECN,
-		ofp4.OFPXMT_OFB_IP_PROTO,
-		ofp4.OFPXMT_OFB_IPV4_SRC,
-		ofp4.OFPXMT_OFB_IPV4_DST,
-		ofp4.OFPXMT_OFB_TCP_SRC,
-		ofp4.OFPXMT_OFB_TCP_DST,
-		ofp4.OFPXMT_OFB_UDP_SRC,
-		ofp4.OFPXMT_OFB_UDP_DST,
-		ofp4.OFPXMT_OFB_SCTP_SRC,
-		ofp4.OFPXMT_OFB_SCTP_DST,
-		ofp4.OFPXMT_OFB_ICMPV4_TYPE,
-		ofp4.OFPXMT_OFB_ICMPV4_CODE,
-		ofp4.OFPXMT_OFB_ARP_OP,
-		ofp4.OFPXMT_OFB_ARP_SPA,
-		ofp4.OFPXMT_OFB_ARP_TPA,
-		ofp4.OFPXMT_OFB_ARP_SHA,
-		ofp4.OFPXMT_OFB_ARP_THA,
-		ofp4.OFPXMT_OFB_IPV6_SRC,
-		ofp4.OFPXMT_OFB_IPV6_DST,
-		ofp4.OFPXMT_OFB_IPV6_FLABEL,
-		ofp4.OFPXMT_OFB_ICMPV6_TYPE,
-		ofp4.OFPXMT_OFB_ICMPV6_CODE,
-		ofp4.OFPXMT_OFB_MPLS_LABEL,
-		ofp4.OFPXMT_OFB_MPLS_TC,
-		ofp4.OFPXMT_OFB_MPLS_BOS,
-		ofp4.OFPXMT_OFB_PBB_ISID}
+	hashKeys := [...]uint32{
+		ofp4.OXM_OF_ETH_DST,
+		ofp4.OXM_OF_ETH_SRC,
+		ofp4.OXM_OF_ETH_TYPE,
+		ofp4.OXM_OF_VLAN_VID,
+		ofp4.OXM_OF_VLAN_PCP,
+		ofp4.OXM_OF_IP_DSCP,
+		ofp4.OXM_OF_IP_ECN,
+		ofp4.OXM_OF_IP_PROTO,
+		ofp4.OXM_OF_IPV4_SRC,
+		ofp4.OXM_OF_IPV4_DST,
+		ofp4.OXM_OF_TCP_SRC,
+		ofp4.OXM_OF_TCP_DST,
+		ofp4.OXM_OF_UDP_SRC,
+		ofp4.OXM_OF_UDP_DST,
+		ofp4.OXM_OF_SCTP_SRC,
+		ofp4.OXM_OF_SCTP_DST,
+		ofp4.OXM_OF_ICMPV4_TYPE,
+		ofp4.OXM_OF_ICMPV4_CODE,
+		ofp4.OXM_OF_ARP_OP,
+		ofp4.OXM_OF_ARP_SPA,
+		ofp4.OXM_OF_ARP_TPA,
+		ofp4.OXM_OF_ARP_SHA,
+		ofp4.OXM_OF_ARP_THA,
+		ofp4.OXM_OF_IPV6_SRC,
+		ofp4.OXM_OF_IPV6_DST,
+		ofp4.OXM_OF_IPV6_FLABEL,
+		ofp4.OXM_OF_ICMPV6_TYPE,
+		ofp4.OXM_OF_ICMPV6_CODE,
+		ofp4.OXM_OF_MPLS_LABEL,
+		ofp4.OXM_OF_MPLS_TC,
+		ofp4.OXM_OF_MPLS_BOS,
+		ofp4.OXM_OF_PBB_ISID,
+	}
 	hasher := fnv.New32()
 	for _, k := range hashKeys {
-		if buf, err := f.getValue(match{field: k}); err == nil {
+		if buf, err := f.getValue(k); err == nil {
 			hasher.Write(buf)
 		}
 	}
 	return hasher.Sum32()
 }
 
-func (data frame) getValue(m match) ([]byte, error) {
+func (data frame) getValue(oxmType uint32) ([]byte, error) {
 	data.useLayers()
 
-	switch m.field {
+	switch oxmType & ofp4.OXM_TYPE_MASK {
 	default:
 		return nil, errors.New("unknown oxm field")
-	case ofp4.OFPXMT_OFB_IN_PORT:
+	case ofp4.OXM_OF_IN_PORT:
 		return toMatchBytes(data.inPort)
-	case ofp4.OFPXMT_OFB_IN_PHY_PORT:
+	case ofp4.OXM_OF_IN_PHY_PORT:
 		return toMatchBytes(data.phyInPort)
-	case ofp4.OFPXMT_OFB_METADATA:
+	case ofp4.OXM_OF_METADATA:
 		return toMatchBytes(data.metadata)
-	case ofp4.OFPXMT_OFB_ETH_DST:
+	case ofp4.OXM_OF_ETH_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				return toMatchBytes(t.DstMAC)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ETH_SRC:
+	case ofp4.OXM_OF_ETH_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				return toMatchBytes(t.SrcMAC)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ETH_TYPE:
+	case ofp4.OXM_OF_ETH_TYPE:
 		do_break := false
 		var ret []byte
 		for _, layer := range data.layers {
@@ -194,20 +196,20 @@ func (data frame) getValue(m match) ([]byte, error) {
 		if ret != nil {
 			return ret, nil
 		}
-	case ofp4.OFPXMT_OFB_VLAN_VID:
+	case ofp4.OXM_OF_VLAN_VID:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Dot1Q); ok {
 				return toMatchBytes(t.VLANIdentifier | 0x1000)
 			}
 		}
 		return toMatchBytes(uint16(0x0000))
-	case ofp4.OFPXMT_OFB_VLAN_PCP:
+	case ofp4.OXM_OF_VLAN_PCP:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Dot1Q); ok {
 				return toMatchBytes(t.Priority)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IP_DSCP:
+	case ofp4.OXM_OF_IP_DSCP:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
 				return toMatchBytes(t.TOS >> 2)
@@ -216,7 +218,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				return toMatchBytes(t.TrafficClass >> 2)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IP_ECN:
+	case ofp4.OXM_OF_IP_ECN:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
 				return toMatchBytes(t.TOS & 0x03)
@@ -225,7 +227,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				return toMatchBytes(t.TrafficClass & 0x03)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IP_PROTO:
+	case ofp4.OXM_OF_IP_PROTO:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
 				return toMatchBytes(t.Protocol)
@@ -234,55 +236,55 @@ func (data frame) getValue(m match) ([]byte, error) {
 				return toMatchBytes(t.NextHeader)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV4_SRC:
+	case ofp4.OXM_OF_IPV4_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
 				return toMatchBytes(t.SrcIP)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV4_DST:
+	case ofp4.OXM_OF_IPV4_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
 				return toMatchBytes(t.DstIP)
 			}
 		}
-	case ofp4.OFPXMT_OFB_TCP_SRC:
+	case ofp4.OXM_OF_TCP_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.TCP); ok {
 				return toMatchBytes(t.SrcPort)
 			}
 		}
-	case ofp4.OFPXMT_OFB_TCP_DST:
+	case ofp4.OXM_OF_TCP_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.TCP); ok {
 				return toMatchBytes(t.DstPort)
 			}
 		}
-	case ofp4.OFPXMT_OFB_UDP_SRC:
+	case ofp4.OXM_OF_UDP_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.UDP); ok {
 				return toMatchBytes(t.SrcPort)
 			}
 		}
-	case ofp4.OFPXMT_OFB_UDP_DST:
+	case ofp4.OXM_OF_UDP_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.UDP); ok {
 				return toMatchBytes(t.DstPort)
 			}
 		}
-	case ofp4.OFPXMT_OFB_SCTP_SRC:
+	case ofp4.OXM_OF_SCTP_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.SCTP); ok {
 				return toMatchBytes(t.SrcPort)
 			}
 		}
-	case ofp4.OFPXMT_OFB_SCTP_DST:
+	case ofp4.OXM_OF_SCTP_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.SCTP); ok {
 				return toMatchBytes(t.DstPort)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV4_TYPE:
+	case ofp4.OXM_OF_ICMPV4_TYPE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv4); ok {
 				if buf, err := toMatchBytes(t.TypeCode); err != nil {
@@ -292,7 +294,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV4_CODE:
+	case ofp4.OXM_OF_ICMPV4_CODE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv4); ok {
 				if buf, err := toMatchBytes(t.TypeCode); err != nil {
@@ -302,55 +304,55 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_OP:
+	case ofp4.OXM_OF_ARP_OP:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
 				return toMatchBytes(t.Operation)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_SPA:
+	case ofp4.OXM_OF_ARP_SPA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
 				return toMatchBytes(t.SourceProtAddress)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_TPA:
+	case ofp4.OXM_OF_ARP_TPA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
 				return toMatchBytes(t.DstProtAddress)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_SHA:
+	case ofp4.OXM_OF_ARP_SHA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
 				return toMatchBytes(t.SourceHwAddress)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_THA:
+	case ofp4.OXM_OF_ARP_THA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
 				return toMatchBytes(t.DstHwAddress)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_SRC:
+	case ofp4.OXM_OF_IPV6_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv6); ok {
 				return toMatchBytes(t.SrcIP)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_DST:
+	case ofp4.OXM_OF_IPV6_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv6); ok {
 				return toMatchBytes(t.DstIP)
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_FLABEL:
+	case ofp4.OXM_OF_IPV6_FLABEL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv6); ok {
 				return toMatchBytes(t.FlowLabel)
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV6_TYPE:
+	case ofp4.OXM_OF_ICMPV6_TYPE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				if buf, err := toMatchBytes(t.TypeCode); err != nil {
@@ -360,7 +362,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV6_CODE:
+	case ofp4.OXM_OF_ICMPV6_CODE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				if buf, err := toMatchBytes(t.TypeCode); err != nil {
@@ -370,7 +372,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_TARGET:
+	case ofp4.OXM_OF_IPV6_ND_TARGET:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -379,7 +381,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
+	case ofp4.OXM_OF_IPV6_ND_SLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -394,7 +396,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
+	case ofp4.OXM_OF_IPV6_ND_TLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -409,19 +411,19 @@ func (data frame) getValue(m match) ([]byte, error) {
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_MPLS_LABEL:
+	case ofp4.OXM_OF_MPLS_LABEL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
 				return toMatchBytes(t.Label)
 			}
 		}
-	case ofp4.OFPXMT_OFB_MPLS_TC:
+	case ofp4.OXM_OF_MPLS_TC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
 				return toMatchBytes(t.TrafficClass)
 			}
 		}
-	case ofp4.OFPXMT_OFB_MPLS_BOS:
+	case ofp4.OXM_OF_MPLS_BOS:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
 				var bos uint8
@@ -431,7 +433,7 @@ func (data frame) getValue(m match) ([]byte, error) {
 				return toMatchBytes(bos)
 			}
 		}
-	case ofp4.OFPXMT_OFB_PBB_ISID:
+	case ofp4.OXM_OF_PBB_ISID:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*PBB); ok {
 				ext := make([]byte, 4)
@@ -439,9 +441,9 @@ func (data frame) getValue(m match) ([]byte, error) {
 				return ext[1:], nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_TUNNEL_ID:
+	case ofp4.OXM_OF_TUNNEL_ID:
 		return toMatchBytes(data.tunnelId)
-	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
+	case ofp4.OXM_OF_IPV6_EXTHDR:
 		exthdr := uint16(0)
 		for _, layer := range data.layers {
 			switch p := layer.(type) {
@@ -513,39 +515,39 @@ func (data frame) getValue(m match) ([]byte, error) {
 		}
 		return toMatchBytes(exthdr)
 	}
-	return nil, errors.New(fmt.Sprint("layer not found", m.field))
+	return nil, errors.New(fmt.Sprint("layer not found", oxmType))
 }
 
 func (data *frame) setValue(m match) error {
 	data.useLayers()
 
-	switch m.field {
+	switch m.Type & ofp4.OXM_TYPE_MASK {
 	default:
 		return errors.New("unknown oxm field")
-	case ofp4.OFPXMT_OFB_IN_PORT:
-		data.inPort = binary.BigEndian.Uint32(m.value)
+	case ofp4.OXM_OF_IN_PORT:
+		data.inPort = binary.BigEndian.Uint32(m.Value)
 		return nil
-	case ofp4.OFPXMT_OFB_IN_PHY_PORT:
-		data.phyInPort = binary.BigEndian.Uint32(m.value)
+	case ofp4.OXM_OF_IN_PHY_PORT:
+		data.phyInPort = binary.BigEndian.Uint32(m.Value)
 		return nil
-	case ofp4.OFPXMT_OFB_METADATA:
-		data.metadata = binary.BigEndian.Uint64(m.value)
+	case ofp4.OXM_OF_METADATA:
+		data.metadata = binary.BigEndian.Uint64(m.Value)
 		return nil
-	case ofp4.OFPXMT_OFB_ETH_DST:
+	case ofp4.OXM_OF_ETH_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Ethernet); ok {
-				t.DstMAC = net.HardwareAddr(m.value)
+				t.DstMAC = net.HardwareAddr(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ETH_SRC:
+	case ofp4.OXM_OF_ETH_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Ethernet); ok {
-				t.SrcMAC = net.HardwareAddr(m.value)
+				t.SrcMAC = net.HardwareAddr(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ETH_TYPE:
+	case ofp4.OXM_OF_ETH_TYPE:
 		var lastLayer gopacket.Layer
 		for _, layer := range data.layers {
 			switch t := layer.(type) {
@@ -556,211 +558,211 @@ func (data *frame) setValue(m match) error {
 			}
 		}
 		if t, ok := lastLayer.(*layers.Ethernet); ok {
-			t.EthernetType = layers.EthernetType(binary.BigEndian.Uint16(m.value))
+			t.EthernetType = layers.EthernetType(binary.BigEndian.Uint16(m.Value))
 			return nil
 		}
 		if t, ok := lastLayer.(*layers.Dot1Q); ok {
-			t.Type = layers.EthernetType(binary.BigEndian.Uint16(m.value))
+			t.Type = layers.EthernetType(binary.BigEndian.Uint16(m.Value))
 			return nil
 		}
-	case ofp4.OFPXMT_OFB_VLAN_VID:
+	case ofp4.OXM_OF_VLAN_VID:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Dot1Q); ok {
-				t.VLANIdentifier = binary.BigEndian.Uint16(m.value) & 0x0fff
+				t.VLANIdentifier = binary.BigEndian.Uint16(m.Value) & 0x0fff
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_VLAN_PCP:
+	case ofp4.OXM_OF_VLAN_PCP:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Dot1Q); ok {
-				t.Priority = m.value[0]
+				t.Priority = m.Value[0]
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IP_DSCP:
+	case ofp4.OXM_OF_IP_DSCP:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
-				t.TOS = t.TOS&0x03 | m.value[0]<<2
+				t.TOS = t.TOS&0x03 | m.Value[0]<<2
 				return nil
 			}
 			if t, ok := layer.(*layers.IPv6); ok {
-				t.TrafficClass = t.TrafficClass&0x03 | m.value[0]<<2
+				t.TrafficClass = t.TrafficClass&0x03 | m.Value[0]<<2
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IP_ECN:
+	case ofp4.OXM_OF_IP_ECN:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
-				t.TOS = t.TOS&0xFC | m.value[0]&0x03
+				t.TOS = t.TOS&0xFC | m.Value[0]&0x03
 				return nil
 			}
 			if t, ok := layer.(*layers.IPv6); ok {
-				t.TrafficClass = t.TrafficClass&0xFC | m.value[0]&0x03
+				t.TrafficClass = t.TrafficClass&0xFC | m.Value[0]&0x03
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IP_PROTO:
+	case ofp4.OXM_OF_IP_PROTO:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
-				t.Protocol = layers.IPProtocol(m.value[0])
+				t.Protocol = layers.IPProtocol(m.Value[0])
 				return nil
 			}
 			if t, ok := layer.(*layers.IPv6); ok {
-				t.NextHeader = layers.IPProtocol(m.value[0])
+				t.NextHeader = layers.IPProtocol(m.Value[0])
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV4_SRC:
+	case ofp4.OXM_OF_IPV4_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
-				t.SrcIP = net.IP(m.value)
+				t.SrcIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV4_DST:
+	case ofp4.OXM_OF_IPV4_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv4); ok {
-				t.DstIP = net.IP(m.value)
+				t.DstIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_TCP_SRC:
+	case ofp4.OXM_OF_TCP_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.TCP); ok {
-				t.SrcPort = layers.TCPPort(binary.BigEndian.Uint16(m.value))
+				t.SrcPort = layers.TCPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_TCP_DST:
+	case ofp4.OXM_OF_TCP_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.TCP); ok {
-				t.DstPort = layers.TCPPort(binary.BigEndian.Uint16(m.value))
+				t.DstPort = layers.TCPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_UDP_SRC:
+	case ofp4.OXM_OF_UDP_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.UDP); ok {
-				t.SrcPort = layers.UDPPort(binary.BigEndian.Uint16(m.value))
+				t.SrcPort = layers.UDPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_UDP_DST:
+	case ofp4.OXM_OF_UDP_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.UDP); ok {
-				t.DstPort = layers.UDPPort(binary.BigEndian.Uint16(m.value))
+				t.DstPort = layers.UDPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_SCTP_SRC:
+	case ofp4.OXM_OF_SCTP_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.SCTP); ok {
-				t.SrcPort = layers.SCTPPort(binary.BigEndian.Uint16(m.value))
+				t.SrcPort = layers.SCTPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_SCTP_DST:
+	case ofp4.OXM_OF_SCTP_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.SCTP); ok {
-				t.DstPort = layers.SCTPPort(binary.BigEndian.Uint16(m.value))
+				t.DstPort = layers.SCTPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV4_TYPE:
+	case ofp4.OXM_OF_ICMPV4_TYPE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv4); ok {
-				t.TypeCode = layers.ICMPv4TypeCode(uint16(t.TypeCode)&0x00FF | uint16(m.value[0])<<8)
+				t.TypeCode = layers.ICMPv4TypeCode(uint16(t.TypeCode)&0x00FF | uint16(m.Value[0])<<8)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV4_CODE:
+	case ofp4.OXM_OF_ICMPV4_CODE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv4); ok {
-				t.TypeCode = layers.ICMPv4TypeCode(uint16(t.TypeCode)&0xFF00 | uint16(m.value[0]))
+				t.TypeCode = layers.ICMPv4TypeCode(uint16(t.TypeCode)&0xFF00 | uint16(m.Value[0]))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_OP:
+	case ofp4.OXM_OF_ARP_OP:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
-				t.Operation = binary.BigEndian.Uint16(m.value)
+				t.Operation = binary.BigEndian.Uint16(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_SPA:
+	case ofp4.OXM_OF_ARP_SPA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
-				t.SourceProtAddress = m.value
+				t.SourceProtAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_TPA:
+	case ofp4.OXM_OF_ARP_TPA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
-				t.DstProtAddress = m.value
+				t.DstProtAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_SHA:
+	case ofp4.OXM_OF_ARP_SHA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
-				t.SourceHwAddress = m.value
+				t.SourceHwAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ARP_THA:
+	case ofp4.OXM_OF_ARP_THA:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ARP); ok {
-				t.DstHwAddress = m.value
+				t.DstHwAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_SRC:
+	case ofp4.OXM_OF_IPV6_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv6); ok {
-				t.SrcIP = net.IP(m.value)
+				t.SrcIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_DST:
+	case ofp4.OXM_OF_IPV6_DST:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv6); ok {
-				t.DstIP = net.IP(m.value)
+				t.DstIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_FLABEL:
+	case ofp4.OXM_OF_IPV6_FLABEL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.IPv6); ok {
-				t.FlowLabel = binary.BigEndian.Uint32(m.value)
+				t.FlowLabel = binary.BigEndian.Uint32(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV6_TYPE:
+	case ofp4.OXM_OF_ICMPV6_TYPE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				t.TypeCode = layers.ICMPv6TypeCode(uint16(t.TypeCode)&0x00FF | uint16(m.value[0])<<8)
+				t.TypeCode = layers.ICMPv6TypeCode(uint16(t.TypeCode)&0x00FF | uint16(m.Value[0])<<8)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_ICMPV6_CODE:
+	case ofp4.OXM_OF_ICMPV6_CODE:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
-				t.TypeCode = layers.ICMPv6TypeCode(uint16(t.TypeCode)&0xFF00 | uint16(m.value[0]))
+				t.TypeCode = layers.ICMPv6TypeCode(uint16(t.TypeCode)&0xFF00 | uint16(m.Value[0]))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_TARGET:
+	case ofp4.OXM_OF_IPV6_ND_TARGET:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
 				if typ == layers.ICMPv6TypeNeighborSolicitation || typ == layers.ICMPv6TypeNeighborAdvertisement {
-					copy(t.Payload[:16], m.value)
+					copy(t.Payload[:16], m.Value)
 					return nil
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
+	case ofp4.OXM_OF_IPV6_ND_SLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -768,7 +770,7 @@ func (data *frame) setValue(m match) error {
 					for cur := 16; cur < len(t.Payload); {
 						length := int(t.Payload[cur+1]) * 8
 						if t.Payload[cur] == 1 { // source link-layer address (RFC 2461 4.6)
-							copy(t.Payload[cur+2:], m.value)
+							copy(t.Payload[cur+2:], m.Value)
 							return nil
 						}
 						cur += length
@@ -776,13 +778,13 @@ func (data *frame) setValue(m match) error {
 					buf := make([]byte, 8)
 					buf[0] = 2
 					buf[1] = 1
-					copy(buf[2:], m.value)
+					copy(buf[2:], m.Value)
 					t.Payload = append(t.Payload, buf...)
 					return nil
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
+	case ofp4.OXM_OF_IPV6_ND_TLL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -790,7 +792,7 @@ func (data *frame) setValue(m match) error {
 					for cur := 16; cur < len(t.Payload); {
 						length := int(t.Payload[cur+1]) * 8
 						if t.Payload[cur] == 2 { // target link-layer address (RFC 2461 4.6)
-							copy(t.Payload[cur+2:], m.value)
+							copy(t.Payload[cur+2:], m.Value)
 							return nil
 						}
 						cur += length
@@ -798,30 +800,30 @@ func (data *frame) setValue(m match) error {
 					buf := make([]byte, 8)
 					buf[0] = 2
 					buf[1] = 1
-					copy(buf[2:], m.value)
+					copy(buf[2:], m.Value)
 					t.Payload = append(t.Payload, buf...)
 					return nil
 				}
 			}
 		}
-	case ofp4.OFPXMT_OFB_MPLS_LABEL:
+	case ofp4.OXM_OF_MPLS_LABEL:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
-				t.Label = binary.BigEndian.Uint32(m.value)
+				t.Label = binary.BigEndian.Uint32(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_MPLS_TC:
+	case ofp4.OXM_OF_MPLS_TC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
-				t.TrafficClass = m.value[0]
+				t.TrafficClass = m.Value[0]
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_MPLS_BOS:
+	case ofp4.OXM_OF_MPLS_BOS:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.MPLS); ok {
-				if m.value[0] == 0 {
+				if m.Value[0] == 0 {
 					t.StackBottom = false
 				} else {
 					t.StackBottom = true
@@ -829,20 +831,20 @@ func (data *frame) setValue(m match) error {
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_PBB_ISID:
+	case ofp4.OXM_OF_PBB_ISID:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*PBB); ok {
-				t.ServiceIdentifier = binary.BigEndian.Uint32(append(make([]byte, 1), m.value...))
+				t.ServiceIdentifier = binary.BigEndian.Uint32(append(make([]byte, 1), m.Value...))
 				return nil
 			}
 		}
-	case ofp4.OFPXMT_OFB_TUNNEL_ID:
-		data.tunnelId = binary.BigEndian.Uint64(m.value)
+	case ofp4.OXM_OF_TUNNEL_ID:
+		data.tunnelId = binary.BigEndian.Uint64(m.Value)
 		return nil
-	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
-		return errors.New("OFPXMT_OFB_IPV6_EXTHDR setter is unsupported")
+	case ofp4.OXM_OF_IPV6_EXTHDR:
+		return errors.New("OXM_OF_IPV6_EXTHDR setter is unsupported")
 	}
-	return errors.New(fmt.Sprint("layer not found", m.field))
+	return errors.New(fmt.Sprint("layer not found", m))
 }
 
 func toMatchBytes(value interface{}) (data []byte, err error) {
@@ -893,10 +895,10 @@ func toMatchBytes(value interface{}) (data []byte, err error) {
 }
 
 func expandMatch(obj []match) []match {
-	x := make(map[uint64]*match)
+	x := make(map[uint32]*match)
 	for _, m := range obj {
-		for h := &m; h != nil; h = matchImplied(h.field) {
-			x[h.field] = h
+		for h := &m; h != nil; h = matchImplied(h.Type) {
+			x[h.Type] = h
 		}
 	}
 	u := make([]match, 0, len(x))
@@ -906,80 +908,80 @@ func expandMatch(obj []match) []match {
 	return u
 }
 
-func matchImplied(field uint64) *match {
+func matchImplied(oxmType uint32) *match {
 	var ext *match
-	switch field {
-	case ofp4.OFPXMT_OFB_IPV4_SRC, ofp4.OFPXMT_OFB_IPV4_DST:
+	switch oxmType {
+	case ofp4.OXM_OF_IPV4_SRC, ofp4.OXM_OF_IPV4_DST:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ETH_TYPE,
+			ofp4.OXM_OF_ETH_TYPE,
 			[]byte{0x80, 0x00},
 			[]byte{0xFF, 0xFF},
 		}
-	case ofp4.OFPXMT_OFB_TCP_SRC, ofp4.OFPXMT_OFB_TCP_DST:
+	case ofp4.OXM_OF_TCP_SRC, ofp4.OXM_OF_TCP_DST:
 		ext = &match{
-			ofp4.OFPXMT_OFB_IP_PROTO,
+			ofp4.OXM_OF_IP_PROTO,
 			[]byte{0x06},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_UDP_SRC, ofp4.OFPXMT_OFB_UDP_DST:
+	case ofp4.OXM_OF_UDP_SRC, ofp4.OXM_OF_UDP_DST:
 		ext = &match{
-			ofp4.OFPXMT_OFB_IP_PROTO,
+			ofp4.OXM_OF_IP_PROTO,
 			[]byte{0x11},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_SCTP_SRC, ofp4.OFPXMT_OFB_SCTP_DST:
+	case ofp4.OXM_OF_SCTP_SRC, ofp4.OXM_OF_SCTP_DST:
 		ext = &match{
-			ofp4.OFPXMT_OFB_IP_PROTO,
+			ofp4.OXM_OF_IP_PROTO,
 			[]byte{0x84},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_ICMPV4_TYPE, ofp4.OFPXMT_OFB_ICMPV4_CODE:
+	case ofp4.OXM_OF_ICMPV4_TYPE, ofp4.OXM_OF_ICMPV4_CODE:
 		ext = &match{
-			ofp4.OFPXMT_OFB_IP_PROTO,
+			ofp4.OXM_OF_IP_PROTO,
 			[]byte{0x01},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_ARP_OP,
-		ofp4.OFPXMT_OFB_ARP_SPA, ofp4.OFPXMT_OFB_ARP_TPA,
-		ofp4.OFPXMT_OFB_ARP_SHA, ofp4.OFPXMT_OFB_ARP_THA:
+	case ofp4.OXM_OF_ARP_OP,
+		ofp4.OXM_OF_ARP_SPA, ofp4.OXM_OF_ARP_TPA,
+		ofp4.OXM_OF_ARP_SHA, ofp4.OXM_OF_ARP_THA:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ETH_TYPE,
+			ofp4.OXM_OF_ETH_TYPE,
 			[]byte{0x08, 0x06},
 			[]byte{0xFF, 0xFF},
 		}
-	case ofp4.OFPXMT_OFB_IPV6_SRC, ofp4.OFPXMT_OFB_IPV6_DST, ofp4.OFPXMT_OFB_IPV6_FLABEL:
+	case ofp4.OXM_OF_IPV6_SRC, ofp4.OXM_OF_IPV6_DST, ofp4.OXM_OF_IPV6_FLABEL:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ETH_TYPE,
+			ofp4.OXM_OF_ETH_TYPE,
 			[]byte{0x86, 0xDD},
 			[]byte{0xFF, 0xFF},
 		}
-	case ofp4.OFPXMT_OFB_ICMPV6_TYPE, ofp4.OFPXMT_OFB_ICMPV6_CODE:
+	case ofp4.OXM_OF_ICMPV6_TYPE, ofp4.OXM_OF_ICMPV6_CODE:
 		ext = &match{
-			ofp4.OFPXMT_OFB_IP_PROTO,
+			ofp4.OXM_OF_IP_PROTO,
 			[]byte{0x3A},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_SLL:
+	case ofp4.OXM_OF_IPV6_ND_SLL:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ICMPV6_TYPE,
+			ofp4.OXM_OF_ICMPV6_TYPE,
 			[]byte{135},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_IPV6_ND_TLL:
+	case ofp4.OXM_OF_IPV6_ND_TLL:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ICMPV6_TYPE,
+			ofp4.OXM_OF_ICMPV6_TYPE,
 			[]byte{136},
 			[]byte{0xFF},
 		}
-	case ofp4.OFPXMT_OFB_PBB_ISID:
+	case ofp4.OXM_OF_PBB_ISID:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ETH_TYPE,
+			ofp4.OXM_OF_ETH_TYPE,
 			[]byte{0x88, 0xE7},
 			[]byte{0xFF, 0xFF},
 		}
-	case ofp4.OFPXMT_OFB_IPV6_EXTHDR:
+	case ofp4.OXM_OF_IPV6_EXTHDR:
 		ext = &match{
-			ofp4.OFPXMT_OFB_ETH_TYPE,
+			ofp4.OXM_OF_ETH_TYPE,
 			[]byte{0x86, 0xDD},
 			[]byte{0xFF, 0xFF},
 		}
@@ -1024,11 +1026,11 @@ func (self *flowTableWork) Map() Reducable {
 				prio.lock.RLock()
 				defer prio.lock.RUnlock()
 				for _, cap := range prio.caps {
-					if buf, err := self.data.getValue(cap); err != nil {
+					if buf, err := self.data.getValue(cap.Type); err != nil {
 						log.Println(err)
 						return nil, 0
 					} else {
-						hasher.Write(maskBytes(buf, cap.mask))
+						hasher.Write(maskBytes(buf, cap.Mask))
 					}
 				}
 				if flows, ok := prio.flows[hasher.Sum32()]; ok {

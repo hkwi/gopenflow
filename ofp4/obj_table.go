@@ -124,7 +124,7 @@ func (obj *TableFeaturePropActions) UnmarshalBinary(data []byte) error {
 
 type TableFeaturePropOxm struct {
 	Type   uint16
-	OxmIds []uint32
+	OxmIds []MatchType
 }
 
 func (obj TableFeaturePropOxm) MarshalBinary() ([]byte, error) {
@@ -133,7 +133,7 @@ func (obj TableFeaturePropOxm) MarshalBinary() ([]byte, error) {
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], uint16(length))
 	for i, num := range obj.OxmIds {
-		binary.BigEndian.PutUint32(data[4+4*i:8+4*i], num)
+		binary.BigEndian.PutUint32(data[4+4*i:8+4*i], uint32(num))
 	}
 	return data, nil
 }
@@ -141,9 +141,9 @@ func (obj TableFeaturePropOxm) MarshalBinary() ([]byte, error) {
 func (obj *TableFeaturePropOxm) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	length := int(binary.BigEndian.Uint16(data[2:4]))
-	obj.OxmIds = make([]uint32, (length-4)/4)
+	obj.OxmIds = make([]MatchType, (length-4)/4)
 	for i, _ := range obj.OxmIds {
-		obj.OxmIds[i] = binary.BigEndian.Uint32(data[4+4*i : 8+4*i])
+		obj.OxmIds[i] = MatchType(binary.BigEndian.Uint32(data[4+4*i : 8+4*i]))
 	}
 	return nil
 }

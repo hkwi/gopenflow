@@ -48,7 +48,7 @@ type IoControlChannel struct {
 	hint   [4]byte
 	reader io.Reader
 	writer io.Writer
-	lock *sync.Cond
+	lock   *sync.Cond
 	closed error
 }
 
@@ -98,7 +98,7 @@ func (self IoControlChannel) Egress(msg []byte) error {
 func (self IoControlChannel) Wait() error {
 	self.lock.L.Lock()
 	defer self.lock.L.Unlock()
-	
+
 	self.lock.Wait()
 	return self.closed
 }
@@ -107,7 +107,7 @@ func NewIoControlChannel(reader io.Reader, writer io.Writer) *IoControlChannel {
 	self := &IoControlChannel{
 		reader: reader,
 		writer: writer,
-		lock:  sync.NewCond(&sync.Mutex{}),
+		lock:   sync.NewCond(&sync.Mutex{}),
 	}
 	return self
 }

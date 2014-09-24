@@ -226,4 +226,3 @@ func pcapPortState(name string, state *PortState) error {
 	}
 	return nil
 }
-

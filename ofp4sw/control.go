@@ -423,38 +423,38 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 	assocMatch := []match{}
 	{
 		m := match{
-			field: ofp4.OFPXMT_OFB_IN_PORT,
-			mask:  []byte{255, 255, 255, 255},
-			value: []byte{0, 0, 0, 0},
+			Type:  uint32(ofp4.OXM_OF_IN_PORT),
+			Mask:  []byte{255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0},
 		}
-		binary.BigEndian.PutUint32(m.value, data.inPort)
+		binary.BigEndian.PutUint32(m.Value, data.inPort)
 		assocMatch = append(assocMatch, m)
 	}
 	if data.phyInPort != 0 && data.phyInPort != data.inPort {
 		m := match{
-			field: ofp4.OFPXMT_OFB_IN_PHY_PORT,
-			mask:  []byte{255, 255, 255, 255},
-			value: []byte{0, 0, 0, 0},
+			Type:  uint32(ofp4.OXM_OF_IN_PHY_PORT),
+			Mask:  []byte{255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0},
 		}
-		binary.BigEndian.PutUint32(m.value, data.phyInPort)
+		binary.BigEndian.PutUint32(m.Value, data.phyInPort)
 		assocMatch = append(assocMatch, m)
 	}
 	if data.tunnelId != 0 {
 		m := match{
-			field: ofp4.OFPXMT_OFB_TUNNEL_ID,
-			mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
-			value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			Type:  uint32(ofp4.OXM_OF_TUNNEL_ID),
+			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
 		}
-		binary.BigEndian.PutUint64(m.value, data.tunnelId)
+		binary.BigEndian.PutUint64(m.Value, data.tunnelId)
 		assocMatch = append(assocMatch, m)
 	}
 	if data.metadata != 0 {
 		m := match{
-			field: ofp4.OFPXMT_OFB_METADATA,
-			mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
-			value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			Type:  uint32(ofp4.OXM_OF_METADATA),
+			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
 		}
-		binary.BigEndian.PutUint64(m.value, data.metadata)
+		binary.BigEndian.PutUint64(m.Value, data.metadata)
 		assocMatch = append(assocMatch, m)
 	}
 	fields, e2 := matchList(assocMatch).MarshalBinary()
@@ -795,7 +795,7 @@ func (self ofmTableMod) Map() Reducable {
 		func() {
 			table.lock.Lock()
 			defer table.lock.Unlock()
-			table.config = req.Config
+			table.feature.config = req.Config
 		}()
 	}
 	return self
@@ -1397,7 +1397,42 @@ type ofmMpTableFeatures struct {
 }
 
 func (self *ofmMpTableFeatures) Map() Reducable {
-	// XXX:
+	if len(self.reqs) == 0 {
+		for tableId, t := range self.ctrl.pipe.getFlowTables(ofp4.OFPTT_ALL) {
+			f := t.feature
+			rf := ofp4.TableFeatures{
+				TableId:       tableId,
+				Name:          f.name,
+				MetadataMatch: f.metadataMatch,
+				MetadataWrite: f.metadataWrite,
+				Config:        f.config,
+				MaxEntries:    f.maxEntries,
+			}
+			props := map[uint16][]uint32{
+				ofp4.OFPTFPT_MATCH:               f.match,
+				ofp4.OFPTFPT_WILDCARDS:           f.wildcards,
+				ofp4.OFPTFPT_WRITE_SETFIELD:      f.hit.writeSetfield,
+				ofp4.OFPTFPT_WRITE_SETFIELD_MISS: f.miss.writeSetfield,
+				ofp4.OFPTFPT_APPLY_SETFIELD:      f.hit.applySetfield,
+				ofp4.OFPTFPT_APPLY_SETFIELD_MISS: f.miss.applySetfield,
+			}
+			for pType, oxmTypes := range props {
+				if len(oxmTypes) > 0 {
+					ids := make([]ofp4.MatchType, len(oxmTypes))
+					for i, v := range oxmTypes {
+						ids[i] = ofp4.MatchType(v)
+					}
+					rf.Properties = append(rf.Properties, ofp4.TableFeaturePropOxm{
+						Type:   pType,
+						OxmIds: ids,
+					})
+				}
+			}
+			self.chunks = append(self.chunks, rf)
+		}
+	} else {
+		// XXX: set
+	}
 	return self
 }
 

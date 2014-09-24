@@ -185,8 +185,7 @@ type bandDscpRemark struct {
 }
 
 func (self bandDscpRemark) remark(data *frame) error {
-	dscpMatch := match{field: ofp4.OFPXMT_OFB_IP_DSCP}
-	if v, err := data.getValue(dscpMatch); err != nil {
+	if v, err := data.getValue(ofp4.OFPXMT_OFB_IP_DSCP); err != nil {
 		return nil
 	} else {
 		phb := uint8(v[0]) >> 3
@@ -197,9 +196,9 @@ func (self bandDscpRemark) remark(data *frame) error {
 				prec = 0x03
 			}
 			if err := data.setValue(match{
-				field: ofp4.OFPXMT_OFB_IP_DSCP,
-				value: []byte{byte(phb<<3 | prec<<1)},
-				mask:  []byte{0xff},
+				Type:  ofp4.OFPXMT_OFB_IP_DSCP,
+				Value: []byte{byte(phb<<3 | prec<<1)},
+				Mask:  []byte{0xff},
 			}); err != nil {
 				return err
 			}

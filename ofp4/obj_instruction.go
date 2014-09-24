@@ -182,6 +182,7 @@ func (obj *InstructionMeter) UnmarshalBinary(data []byte) (err error) {
 
 type InstructionExperimenter struct {
 	Experimenter uint32
+	ExpType      uint32
 	Data         []byte
 }
 
@@ -190,13 +191,15 @@ func (obj InstructionExperimenter) MarshalBinary() ([]byte, error) {
 	binary.BigEndian.PutUint16(data[0:2], OFPIT_EXPERIMENTER)
 	binary.BigEndian.PutUint16(data[2:4], uint16(8+len(obj.Data)))
 	binary.BigEndian.PutUint32(data[4:8], obj.Experimenter)
-	copy(data[8:], obj.Data)
+	binary.BigEndian.PutUint32(data[8:12], obj.ExpType)
+	copy(data[12:], obj.Data)
 	return data, nil
 }
 
 func (obj *InstructionExperimenter) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	obj.Experimenter = binary.BigEndian.Uint32(data[4:8])
-	obj.Data = data[8:length]
+	obj.ExpType = binary.BigEndian.Uint32(data[8:12])
+	obj.Data = data[12:length]
 	return nil
 }
