@@ -25,7 +25,8 @@ type frame struct {
 	metadata   uint64
 	tunnelId   uint64
 	queueId    uint32
-	actionSet  map[uint16]action
+	actionSet  actionSet
+	expData    map[experimenterKey]interface{}
 }
 
 func (self frame) isInvalid() bool {
@@ -83,13 +84,9 @@ func (self frame) clone() *frame {
 		log.Println(err)
 		// in this case, returned data will be not nil but isInvalid().
 	}
-	var actionSet map[uint16]action
-	if self.actionSet != nil {
-		actionSet = make(map[uint16]action)
-		for k, v := range self.actionSet {
-			actionSet[k] = v
-		}
-	}
+	aset := makeActionSet()
+	aset.Write(self.actionSet)
+
 	return &frame{
 		serialized: frameBytes,
 		inPort:     self.inPort,
@@ -97,7 +94,7 @@ func (self frame) clone() *frame {
 		metadata:   self.metadata,
 		tunnelId:   self.tunnelId,
 		queueId:    self.queueId,
-		actionSet:  actionSet,
+		actionSet:  aset,
 	}
 }
 
@@ -148,9 +145,9 @@ func (f frame) hash() uint32 {
 func (data frame) getValue(oxmType uint32) ([]byte, error) {
 	data.useLayers()
 
-	switch oxmType & ofp4.OXM_TYPE_MASK {
+	switch oxmType {
 	default:
-		return nil, errors.New("unknown oxm field")
+		return nil, fmt.Errorf("unknown oxm field %x", oxmType)
 	case ofp4.OXM_OF_IN_PORT:
 		return toMatchBytes(data.inPort)
 	case ofp4.OXM_OF_IN_PHY_PORT:
@@ -518,10 +515,10 @@ func (data frame) getValue(oxmType uint32) ([]byte, error) {
 	return nil, errors.New(fmt.Sprint("layer not found", oxmType))
 }
 
-func (data *frame) setValue(m match) error {
+func (data *frame) setValue(m oxmBasic) error {
 	data.useLayers()
 
-	switch m.Type & ofp4.OXM_TYPE_MASK {
+	switch m.Type {
 	default:
 		return errors.New("unknown oxm field")
 	case ofp4.OXM_OF_IN_PORT:
@@ -894,101 +891,6 @@ func toMatchBytes(value interface{}) (data []byte, err error) {
 	return
 }
 
-func expandMatch(obj []match) []match {
-	x := make(map[uint32]*match)
-	for _, m := range obj {
-		for h := &m; h != nil; h = matchImplied(h.Type) {
-			x[h.Type] = h
-		}
-	}
-	u := make([]match, 0, len(x))
-	for _, m := range x {
-		u = append(u, *m)
-	}
-	return u
-}
-
-func matchImplied(oxmType uint32) *match {
-	var ext *match
-	switch oxmType {
-	case ofp4.OXM_OF_IPV4_SRC, ofp4.OXM_OF_IPV4_DST:
-		ext = &match{
-			ofp4.OXM_OF_ETH_TYPE,
-			[]byte{0x80, 0x00},
-			[]byte{0xFF, 0xFF},
-		}
-	case ofp4.OXM_OF_TCP_SRC, ofp4.OXM_OF_TCP_DST:
-		ext = &match{
-			ofp4.OXM_OF_IP_PROTO,
-			[]byte{0x06},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_UDP_SRC, ofp4.OXM_OF_UDP_DST:
-		ext = &match{
-			ofp4.OXM_OF_IP_PROTO,
-			[]byte{0x11},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_SCTP_SRC, ofp4.OXM_OF_SCTP_DST:
-		ext = &match{
-			ofp4.OXM_OF_IP_PROTO,
-			[]byte{0x84},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_ICMPV4_TYPE, ofp4.OXM_OF_ICMPV4_CODE:
-		ext = &match{
-			ofp4.OXM_OF_IP_PROTO,
-			[]byte{0x01},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_ARP_OP,
-		ofp4.OXM_OF_ARP_SPA, ofp4.OXM_OF_ARP_TPA,
-		ofp4.OXM_OF_ARP_SHA, ofp4.OXM_OF_ARP_THA:
-		ext = &match{
-			ofp4.OXM_OF_ETH_TYPE,
-			[]byte{0x08, 0x06},
-			[]byte{0xFF, 0xFF},
-		}
-	case ofp4.OXM_OF_IPV6_SRC, ofp4.OXM_OF_IPV6_DST, ofp4.OXM_OF_IPV6_FLABEL:
-		ext = &match{
-			ofp4.OXM_OF_ETH_TYPE,
-			[]byte{0x86, 0xDD},
-			[]byte{0xFF, 0xFF},
-		}
-	case ofp4.OXM_OF_ICMPV6_TYPE, ofp4.OXM_OF_ICMPV6_CODE:
-		ext = &match{
-			ofp4.OXM_OF_IP_PROTO,
-			[]byte{0x3A},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_IPV6_ND_SLL:
-		ext = &match{
-			ofp4.OXM_OF_ICMPV6_TYPE,
-			[]byte{135},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_IPV6_ND_TLL:
-		ext = &match{
-			ofp4.OXM_OF_ICMPV6_TYPE,
-			[]byte{136},
-			[]byte{0xFF},
-		}
-	case ofp4.OXM_OF_PBB_ISID:
-		ext = &match{
-			ofp4.OXM_OF_ETH_TYPE,
-			[]byte{0x88, 0xE7},
-			[]byte{0xFF, 0xFF},
-		}
-	case ofp4.OXM_OF_IPV6_EXTHDR:
-		ext = &match{
-			ofp4.OXM_OF_ETH_TYPE,
-			[]byte{0x86, 0xDD},
-			[]byte{0xFF, 0xFF},
-		}
-	}
-	return ext
-}
-
 type flowTableWork struct {
 	data *frame
 	// ref
@@ -1025,7 +927,7 @@ func (self *flowTableWork) Map() Reducable {
 				hasher := fnv.New32()
 				prio.lock.RLock()
 				defer prio.lock.RUnlock()
-				for _, cap := range prio.caps {
+				for _, cap := range prio.hash {
 					if buf, err := self.data.getValue(cap.Type); err != nil {
 						log.Println(err)
 						return nil, 0
@@ -1035,14 +937,7 @@ func (self *flowTableWork) Map() Reducable {
 				}
 				if flows, ok := prio.flows[hasher.Sum32()]; ok {
 					for _, flow := range flows {
-						hit := true
-						for _, field := range flow.fields {
-							if !field.match(*self.data) {
-								hit = false
-								break
-							}
-						}
-						if hit {
+						if flow.fields.Match(*self.data) {
 							return flow, prio.priority
 						}
 					}
@@ -1079,6 +974,25 @@ func (self *flowTableWork) Map() Reducable {
 			entry.touched = time.Now()
 		}()
 
+		instExp := func(pos int) error {
+			for _, exp := range entry.instExp[pos] {
+				if pre, err := self.data.data(); err != nil {
+					return err
+				} else if post, err := exp.Handler.Execute(pre, exp.Data); err != nil {
+					return err
+				} else {
+					self.data.serialized = post
+					self.data.layers = self.data.layers[:0]
+				}
+			}
+			return nil
+		}
+
+		if err := instExp(INST_ORDER_FIRST_TO_METER); err != nil {
+			log.Print(err)
+			return self
+		}
+
 		pipe := self.pipe
 		if entry.instMeter != 0 {
 			if meter := pipe.getMeter(entry.instMeter); meter != nil {
@@ -1093,13 +1007,18 @@ func (self *flowTableWork) Map() Reducable {
 			}
 		}
 
+		if err := instExp(INST_ORDER_METER_TO_APPLY); err != nil {
+			log.Print(err)
+			return self
+		}
+
 		for _, act := range entry.instApply {
 			if pout, gout, err := act.process(self.data); err != nil {
 				log.Print(err)
 			} else {
 				if pout != nil {
 					pout.tableId = self.tableId
-					if priority == 0 && len(entry.fields) == 0 {
+					if priority == 0 && entry.fields.isEmpty() {
 						pout.tableMiss = true
 					}
 					self.outputs = append(self.outputs, pout)
@@ -1112,23 +1031,50 @@ func (self *flowTableWork) Map() Reducable {
 				return self
 			}
 		}
+
+		if err := instExp(INST_ORDER_APPLY_TO_CLEAR); err != nil {
+			log.Print(err)
+			return self
+		}
+
 		if entry.instClear {
-			self.data.actionSet = make(map[uint16]action)
+			self.data.actionSet.Clear()
 		}
-		if entry.instWrite != nil {
-			for k, v := range entry.instWrite {
-				self.data.actionSet[k] = v
-			}
+
+		if err := instExp(INST_ORDER_CLEAR_TO_WRITE); err != nil {
+			log.Print(err)
+			return self
 		}
+
+		if entry.instWrite.Len() != 0 {
+			self.data.actionSet.Write(entry.instWrite)
+		}
+
+		if err := instExp(INST_ORDER_WRITE_TO_META); err != nil {
+			log.Print(err)
+			return self
+		}
+
 		if entry.instMetadata != nil {
 			self.data.metadata = entry.instMetadata.apply(self.data.metadata)
 		}
+
+		if err := instExp(INST_ORDER_META_TO_GOTO); err != nil {
+			log.Print(err)
+			return self
+		}
+
 		if entry.instGoto != 0 {
 			self.nextTable = entry.instGoto
 		} else {
 			pouts, gouts := actionSet(self.data.actionSet).process(self.data)
 			self.outputs = append(self.outputs, pouts...)
 			groups = append(groups, gouts...)
+		}
+
+		if err := instExp(INST_ORDER_GOTO_TO_LAST); err != nil {
+			log.Print(err)
+			return self
 		}
 	}
 	// process groups if any

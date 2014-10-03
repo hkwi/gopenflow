@@ -1,7 +1,6 @@
 package ofp4
 
 import (
-	"encoding"
 	"encoding/binary"
 )
 
@@ -19,44 +18,84 @@ func (obj actionList) MarshalBinary() ([]byte, error) {
 	return data, nil
 }
 
-func (obj *actionList) UnmarshalBinary(data []byte) (err error) {
+func (obj *actionList) UnmarshalBinary(data []byte) error {
 	var actions []Action
-	for cur := 0; cur < len(data); {
+	for cur := 0; cur+4 <= len(data); {
 		atype := binary.BigEndian.Uint16(data[cur : 2+cur])
 		alen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var action Action
+		buf := data[cur : cur+alen]
+
 		switch atype {
 		default:
-			return Error{OFPET_BAD_ACTION, OFPBAC_BAD_TYPE, nil}
+			return Error{
+				Type: OFPET_BAD_ACTION,
+				Code: OFPBAC_BAD_TYPE,
+			}
 		case OFPAT_COPY_TTL_OUT, OFPAT_COPY_TTL_IN, OFPAT_DEC_MPLS_TTL, OFPAT_POP_VLAN, OFPAT_DEC_NW_TTL, OFPAT_POP_PBB:
-			action = new(ActionGeneric)
+			var action ActionGeneric
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_OUTPUT:
-			action = new(ActionOutput)
+			var action ActionOutput
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_SET_MPLS_TTL:
-			action = new(ActionMplsTtl)
+			var action ActionMplsTtl
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_PUSH_VLAN, OFPAT_PUSH_MPLS, OFPAT_PUSH_PBB:
-			action = new(ActionPush)
+			var action ActionPush
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_POP_MPLS:
-			action = new(ActionPopMpls)
+			var action ActionPopMpls
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_SET_QUEUE:
-			action = new(ActionSetQueue)
+			var action ActionSetQueue
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_GROUP:
-			action = new(ActionGroup)
+			var action ActionGroup
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_SET_NW_TTL:
-			action = new(ActionNwTtl)
+			var action ActionNwTtl
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_SET_FIELD:
-			action = new(ActionSetField)
+			var action ActionSetField
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_EXPERIMENTER:
-			action = new(ActionExperimenter)
+			var action ActionExperimenter
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		}
-		if err = action.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+alen]); err != nil {
-			return
-		}
-		actions = append(actions, action)
 		cur += alen
 	}
 	*obj = actionList(actions)
-	return
+	return nil
 }
 
 type actionIdList []Action
@@ -75,10 +114,11 @@ func (obj actionIdList) MarshalBinary() ([]byte, error) {
 
 func (obj *actionIdList) UnmarshalBinary(data []byte) error {
 	var actions []Action
-	for cur := 0; cur < len(data); {
+	for cur := 0; cur+4 < len(data); {
 		atype := binary.BigEndian.Uint16(data[cur : 2+cur])
 		alen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var action Action
+		buf := data[cur : cur+alen]
+
 		switch atype {
 		default:
 			return Error{OFPET_BAD_ACTION, OFPBAC_BAD_TYPE, nil}
@@ -98,14 +138,18 @@ func (obj *actionIdList) UnmarshalBinary(data []byte) error {
 			OFPAT_SET_FIELD,
 			OFPAT_PUSH_PBB,
 			OFPAT_POP_PBB:
-			action = new(ActionGeneric)
+			var action ActionGeneric
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		case OFPAT_EXPERIMENTER:
-			action = new(ActionExperimenter)
+			var action ActionExperimenter
+			if err := action.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			actions = append(actions, action)
 		}
-		if err := action.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+alen]); err != nil {
-			return err
-		}
-		actions = append(actions, action)
 		cur += alen
 	}
 	*obj = actionIdList(actions)
@@ -278,7 +322,7 @@ func (obj *ActionSetField) UnmarshalBinary(data []byte) (err error) {
 
 type ActionExperimenter struct {
 	Experimenter uint32
-	ExpType      uint32
+	ExpType      uint32 // expected in action set identification key
 	Data         []byte
 }
 

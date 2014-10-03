@@ -16,25 +16,44 @@ func (obj *tableFeaturePropertyList) UnmarshalBinary(data []byte) error {
 	for cur := 0; cur < len(data); {
 		pType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		pLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var property encoding.BinaryMarshaler
+		buf := data[cur : cur+pLen]
 		switch pType {
 		default:
-			return Error{OFPET_TABLE_FEATURES_FAILED, OFPTFFC_BAD_TYPE, nil}
+			return Error{
+				Type: OFPET_TABLE_FEATURES_FAILED,
+				Code: OFPTFFC_BAD_TYPE,
+			}
 		case OFPTFPT_INSTRUCTIONS, OFPTFPT_INSTRUCTIONS_MISS:
-			property = new(TableFeaturePropInstructions)
+			var property TableFeaturePropInstructions
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		case OFPTFPT_NEXT_TABLES, OFPTFPT_NEXT_TABLES_MISS:
-			property = new(TableFeaturePropNextTables)
+			var property TableFeaturePropNextTables
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		case OFPTFPT_WRITE_ACTIONS, OFPTFPT_WRITE_ACTIONS_MISS, OFPTFPT_APPLY_ACTIONS, OFPTFPT_APPLY_ACTIONS_MISS:
-			property = new(TableFeaturePropActions)
+			var property TableFeaturePropActions
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		case OFPTFPT_MATCH, OFPTFPT_WILDCARDS, OFPTFPT_WRITE_SETFIELD, OFPTFPT_WRITE_SETFIELD_MISS:
-			property = new(TableFeaturePropOxm)
+			var property TableFeaturePropOxm
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		case OFPTFPT_EXPERIMENTER, OFPTFPT_EXPERIMENTER_MISS:
-			property = new(TableFeaturePropExperimenter)
+			var property TableFeaturePropExperimenter
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		}
-		if err := property.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+pLen]); err != nil {
-			return err
-		}
-		properties = append(properties, property)
 		cur += pLen
 	}
 	*obj = tableFeaturePropertyList(properties)
@@ -124,7 +143,7 @@ func (obj *TableFeaturePropActions) UnmarshalBinary(data []byte) error {
 
 type TableFeaturePropOxm struct {
 	Type   uint16
-	OxmIds []MatchType
+	OxmIds []uint32
 }
 
 func (obj TableFeaturePropOxm) MarshalBinary() ([]byte, error) {
@@ -141,9 +160,9 @@ func (obj TableFeaturePropOxm) MarshalBinary() ([]byte, error) {
 func (obj *TableFeaturePropOxm) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	length := int(binary.BigEndian.Uint16(data[2:4]))
-	obj.OxmIds = make([]MatchType, (length-4)/4)
+	obj.OxmIds = make([]uint32, (length-4)/4)
 	for i, _ := range obj.OxmIds {
-		obj.OxmIds[i] = MatchType(binary.BigEndian.Uint32(data[4+4*i : 8+4*i]))
+		obj.OxmIds[i] = OxmHeader(binary.BigEndian.Uint32(data[4+4*i : 8+4*i])).Type()
 	}
 	return nil
 }

@@ -185,7 +185,7 @@ type bandDscpRemark struct {
 }
 
 func (self bandDscpRemark) remark(data *frame) error {
-	if v, err := data.getValue(ofp4.OFPXMT_OFB_IP_DSCP); err != nil {
+	if v, err := data.getValue(ofp4.OXM_OF_IP_DSCP); err != nil {
 		return nil
 	} else {
 		phb := uint8(v[0]) >> 3
@@ -195,8 +195,8 @@ func (self bandDscpRemark) remark(data *frame) error {
 			if prec > 0x03 {
 				prec = 0x03
 			}
-			if err := data.setValue(match{
-				Type:  ofp4.OFPXMT_OFB_IP_DSCP,
+			if err := data.setValue(oxmBasic{
+				Type:  ofp4.OXM_OF_IP_DSCP,
 				Value: []byte{byte(phb<<3 | prec<<1)},
 				Mask:  []byte{0xff},
 			}); err != nil {
@@ -219,14 +219,14 @@ func newMeter(msg ofp4.MeterMod) *meter {
 	for _, bi := range msg.Bands {
 		var b band
 		switch msgBand := bi.(type) {
-		case *ofp4.MeterBandDrop:
+		case ofp4.MeterBandDrop:
 			b = &bandDrop{
 				bandCommon: bandCommon{
 					rate:      msgBand.Rate,
 					burstSize: msgBand.BurstSize,
 				},
 			}
-		case *ofp4.MeterBandDscpRemark:
+		case ofp4.MeterBandDscpRemark:
 			b = &bandDscpRemark{
 				bandCommon: bandCommon{
 					rate:      msgBand.Rate,
@@ -234,7 +234,7 @@ func newMeter(msg ofp4.MeterMod) *meter {
 				},
 				precLevel: msgBand.PrecLevel,
 			}
-		case *ofp4.MeterBandExperimenter:
+		case ofp4.MeterBandExperimenter:
 			b = &bandExperimenter{
 				bandCommon: bandCommon{
 					rate:      msgBand.Rate,

@@ -1,10 +1,33 @@
 package ofp4sw
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
+	"sort"
 	"sync"
 )
+
+func IntMin(x ...int) int {
+	sort.Ints(x)
+	return x[0]
+}
+
+func IntMax(x ...int) int {
+	sort.Ints(x)
+	return x[len(x)-1]
+}
+
+// maskBytes returns masked byte array. 0 in mask means don't care.
+// mask may be nil. short mask will be applied from head.
+func maskBytes(value, mask []byte) []byte {
+	ret := make([]byte, IntMax(len(value), len(mask)))
+	copy(ret, value)
+	for i, v := range mask {
+		ret[i] = ret[i] & v
+	}
+	return ret
+}
 
 type MapReducable interface {
 	Map() Reducable
@@ -42,6 +65,19 @@ func MapReduce(works chan MapReducable, workers int) {
 		r := <-serial
 		r.Reduce()
 	}
+}
+
+type BytesSet [][]byte
+
+func (self *BytesSet) Add(seq []byte) {
+	base := [][]byte(*self)
+	for _, v := range base {
+		if bytes.Equal(v, seq) {
+			return
+		}
+	}
+	base = append(base, seq)
+	*self = base
 }
 
 type IoControlChannel struct {

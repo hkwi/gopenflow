@@ -1,7 +1,6 @@
 package ofp4
 
 import (
-	"encoding"
 	"encoding/binary"
 )
 
@@ -24,21 +23,33 @@ func (obj *bandList) UnmarshalBinary(data []byte) error {
 	for cur := 0; cur < len(data); {
 		bType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		bLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var band Band
+		buf := data[cur : cur+bLen]
+
 		switch bType {
 		default:
-			return Error{OFPET_METER_MOD_FAILED, OFPMMFC_BAD_BAND, nil}
+			return Error{
+				Type: OFPET_METER_MOD_FAILED,
+				Code: OFPMMFC_BAD_BAND,
+			}
 		case OFPMBT_DROP:
-			band = new(MeterBandDrop)
+			var band MeterBandDrop
+			if err := band.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			bands = append(bands, band)
 		case OFPMBT_DSCP_REMARK:
-			band = new(MeterBandDscpRemark)
+			var band MeterBandDscpRemark
+			if err := band.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			bands = append(bands, band)
 		case OFPMBT_EXPERIMENTER:
-			band = new(MeterBandExperimenter)
+			var band MeterBandExperimenter
+			if err := band.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			bands = append(bands, band)
 		}
-		if err := band.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+bLen]); err != nil {
-			return err
-		}
-		bands = append(bands, band)
 		cur += bLen
 	}
 	*obj = bandList(bands)

@@ -102,6 +102,9 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 				if portInt.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
 					continue
 				}
+				portInt.stats.RxPackets++
+				portInt.stats.RxBytes += uint64(len(pkt))
+
 				pipe.datapath <- &flowTableWork{
 					data: &frame{
 						serialized: pkt,

@@ -3,7 +3,6 @@ package ofp4
 import (
 	"encoding"
 	"encoding/binary"
-	"errors"
 )
 
 type queueProperties []encoding.BinaryMarshaler
@@ -17,21 +16,32 @@ func (self *queueProperties) UnmarshalBinary(data []byte) error {
 	for cur := 0; cur < len(data); {
 		pType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		pLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var property encoding.BinaryMarshaler
+		buf := data[cur : cur+pLen]
 		switch pType {
 		default:
-			return errors.New("Unknown OFPIT_")
+			return Error{
+				Type: OFPET_QUEUE_OP_FAILED,
+				Code: OFPQOFC_EPERM,
+			}
 		case OFPQT_MIN_RATE:
-			property = new(QueuePropMinRate)
+			var property QueuePropMinRate
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		case OFPQT_MAX_RATE:
-			property = new(QueuePropMaxRate)
+			var property QueuePropMaxRate
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		case OFPQT_EXPERIMENTER:
-			property = new(QueuePropExperimenter)
+			var property QueuePropExperimenter
+			if err := property.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			properties = append(properties, property)
 		}
-		if err := property.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+pLen]); err != nil {
-			return err
-		}
-		properties = append(properties, property)
 		cur += pLen
 	}
 	*self = properties

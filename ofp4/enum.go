@@ -159,7 +159,7 @@ const (
 	OFPXMT_OFB_IPV6_EXTHDR
 )
 
-type MatchType uint32
+type OxmHeader uint32
 
 const (
 	OXM_CLASS_SHIFT   = 16
@@ -172,58 +172,42 @@ const (
 	OXM_LENGTH_MASK   = 0x000000FF
 )
 
-func (self MatchType) Type() uint32 {
+func (self OxmHeader) Type() uint32 {
 	return uint32(self & OXM_TYPE_MASK)
 }
 
-func (self MatchType) Class() uint16 {
+func (self OxmHeader) Class() uint16 {
 	return uint16((self & OXM_CLASS_MASK) >> OXM_CLASS_SHIFT)
 }
 
-func (self MatchType) Field() uint8 {
+func (self OxmHeader) Field() uint8 {
 	return uint8((self & OXM_FIELD_MASK) >> OXM_FIELD_SHIFT)
 }
 
-func (self MatchType) HasMask() bool {
+func (self OxmHeader) HasMask() bool {
 	return (self & OXM_HASMASK_MASK) != 0
 }
 
-func (self MatchType) Length() int {
+func (self OxmHeader) Length() int {
 	return int(self & OXM_LENGTH_MASK)
 }
 
-// WillMask returns the MatchType will have mask by specification.
-func (self MatchType) WillMask() bool {
-	switch self & OXM_TYPE_MASK {
-	case OXM_OF_METADATA,
-		OXM_OF_ETH_DST,
-		OXM_OF_ETH_SRC,
-		OXM_OF_VLAN_VID,
-		OXM_OF_IPV4_SRC,
-		OXM_OF_IPV4_DST,
-		OXM_OF_ARP_SPA,
-		OXM_OF_ARP_TPA,
-		OXM_OF_ARP_SHA,
-		OXM_OF_ARP_THA,
-		OXM_OF_IPV6_SRC,
-		OXM_OF_IPV6_DST,
-		OXM_OF_IPV6_FLABEL,
-		OXM_OF_PBB_ISID,
-		OXM_OF_TUNNEL_ID,
-		OXM_OF_IPV6_EXTHDR:
-		return true
-	}
-	return false
+func (self *OxmHeader) SetLength(length int) {
+	*self = (*self &^ OXM_LENGTH_MASK) | OxmHeader(length&OXM_LENGTH_MASK)
 }
 
-func (self MatchType) Build(length int) uint32 {
-	ret := uint32(self&OXM_TYPE_MASK) | uint32(length)
-	if self.WillMask() {
-		ret |= OXM_HASMASK_MASK
+func (self *OxmHeader) SetMask(mask bool) {
+	if mask {
+		*self |= OXM_HASMASK_MASK
+	} else {
+		*self &^= OXM_HASMASK_MASK
 	}
-	return ret
 }
 
+/*
+OXM_OF_ constnts are defined as combinations of OFPXMC_OPENFLOW_BASIC and their field.
+Following constants does not have oxm_hasmask and length
+*/
 const (
 	OXM_OF_IN_PORT        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IN_PORT<<OXM_FIELD_SHIFT
 	OXM_OF_IN_PHY_PORT    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IN_PHY_PORT<<OXM_FIELD_SHIFT
@@ -266,6 +250,93 @@ const (
 	OXM_OF_TUNNEL_ID      = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_TUNNEL_ID<<OXM_FIELD_SHIFT
 	OXM_OF_IPV6_EXTHDR    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_EXTHDR<<OXM_FIELD_SHIFT
 )
+
+func OxmOfDefs(oxm uint32) (length int, mayMask bool) {
+	switch OxmHeader(oxm).Type() {
+	default:
+		return 0, false
+	case OXM_OF_IN_PORT:
+		return 4, false
+	case OXM_OF_IN_PHY_PORT:
+		return 4, false
+	case OXM_OF_METADATA:
+		return 8, true
+	case OXM_OF_ETH_DST:
+		return 6, true
+	case OXM_OF_ETH_SRC:
+		return 6, true
+	case OXM_OF_ETH_TYPE:
+		return 2, false
+	case OXM_OF_VLAN_VID:
+		return 2, true
+	case OXM_OF_VLAN_PCP:
+		return 1, false
+	case OXM_OF_IP_DSCP:
+		return 1, false
+	case OXM_OF_IP_ECN:
+		return 1, false
+	case OXM_OF_IP_PROTO:
+		return 1, false
+	case OXM_OF_IPV4_SRC:
+		return 4, true
+	case OXM_OF_IPV4_DST:
+		return 4, true
+	case OXM_OF_TCP_SRC:
+		return 2, false
+	case OXM_OF_TCP_DST:
+		return 2, false
+	case OXM_OF_UDP_SRC:
+		return 2, false
+	case OXM_OF_UDP_DST:
+		return 2, false
+	case OXM_OF_SCTP_SRC:
+		return 2, false
+	case OXM_OF_SCTP_DST:
+		return 2, false
+	case OXM_OF_ICMPV4_TYPE:
+		return 1, false
+	case OXM_OF_ICMPV4_CODE:
+		return 1, false
+	case OXM_OF_ARP_OP:
+		return 2, false
+	case OXM_OF_ARP_SPA:
+		return 4, true
+	case OXM_OF_ARP_TPA:
+		return 4, true
+	case OXM_OF_ARP_SHA:
+		return 6, true
+	case OXM_OF_ARP_THA:
+		return 6, true
+	case OXM_OF_IPV6_SRC:
+		return 16, true
+	case OXM_OF_IPV6_DST:
+		return 16, true
+	case OXM_OF_IPV6_FLABEL:
+		return 4, true
+	case OXM_OF_ICMPV6_TYPE:
+		return 1, false
+	case OXM_OF_ICMPV6_CODE:
+		return 1, false
+	case OXM_OF_IPV6_ND_TARGET:
+		return 16, false
+	case OXM_OF_IPV6_ND_SLL:
+		return 6, false
+	case OXM_OF_IPV6_ND_TLL:
+		return 6, false
+	case OXM_OF_MPLS_LABEL:
+		return 4, false
+	case OXM_OF_MPLS_TC:
+		return 1, false
+	case OXM_OF_MPLS_BOS:
+		return 1, false
+	case OXM_OF_PBB_ISID:
+		return 3, true
+	case OXM_OF_TUNNEL_ID:
+		return 8, true
+	case OXM_OF_IPV6_EXTHDR:
+		return 2, true
+	}
+}
 
 const (
 	OFPVID_PRESENT = 0x1000

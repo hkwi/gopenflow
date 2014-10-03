@@ -222,7 +222,7 @@ func (self *controller) addChannel(channel ControlChannel) error {
 			case ofp4.OFPT_TABLE_MOD:
 				worker <- &ofmTableMod{reply}
 			case ofp4.OFPT_MULTIPART_REQUEST:
-				req := ofm.Body.(*ofp4.MultipartRequest)
+				req := ofm.Body.(ofp4.MultipartRequest)
 				multipartCollect[ofm.Xid] = append(multipartCollect[ofm.Xid], req.Body)
 				if req.Flags&ofp4.OFPMPF_REQ_MORE == 0 {
 					mreply := ofmMulti{reply, multipartCollect[ofm.Xid], nil}
@@ -333,7 +333,7 @@ func (self *channelInternal) hello() error {
 				Xid:     self.newXid(),
 			},
 			Body: ofp4.Array{
-				&ofp4.HelloElementVersionbitmap{
+				ofp4.HelloElementVersionbitmap{
 					Bitmaps: []uint32{uint32(1 << 4)},
 				},
 			},
@@ -375,7 +375,7 @@ func (self *channelInternal) hello() error {
 			satisfied = true
 		}
 		if !satisfied {
-			err := &ofp4.Error{
+			err := ofp4.Error{
 				Type: ofp4.OFPET_HELLO_FAILED,
 				Code: ofp4.OFPHFC_INCOMPATIBLE,
 			}
@@ -420,44 +420,44 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 	if int(pout.maxLen) < totalLen {
 		eth = eth[:pout.maxLen]
 	}
-	assocMatch := []match{}
+	assocMatch := match{}
 	{
-		m := match{
+		m := oxmBasic{
 			Type:  uint32(ofp4.OXM_OF_IN_PORT),
 			Mask:  []byte{255, 255, 255, 255},
 			Value: []byte{0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint32(m.Value, data.inPort)
-		assocMatch = append(assocMatch, m)
+		assocMatch.basic = append(assocMatch.basic, m)
 	}
 	if data.phyInPort != 0 && data.phyInPort != data.inPort {
-		m := match{
+		m := oxmBasic{
 			Type:  uint32(ofp4.OXM_OF_IN_PHY_PORT),
 			Mask:  []byte{255, 255, 255, 255},
 			Value: []byte{0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint32(m.Value, data.phyInPort)
-		assocMatch = append(assocMatch, m)
+		assocMatch.basic = append(assocMatch.basic, m)
 	}
 	if data.tunnelId != 0 {
-		m := match{
+		m := oxmBasic{
 			Type:  uint32(ofp4.OXM_OF_TUNNEL_ID),
 			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
 			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint64(m.Value, data.tunnelId)
-		assocMatch = append(assocMatch, m)
+		assocMatch.basic = append(assocMatch.basic, m)
 	}
 	if data.metadata != 0 {
-		m := match{
+		m := oxmBasic{
 			Type:  uint32(ofp4.OXM_OF_METADATA),
 			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
 			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
 		}
 		binary.BigEndian.PutUint64(m.Value, data.metadata)
-		assocMatch = append(assocMatch, m)
+		assocMatch.basic = append(assocMatch.basic, m)
 	}
-	fields, e2 := matchList(assocMatch).MarshalBinary()
+	fields, e2 := assocMatch.MarshalBinary()
 	if e2 != nil {
 		return e2
 	}
@@ -471,8 +471,8 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 			BufferId: buffer_id,
 			TotalLen: uint16(totalLen),
 			Match: ofp4.Match{
-				Type:      ofp4.OFPMT_OXM,
-				OxmFields: fields,
+				Type: ofp4.OFPMT_OXM,
+				Data: fields,
 			},
 			Reason:  pout.reason,
 			TableId: pout.tableId,
@@ -538,7 +538,7 @@ func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *fl
 	if self.flowRemovedMask[0]&(1<<reason) != 0 {
 		return nil
 	}
-	fields, e2 := matchList(flow.fields).MarshalBinary()
+	fields, e2 := flow.fields.MarshalBinary()
 	if e2 != nil {
 		return e2
 	}
@@ -562,8 +562,8 @@ func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *fl
 			PacketCount:  flow.packetCount,
 			ByteCount:    flow.byteCount,
 			Match: ofp4.Match{
-				Type:      ofp4.OFPMT_OXM,
-				OxmFields: fields,
+				Type: ofp4.OFPMT_OXM,
+				Data: fields,
 			},
 		},
 	}
@@ -591,7 +591,7 @@ func (self *ofmReply) createError(ofpet uint16, code uint16) {
 				Type:    ofp4.OFPT_ERROR,
 				Xid:     self.req.Xid,
 			},
-			Body: &ofp4.Error{
+			Body: ofp4.Error{
 				Type: ofpet,
 				Code: code,
 				Data: buf,
@@ -654,7 +654,7 @@ func (self *ofmFeaturesRequest) Map() Reducable {
 			Type:    ofp4.OFPT_FEATURES_REPLY,
 			Xid:     self.req.Xid,
 		},
-		Body: &ofp4.SwitchFeatures{
+		Body: ofp4.SwitchFeatures{
 			DatapathId:   self.ctrl.pipe.DatapathId,
 			NBuffers:     0x7fffffff,
 			NTables:      0xff,
@@ -680,7 +680,7 @@ func (self *ofmGetConfigRequest) Map() Reducable {
 			Type:    ofp4.OFPT_GET_CONFIG_REPLY,
 			Xid:     self.req.Xid,
 		},
-		Body: &ofp4.SwitchConfig{
+		Body: ofp4.SwitchConfig{
 			Flags:       self.ctrl.pipe.flags, // XXX:
 			MissSendLen: self.ctrl.missSendLen,
 		},
@@ -698,7 +698,7 @@ type ofmSetConfig struct {
 }
 
 func (self ofmSetConfig) Map() Reducable {
-	config := self.req.Body.(*ofp4.SwitchConfig)
+	config := self.req.Body.(ofp4.SwitchConfig)
 	self.ctrl.pipe.flags = config.Flags
 	self.ctrl.missSendLen = config.MissSendLen
 	return self
@@ -710,12 +710,12 @@ type ofmGroupMod struct {
 
 func (self *ofmGroupMod) Map() Reducable {
 	pipe := self.ctrl.pipe
-	req := self.req.Body.(*ofp4.GroupMod)
+	req := self.req.Body.(ofp4.GroupMod)
 
 	switch req.Command {
 	case ofp4.OFPGC_ADD:
-		if err := pipe.addGroup(*req); err != nil {
-			if e, ok := err.(*ofp4.Error); ok {
+		if err := pipe.addGroup(req); err != nil {
+			if e, ok := err.(ofp4.Error); ok {
 				self.createError(e.Type, e.Code)
 			} else {
 				log.Print(err)
@@ -753,7 +753,7 @@ func (self *ofmGroupMod) Map() Reducable {
 			}
 			return nil
 		}(); err != nil {
-			if e, ok := err.(*ofp4.Error); ok {
+			if e, ok := err.(ofp4.Error); ok {
 				self.createError(e.Type, e.Code)
 			} else {
 				log.Print(err)
@@ -769,7 +769,7 @@ type ofmPortMod struct {
 
 func (self *ofmPortMod) Map() Reducable {
 	pipe := self.ctrl.pipe
-	req := self.req.Body.(*ofp4.PortMod)
+	req := self.req.Body.(ofp4.PortMod)
 
 	for _, p := range pipe.getPorts(req.PortNo) {
 		switch port := p.(type) {
@@ -790,7 +790,7 @@ type ofmTableMod struct {
 }
 
 func (self ofmTableMod) Map() Reducable {
-	req := self.req.Body.(*ofp4.TableMod)
+	req := self.req.Body.(ofp4.TableMod)
 	for _, table := range self.ctrl.pipe.getFlowTables(req.TableId) {
 		func() {
 			table.lock.Lock()
@@ -834,7 +834,7 @@ type ofmPacketOut struct {
 }
 
 func (self *ofmPacketOut) Map() Reducable {
-	req := self.req.Body.(*ofp4.PacketOut)
+	req := self.req.Body.(ofp4.PacketOut)
 
 	var eth []byte
 	if req.BufferId == ofp4.OFP_NO_BUFFER {
@@ -888,20 +888,20 @@ type ofmFlowMod struct {
 }
 
 func (self *ofmFlowMod) Map() Reducable {
-	req := self.req.Body.(*ofp4.FlowMod)
+	req := self.req.Body.(ofp4.FlowMod)
 
 	switch req.Command {
 	case ofp4.OFPFC_ADD:
-		if err := self.ctrl.pipe.addFlowEntry(*req); err != nil {
-			if e, ok := err.(*ofp4.Error); ok {
+		if err := self.ctrl.pipe.addFlowEntry(req); err != nil {
+			if e, ok := err.(ofp4.Error); ok {
 				self.createError(e.Type, e.Code)
 			} else {
 				log.Print(err)
 			}
 		}
 	case ofp4.OFPFC_MODIFY, ofp4.OFPFC_MODIFY_STRICT:
-		var reqMatch matchList
-		if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
+		var reqMatch match
+		if err := reqMatch.UnmarshalBinary(req.Match.Data); err != nil {
 			log.Print(err)
 		} else if req.TableId > ofp4.OFPTT_MAX {
 			self.createError(ofp4.OFPET_FLOW_MOD_FAILED, ofp4.OFPFMFC_BAD_TABLE_ID)
@@ -912,7 +912,7 @@ func (self *ofmFlowMod) Map() Reducable {
 				tableId:    req.TableId,
 				outPort:    ofp4.OFPP_ANY,
 				outGroup:   ofp4.OFPG_ANY,
-				match:      []match(reqMatch),
+				match:      reqMatch,
 			}
 			if req.Command == ofp4.OFPFC_MODIFY_STRICT {
 				filter.priority = req.Priority
@@ -930,7 +930,7 @@ func (self *ofmFlowMod) Map() Reducable {
 					}
 					return flow.importInstructions(req.Instructions)
 				}(); err != nil {
-					if e, ok := err.(*ofp4.Error); ok {
+					if e, ok := err.(ofp4.Error); ok {
 						self.createError(e.Type, e.Code)
 					} else {
 						log.Print(err)
@@ -939,8 +939,8 @@ func (self *ofmFlowMod) Map() Reducable {
 			}
 		}
 	case ofp4.OFPFC_DELETE, ofp4.OFPFC_DELETE_STRICT:
-		var reqMatch matchList
-		if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
+		var reqMatch match
+		if err := reqMatch.UnmarshalBinary(req.Match.Data); err != nil {
 			log.Print(err)
 		} else {
 			filter := flowFilter{
@@ -950,7 +950,7 @@ func (self *ofmFlowMod) Map() Reducable {
 				tableId:      req.TableId,
 				outPort:      req.OutPort,
 				outGroup:     req.OutGroup,
-				match:        []match(reqMatch),
+				match:        reqMatch,
 			}
 			if req.Command == ofp4.OFPFC_DELETE_STRICT {
 				filter.priority = req.Priority
@@ -995,7 +995,7 @@ type ofmMulti struct {
 }
 
 func (self *ofmMulti) Reduce() {
-	req := self.req.Body.(*ofp4.MultipartRequest)
+	req := self.req.Body.(ofp4.MultipartRequest)
 	payloadMaxLength := math.MaxUint16 - 16
 
 	var payload []encoding.BinaryMarshaler
@@ -1014,7 +1014,7 @@ func (self *ofmMulti) Reduce() {
 					Type:    ofp4.OFPT_MULTIPART_REPLY,
 					Xid:     self.req.Xid,
 				},
-				Body: &ofp4.MultipartReply{
+				Body: ofp4.MultipartReply{
 					Type:  req.Type,
 					Flags: ofp4.OFPMPF_REPLY_MORE,
 					Body:  ofp4.Array(payload),
@@ -1037,7 +1037,7 @@ func (self *ofmMulti) Reduce() {
 			Type:    ofp4.OFPT_MULTIPART_REPLY,
 			Xid:     self.req.Xid,
 		},
-		Body: &ofp4.MultipartReply{
+		Body: ofp4.MultipartReply{
 			Type:  req.Type,
 			Flags: 0,
 			Body:  ofp4.Array(payload),
@@ -1069,9 +1069,9 @@ func (self *ofmMpFlow) Map() Reducable {
 
 	var flows []flowStats
 	for _, req := range self.reqs {
-		mreq := req.(*ofp4.FlowStatsRequest)
-		var reqMatch matchList
-		if e := reqMatch.UnmarshalBinary(mreq.Match.OxmFields); e != nil {
+		mreq := req.(ofp4.FlowStatsRequest)
+		var reqMatch match
+		if e := reqMatch.UnmarshalBinary(mreq.Match.Data); e != nil {
 			log.Print(e)
 		} else {
 			filter := flowFilter{
@@ -1080,7 +1080,7 @@ func (self *ofmMpFlow) Map() Reducable {
 				outGroup:   mreq.OutGroup,
 				cookie:     mreq.Cookie,
 				cookieMask: mreq.CookieMask,
-				match:      []match(reqMatch),
+				match:      reqMatch,
 			}
 			for _, f := range pipe.filterFlows(filter) {
 				hit := false
@@ -1098,10 +1098,10 @@ func (self *ofmMpFlow) Map() Reducable {
 	}
 	for _, f := range flows {
 		duration := time.Now().Sub(f.flow.created)
-		if buf, e := matchList(f.flow.fields).MarshalBinary(); e != nil {
+		if buf, e := f.flow.fields.MarshalBinary(); e != nil {
 			log.Print(e)
 		} else {
-			chunk := &ofp4.FlowStats{
+			chunk := ofp4.FlowStats{
 				TableId:      f.tableId,
 				DurationSec:  uint32(duration.Seconds()),
 				DurationNsec: uint32(duration.Nanoseconds() % int64(time.Second)),
@@ -1113,8 +1113,8 @@ func (self *ofmMpFlow) Map() Reducable {
 				PacketCount:  f.flow.packetCount,
 				ByteCount:    f.flow.byteCount,
 				Match: ofp4.Match{
-					Type:      ofp4.OFPMT_OXM,
-					OxmFields: buf,
+					Type: ofp4.OFPMT_OXM,
+					Data: buf,
 				},
 				Instructions: f.flow.exportInstructions(),
 			}
@@ -1133,7 +1133,7 @@ func (self *ofmMpTable) Map() Reducable {
 		chunk := func() encoding.BinaryMarshaler {
 			table.lock.RLock()
 			defer table.lock.RUnlock()
-			return &ofp4.TableStats{
+			return ofp4.TableStats{
 				TableId:      tableId,
 				ActiveCount:  table.activeCount,
 				LookupCount:  table.lookupCount,
@@ -1150,11 +1150,11 @@ type ofmMpAggregate struct {
 }
 
 func (self *ofmMpAggregate) Map() Reducable {
-	mpreq := self.req.Body.(*ofp4.MultipartRequest)
-	mreq := mpreq.Body.(*ofp4.AggregateStatsRequest)
+	mpreq := self.req.Body.(ofp4.MultipartRequest)
+	mreq := mpreq.Body.(ofp4.AggregateStatsRequest)
 
-	var reqMatch matchList
-	if err := reqMatch.UnmarshalBinary(mreq.Match.OxmFields); err != nil {
+	var reqMatch match
+	if err := reqMatch.UnmarshalBinary(mreq.Match.Data); err != nil {
 		log.Print(err)
 	} else {
 		filter := flowFilter{
@@ -1163,7 +1163,7 @@ func (self *ofmMpAggregate) Map() Reducable {
 			outGroup:   mreq.OutGroup,
 			cookie:     mreq.Cookie,
 			cookieMask: mreq.CookieMask,
-			match:      []match(reqMatch),
+			match:      reqMatch,
 		}
 		var chunk ofp4.AggregateStatsReply
 		for _, f := range self.ctrl.pipe.filterFlows(filter) {
@@ -1171,7 +1171,7 @@ func (self *ofmMpAggregate) Map() Reducable {
 			chunk.ByteCount += f.flow.byteCount
 			chunk.FlowCount++
 		}
-		self.chunks = append(self.chunks, &chunk)
+		self.chunks = append(self.chunks, chunk)
 	}
 	return self
 }
@@ -1181,13 +1181,13 @@ type ofmMpPortStats struct {
 }
 
 func (self *ofmMpPortStats) Map() Reducable {
-	mpreq := self.req.Body.(*ofp4.MultipartRequest)
-	for portNo, bport := range self.ctrl.pipe.getPorts(mpreq.Body.(*ofp4.PortStatsRequest).PortNo) {
+	mpreq := self.req.Body.(ofp4.MultipartRequest)
+	for portNo, bport := range self.ctrl.pipe.getPorts(mpreq.Body.(ofp4.PortStatsRequest).PortNo) {
 		switch port := bport.(type) {
 		case *normalPort:
 			pstats := port.Stats()
 			duration := time.Now().Sub(port.created)
-			chunk := &ofp4.PortStats{
+			chunk := ofp4.PortStats{
 				PortNo:       portNo,
 				RxPackets:    pstats.RxPackets,
 				TxPackets:    pstats.TxPackets,
@@ -1238,7 +1238,7 @@ func (self *ofmMpGroupDesc) Map() Reducable {
 				buckets = append(buckets, bucket)
 			}
 		}
-		chunk := &ofp4.GroupDesc{
+		chunk := ofp4.GroupDesc{
 			Type:    g.groupType,
 			GroupId: i,
 			Buckets: buckets,
@@ -1271,7 +1271,7 @@ func (self *ofmMpGroupFeatures) Map() Reducable {
 	actionBits |= 1 << ofp4.OFPAT_PUSH_PBB
 	actionBits |= 1 << ofp4.OFPAT_POP_PBB
 	// OFPAT_EXPERIMENTER overflows
-	chunk := &ofp4.GroupFeatures{
+	chunk := ofp4.GroupFeatures{
 		Types:        1<<ofp4.OFPGT_ALL | 1<<ofp4.OFPGT_SELECT | 1<<ofp4.OFPGT_INDIRECT | 1<<ofp4.OFPGT_FF,
 		Capabilities: ofp4.OFPGFC_SELECT_WEIGHT | ofp4.OFPGFC_SELECT_LIVENESS | ofp4.OFPGFC_CHAINING | ofp4.OFPGFC_CHAINING_CHECKS,
 		MaxGroups:    [...]uint32{ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX},
@@ -1297,7 +1297,7 @@ type ofmMpMeter struct {
 func (self *ofmMpMeter) Map() Reducable {
 	pipe := self.ctrl.pipe
 
-	meterId := self.req.Body.(*ofp4.MeterMultipartRequest).MeterId
+	meterId := self.req.Body.(ofp4.MeterMultipartRequest).MeterId
 	for meterId, meter := range pipe.getMeters(meterId) {
 		duration := time.Now().Sub(meter.created)
 		var bands []encoding.BinaryMarshaler
@@ -1344,8 +1344,8 @@ type ofmMpMeterConfig struct {
 }
 
 func (self *ofmMpMeterConfig) Map() Reducable {
-	mpreq := self.req.Body.(*ofp4.MultipartRequest)
-	meterId := mpreq.Body.(*ofp4.MeterMultipartRequest).MeterId
+	mpreq := self.req.Body.(ofp4.MultipartRequest)
+	meterId := mpreq.Body.(ofp4.MeterMultipartRequest).MeterId
 	for meterId, meter := range self.ctrl.pipe.getMeters(meterId) {
 		var bands []ofp4.Band
 		for _, bi := range meter.bands {
@@ -1408,7 +1408,7 @@ func (self *ofmMpTableFeatures) Map() Reducable {
 				Config:        f.config,
 				MaxEntries:    f.maxEntries,
 			}
-			props := map[uint16][]uint32{
+			props := map[uint16][]oxmKey{
 				ofp4.OFPTFPT_MATCH:               f.match,
 				ofp4.OFPTFPT_WILDCARDS:           f.wildcards,
 				ofp4.OFPTFPT_WRITE_SETFIELD:      f.hit.writeSetfield,
@@ -1417,11 +1417,28 @@ func (self *ofmMpTableFeatures) Map() Reducable {
 				ofp4.OFPTFPT_APPLY_SETFIELD_MISS: f.miss.applySetfield,
 			}
 			for pType, oxmTypes := range props {
-				if len(oxmTypes) > 0 {
-					ids := make([]ofp4.MatchType, len(oxmTypes))
-					for i, v := range oxmTypes {
-						ids[i] = ofp4.MatchType(v)
+				var ids []uint32
+				for _, oxmType := range oxmTypes {
+					switch t := oxmType.(type) {
+					case uint32:
+						ids = append(ids, t)
+					case oxmExperimenterKey:
+						if handler, ok := oxmHandlers[t]; ok {
+							base := make([]byte, 8)
+							binary.BigEndian.PutUint32(base, t.Type)
+							binary.BigEndian.PutUint32(base[4:], t.Experimenter)
+							if oxmId, err := handler.OxmId(base); err != nil {
+								log.Print(err)
+							} else {
+								ids = append(ids, binary.BigEndian.Uint32(oxmId))
+								ids = append(ids, binary.BigEndian.Uint32(oxmId[4:]))
+							}
+						} else {
+							log.Print("unknown oxm experimenter key")
+						}
 					}
+				}
+				if len(oxmTypes) > 0 {
 					rf.Properties = append(rf.Properties, ofp4.TableFeaturePropOxm{
 						Type:   pType,
 						OxmIds: ids,
@@ -1444,7 +1461,7 @@ func (self *ofmMpPortDesc) Map() Reducable {
 	for portNo, bport := range self.ctrl.pipe.getPorts(ofp4.OFPP_ANY) {
 		switch port := bport.(type) {
 		case *normalPort:
-			chunk := &ofp4.Port{
+			chunk := ofp4.Port{
 				PortNo: portNo,
 				Name:   port.public.Name(),
 				Config: port.config,
@@ -1543,19 +1560,19 @@ type ofmMeterMod struct {
 func (self *ofmMeterMod) Map() Reducable {
 	pipe := self.ctrl.pipe
 
-	req := self.req.Body.(*ofp4.MeterMod)
+	req := self.req.Body.(ofp4.MeterMod)
 	switch req.Command {
 	case ofp4.OFPMC_ADD:
 		if req.MeterId == 0 || (req.MeterId > ofp4.OFPM_MAX && req.MeterId != ofp4.OFPM_CONTROLLER) {
 			self.createError(ofp4.OFPET_METER_MOD_FAILED, ofp4.OFPMMFC_INVALID_METER)
 		} else {
-			meter := newMeter(*req)
+			meter := newMeter(req)
 			if err := func() error {
 				pipe.lock.Lock()
 				defer pipe.lock.Unlock()
 
 				if _, exists := pipe.meters[req.MeterId]; exists {
-					return &ofp4.Error{
+					return ofp4.Error{
 						Type: ofp4.OFPET_METER_MOD_FAILED,
 						Code: ofp4.OFPMMFC_METER_EXISTS,
 					}
@@ -1564,7 +1581,7 @@ func (self *ofmMeterMod) Map() Reducable {
 				}
 				return nil
 			}(); err != nil {
-				if e, ok := err.(*ofp4.Error); ok {
+				if e, ok := err.(ofp4.Error); ok {
 					self.createError(e.Type, e.Code)
 				} else {
 					log.Print(err)
@@ -1585,7 +1602,7 @@ func (self *ofmMeterMod) Map() Reducable {
 			}
 			return nil
 		}(); err != nil {
-			if e, ok := err.(*ofp4.Error); ok {
+			if e, ok := err.(ofp4.Error); ok {
 				self.createError(e.Type, e.Code)
 			} else {
 				log.Print(err)

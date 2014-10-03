@@ -65,28 +65,56 @@ func (obj MultipartRequest) MarshalBinary() ([]byte, error) {
 func (obj *MultipartRequest) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.Flags = binary.BigEndian.Uint16(data[2:4])
-	var body encoding.BinaryMarshaler
+	buf := data[8:]
+
 	switch obj.Type {
 	default:
-		return Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
+		return Error{
+			Type: OFPET_BAD_REQUEST,
+			Code: OFPBRC_BAD_MULTIPART,
+		}
 	case OFPMP_DESC, OFPMP_TABLE, OFPMP_GROUP_DESC, OFPMP_GROUP_FEATURES, OFPMP_METER_FEATURES, OFPMP_PORT_DESC:
-		body = nil
+		// nil
 	case OFPMP_FLOW:
-		body = new(FlowStatsRequest)
+		var body FlowStatsRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_AGGREGATE:
-		body = new(AggregateStatsRequest)
+		var body AggregateStatsRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_PORT_STATS:
-		body = new(PortStatsRequest)
+		var body PortStatsRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_QUEUE:
-		body = new(QueueStatsRequest)
+		var body QueueStatsRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_GROUP:
-		body = new(GroupStatsRequest)
+		var body GroupStatsRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_METER, OFPMP_METER_CONFIG:
-		body = new(MeterMultipartRequest)
+		var body MeterMultipartRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_TABLE_FEATURES:
 		var features []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
-			entry := new(TableFeatures)
+			var entry TableFeatures
 			length := int(binary.BigEndian.Uint16(data[cur:2]))
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
@@ -96,10 +124,8 @@ func (obj *MultipartRequest) UnmarshalBinary(data []byte) error {
 		}
 		obj.Body = Array(features)
 	case OFPMP_EXPERIMENTER:
-		body = new(ExperimenterMultipart)
-	}
-	if body != nil {
-		if err := body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:]); err != nil {
+		var body ExperimenterMultipart
+		if err := body.UnmarshalBinary(buf); err != nil {
 			return err
 		}
 		obj.Body = body
@@ -167,17 +193,25 @@ func (obj MultipartReply) MarshalBinary() ([]byte, error) {
 func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
 	obj.Flags = binary.BigEndian.Uint16(data[2:4])
-	var body encoding.BinaryMarshaler
+	buf := data[8:]
+
 	switch obj.Type {
 	default:
-		return Error{OFPET_BAD_REQUEST, OFPBRC_BAD_MULTIPART, nil}
+		return Error{
+			Type: OFPET_BAD_REQUEST,
+			Code: OFPBRC_BAD_MULTIPART,
+		}
 	case OFPMP_DESC:
-		body = new(Desc)
+		var body Desc
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_FLOW:
 		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : 2+cur]))
-			entry := new(FlowStats)
+			var entry FlowStats
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
 			}
@@ -186,11 +220,15 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		}
 		obj.Body = Array(array)
 	case OFPMP_AGGREGATE:
-		body = new(AggregateStatsReply)
+		var body AggregateStatsReply
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_TABLE:
 		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/24)
 		for i, _ := range array {
-			entry := new(TableStats)
+			var entry TableStats
 			if err := entry.UnmarshalBinary(data[8+24*i : 32+24*i]); err != nil {
 				return err
 			}
@@ -200,7 +238,7 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 	case OFPMP_PORT_STATS:
 		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/112)
 		for i, _ := range array {
-			entry := new(PortStats)
+			var entry PortStats
 			if err := entry.UnmarshalBinary(data[8+112*i : 120+112*i]); err != nil {
 				return err
 			}
@@ -210,7 +248,7 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 	case OFPMP_QUEUE:
 		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/40)
 		for i, _ := range array {
-			entry := new(QueueStats)
+			var entry QueueStats
 			if err := entry.UnmarshalBinary(data[8+40*i : 48+40*i]); err != nil {
 				return err
 			}
@@ -221,7 +259,7 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
-			entry := new(GroupStats)
+			var entry GroupStats
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
 			}
@@ -233,7 +271,7 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
-			entry := new(GroupDesc)
+			var entry GroupDesc
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
 			}
@@ -242,12 +280,16 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		}
 		obj.Body = Array(array)
 	case OFPMP_GROUP_FEATURES:
-		body = new(GroupFeatures)
+		var body GroupFeatures
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_METER:
 		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur+4 : cur+6]))
-			entry := new(MeterStats)
+			var entry MeterStats
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
 			}
@@ -258,7 +300,7 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
-			entry := new(MeterConfig)
+			var entry MeterConfig
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
 			}
@@ -266,12 +308,16 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		}
 		obj.Body = Array(array)
 	case OFPMP_METER_FEATURES:
-		body = new(MeterFeatures)
+		var body MeterFeatures
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPMP_TABLE_FEATURES:
 		var array []encoding.BinaryMarshaler
 		for cur := 8; cur < len(data); {
 			length := int(binary.BigEndian.Uint16(data[cur : cur+2]))
-			entry := new(TableFeatures)
+			var entry TableFeatures
 			if err := entry.UnmarshalBinary(data[cur : cur+length]); err != nil {
 				return err
 			}
@@ -281,7 +327,7 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 	case OFPMP_PORT_DESC:
 		var array = make([]encoding.BinaryMarshaler, (len(data)-8)/64)
 		for i, _ := range array {
-			entry := new(Port)
+			var entry Port
 			if err := entry.UnmarshalBinary(data[8+112*i : 120+112*i]); err != nil {
 				return err
 			}
@@ -289,10 +335,8 @@ func (obj *MultipartReply) UnmarshalBinary(data []byte) error {
 		}
 		obj.Body = Array(array)
 	case OFPMP_EXPERIMENTER:
-		body = new(ExperimenterMultipart)
-	}
-	if body != nil {
-		if err := body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:]); err != nil {
+		var body ExperimenterMultipart
+		if err := body.UnmarshalBinary(buf); err != nil {
 			return err
 		}
 		obj.Body = body
@@ -672,7 +716,7 @@ func (obj *GroupStats) UnmarshalBinary(data []byte) error {
 	obj.DurationNsec = binary.BigEndian.Uint32(data[36:40])
 	obj.BucketStats = make([]encoding.BinaryMarshaler, (length-40)/16)
 	for i, _ := range obj.BucketStats {
-		entry := new(BucketCounter)
+		entry := BucketCounter{}
 		if err := entry.UnmarshalBinary(data[40+16*i : 56+16*i]); err != nil {
 			return err
 		}
@@ -822,7 +866,7 @@ func (obj *MeterStats) UnmarshalBinary(data []byte) error {
 	obj.DurationNsec = binary.BigEndian.Uint32(data[36:40])
 	obj.BandStats = make([]encoding.BinaryMarshaler, (length-40)/16)
 	for i, _ := range obj.BandStats {
-		entry := new(MeterBandStats)
+		entry := MeterBandStats{}
 		if err := entry.UnmarshalBinary(data[40+i*16 : 56*i*16]); err != nil {
 			return err
 		}

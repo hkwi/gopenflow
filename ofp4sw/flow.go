@@ -1,7 +1,9 @@
 package ofp4sw
 
 import (
+	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -23,6 +25,10 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 	} else {
 		table = &flowTable{
 			lock: &sync.RWMutex{},
+			feature: flowTableFeature{
+				metadataMatch: 0xFFFFFFFFFFFFFFFF,
+				metadataWrite: 0xFFFFFFFFFFFFFFFF,
+			},
 		}
 		pipe.flows[req.TableId] = table
 	}
@@ -104,30 +110,32 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 		priority = self.priorities[i]
 	}
 
-	block_fields := matchList(expandMatch(flow.fields))
-	sort.Sort(block_fields)
-
 	priority.lock.Lock()
 	defer priority.lock.Unlock()
 
-	key := capKey(priority.caps, flow.fields)
+	key := oxmBasicUnionKey(priority.hash, flow.fields.basic)
 
 	flows := []*flowEntry{flow} // prepare for rebuild
 	for k, fs := range priority.flows {
 		if k == key {
 			for _, f := range fs {
-				if req.Flags&ofp4.OFPFF_CHECK_OVERLAP != 0 && overlap(f.fields, flow.fields) {
+				if conflict, err := flow.fields.Conflict(f.fields); err != nil {
+					return err
+				} else if req.Flags&ofp4.OFPFF_CHECK_OVERLAP != 0 && !conflict {
 					return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
 				}
 
-				test_fields := matchList(f.fields)
-				sort.Sort(test_fields)
-
-				if !block_fields.Equal(test_fields) {
+				if isEqual, err := flow.fields.Equal(f.fields); err != nil {
+					return err
+				} else if isEqual {
+					// old entry will be cleared
+					if req.Flags&ofp4.OFPFF_RESET_COUNTS == 0 {
+						// counters should be copied
+						flow.packetCount = f.packetCount
+						flow.byteCount = f.byteCount
+					}
+				} else {
 					flows = append(flows, f)
-				} else if req.Flags&ofp4.OFPFF_RESET_COUNTS == 0 {
-					flow.packetCount = f.packetCount
-					flow.byteCount = f.byteCount
 				}
 			}
 		} else {
@@ -143,24 +151,24 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 type flowPriority struct {
 	lock     *sync.RWMutex // for collections
 	priority uint16
-	caps     []match                 // mask common to all flows in this priority
+	hash     []oxmBasic              // mask common to all flows in this priority
 	flows    map[uint32][]*flowEntry // entries in the same priority
 }
 
 /* invoke this method inside a mutex guard. */
 func (self *flowPriority) rebuildIndex(flows []*flowEntry) {
-	var caps []match
+	var hash []oxmBasic
 	hashed := make(map[uint32][]*flowEntry)
 
 	for i, flow := range flows {
 		if i == 0 {
-			caps = flow.fields
+			hash = flow.fields.basic
 		} else {
-			caps = capMask(caps, flow.fields)
+			hash = oxmBasicUnion(hash, flow.fields.basic)
 		}
 	}
 	for _, flow := range flows {
-		key := capKey(caps, flow.fields)
+		key := oxmBasicUnionKey(hash, flow.fields.basic)
 		if ent, ok := hashed[key]; ok {
 			hashed[key] = append(ent, flow)
 		} else {
@@ -171,13 +179,13 @@ func (self *flowPriority) rebuildIndex(flows []*flowEntry) {
 		sort.Sort(flowEntryList(flows))
 		hashed[key] = flows
 	}
-	self.caps = caps
+	self.hash = hash
 	self.flows = hashed
 }
 
 type flowEntry struct {
 	lock        *sync.RWMutex // for counters
-	fields      []match
+	fields      match
 	cookie      uint64
 	packetCount uint64
 	byteCount   uint64
@@ -194,20 +202,23 @@ type flowEntry struct {
 	instWrite    actionSet
 	instMetadata *metadataInstruction
 	instGoto     uint8
+	instExp      map[int][]instExperimenter
 }
 
 func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
-	var reqMatch matchList
-	if err := reqMatch.UnmarshalBinary(req.Match.OxmFields); err != nil {
+	var reqMatch match
+	if err := reqMatch.UnmarshalBinary(req.Match.Data); err != nil {
 		return nil, err
 	}
 	entry := &flowEntry{
 		lock:        &sync.RWMutex{},
-		fields:      []match(reqMatch),
+		fields:      reqMatch,
 		cookie:      req.Cookie,
 		created:     time.Now(),
 		idleTimeout: req.IdleTimeout,
 		hardTimeout: req.HardTimeout,
+		instWrite:   makeActionSet(),
+		instExp:     make(map[int][]instExperimenter),
 	}
 	if err := entry.importInstructions(req.Instructions); err != nil {
 		return nil, err
@@ -229,12 +240,21 @@ func (entry *flowEntry) importInstructions(instructions []ofp4.Instruction) erro
 	for _, binst := range instructions {
 		switch inst := binst.(type) {
 		default:
-			return ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNKNOWN_INST}
-		case *ofp4.InstructionGotoTable:
+			return ofp4.Error{
+				Type: ofp4.OFPET_BAD_INSTRUCTION,
+				Code: ofp4.OFPBIC_UNKNOWN_INST,
+			}
+		case ofp4.InstructionGotoTable:
 			entry.instGoto = inst.TableId
-		case *ofp4.InstructionWriteMetadata:
-			entry.instMetadata = &metadataInstruction{inst.Metadata, inst.MetadataMask}
-		case *ofp4.InstructionActions:
+		case ofp4.InstructionWriteMetadata:
+			if inst.Metadata&^inst.MetadataMask != 0 {
+				return errors.New("invalid value/mask pair")
+			}
+			entry.instMetadata = &metadataInstruction{
+				inst.Metadata,
+				inst.MetadataMask,
+			}
+		case ofp4.InstructionActions:
 			switch inst.Type {
 			case ofp4.OFPIT_WRITE_ACTIONS:
 				var aset actionSet
@@ -247,10 +267,23 @@ func (entry *flowEntry) importInstructions(instructions []ofp4.Instruction) erro
 			case ofp4.OFPIT_CLEAR_ACTIONS:
 				entry.instClear = true
 			}
-		case *ofp4.InstructionMeter:
+		case ofp4.InstructionMeter:
 			entry.instMeter = inst.MeterId
-		case *ofp4.InstructionExperimenter:
-			return ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNSUP_INST}
+		case ofp4.InstructionExperimenter:
+			instKey := experimenterKey{
+				Id:   inst.Experimenter,
+				Type: inst.ExpType,
+			}
+			if handler, ok := instructionHandlers[instKey]; ok {
+				pos := handler.Order()
+				entry.instExp[pos] = append(entry.instExp[pos], instExperimenter{
+					experimenterKey: instKey,
+					Handler:         handler,
+					Data:            inst.Data,
+				})
+			} else {
+				return ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNSUP_INST}
+			}
 		}
 	}
 	return nil
@@ -274,7 +307,7 @@ func (entry *flowEntry) exportInstructions() []ofp4.Instruction {
 		inst := ofp4.InstructionActions{ofp4.OFPIT_CLEAR_ACTIONS, nil}
 		insts = append(insts, inst)
 	}
-	if len(map[uint16]action(entry.instWrite)) > 0 {
+	if entry.instWrite.Len() > 0 {
 		if actions, err := entry.instWrite.toMessage(); err != nil {
 			panic(err)
 		} else {
@@ -305,7 +338,17 @@ func (self flowEntryList) Len() int {
 
 func (self flowEntryList) Less(i, j int) bool {
 	l := []*flowEntry(self)
-	return len(expandMatch(l[i].fields)) > len(expandMatch(l[j].fields))
+
+	a, aerr := l[i].fields.Expand()
+	b, berr := l[j].fields.Expand()
+
+	if aerr != nil && berr != nil {
+		result, err := a.Fit(b)
+		if err != nil {
+			return result
+		}
+	}
+	return len(l[i].fields.basic) > len(l[j].fields.basic)
 }
 
 func (self flowEntryList) Swap(i, j int) {
@@ -335,7 +378,7 @@ type flowFilter struct {
 	outPort      uint32
 	outGroup     uint32
 	meterId      uint32
-	match        []match
+	match        match
 }
 
 type flowStats struct {
@@ -422,57 +465,80 @@ func (prio *flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats
 		defer prio.lock.RUnlock()
 	}
 
+	reqMatch, err := req.match.Expand()
+	if err != nil {
+		log.Print(err)
+		return nil
+	}
+
 	var hits []flowStats
 	var miss []*flowEntry
 	for _, flows := range prio.flows {
 		for _, flow := range flows {
 			hit := func() bool {
-				if (flow.cookie & req.cookieMask) != (req.cookie & req.cookieMask) {
+				if fields, err := flow.fields.Expand(); err != nil {
+					log.Print(err)
 					return false
-				}
-				for _, m := range flow.fields {
-					if !m.matchMatch(req.match) {
-						return false
-					}
-				}
-				if req.outPort != ofp4.OFPP_ANY {
-					for _, act := range flow.instApply {
-						if cact, ok := act.(*actionOutput); ok {
-							if cact.Port == req.outPort {
-								return true
-							}
+				} else {
+					if req.opStrict {
+						if eq, err := fields.Equal(reqMatch); err != nil {
+							log.Print(err)
+							return false
+						} else if !eq {
+							return false
+						}
+					} else {
+						if fit, err := fields.Fit(reqMatch); err != nil {
+							log.Print(err)
+							return false
+						} else if !fit {
+							return false
 						}
 					}
-					for _, act := range flow.instWrite {
-						if cact, ok := act.(*actionOutput); ok {
-							if cact.Port == req.outPort {
-								return true
-							}
-						}
-					}
-					return false
 				}
-				if req.outGroup != ofp4.OFPG_ANY {
-					for _, act := range flow.instApply {
-						if cact, ok := act.(*actionGroup); ok {
-							if cact.GroupId == req.outGroup {
-								return true
+				if req.opUnregister {
+					if req.outPort != ofp4.OFPP_ANY {
+						found := func() bool {
+							for _, act := range flow.instApply {
+								if cact, ok := act.(*actionOutput); ok {
+									if cact.Port == req.outPort {
+										return true
+									}
+								}
 							}
+							if act, ok := flow.instWrite.hash[uint16(ofp4.OFPAT_OUTPUT)]; ok {
+								if act.(actionOutput).Port == req.outPort {
+									return true
+								}
+							}
+							return false
+						}()
+						if !found {
+							return false
 						}
 					}
-					for _, act := range flow.instWrite {
-						if cact, ok := act.(*actionGroup); ok {
-							if cact.GroupId == req.outGroup {
-								return true
+					if req.outGroup != ofp4.OFPG_ANY {
+						found := func() bool {
+							for _, act := range flow.instApply {
+								if cact, ok := act.(*actionGroup); ok {
+									if cact.GroupId == req.outGroup {
+										return true
+									}
+								}
 							}
+							if act, ok := flow.instWrite.hash[uint16(ofp4.OFPAT_GROUP)]; ok {
+								if act.(actionGroup).GroupId == req.outGroup {
+									return true
+								}
+							}
+							return false
+						}()
+						if !found {
+							return false
 						}
 					}
-					return false
 				}
-				if req.meterId != 0 {
-					if flow.instMeter == req.meterId {
-						return true
-					}
+				if req.cookieMask != 0 && (flow.cookie&req.cookieMask) != (req.cookie&req.cookieMask) {
 					return false
 				}
 				return true

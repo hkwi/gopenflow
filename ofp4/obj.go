@@ -3,7 +3,6 @@ package ofp4
 import (
 	"encoding"
 	"encoding/binary"
-	"errors"
 	"fmt"
 )
 
@@ -93,7 +92,10 @@ func (obj Message) MarshalBinary() ([]byte, error) {
 	if obj.Body != nil {
 		switch obj.Type {
 		default:
-			return nil, errors.New("Unknown OFPT_")
+			return nil, Error{
+				Type: OFPET_BAD_REQUEST,
+				Code: OFPBRC_BAD_TYPE,
+			}
 		case OFPT_GET_CONFIG_REQUEST, OFPT_BARRIER_REQUEST, OFPT_BARRIER_REPLY, OFPT_GET_ASYNC_REQUEST:
 			data = make([]byte, 8)
 		case OFPT_ECHO_REQUEST, OFPT_ECHO_REPLY:
@@ -142,76 +144,151 @@ func (obj *Message) UnmarshalBinary(data []byte) error {
 	obj.Type = data[1]
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	obj.Xid = binary.BigEndian.Uint32(data[4:8])
+	buf := data[8:length]
 
-	var body encoding.BinaryMarshaler
 	switch obj.Type {
 	default:
-		return errors.New("Unknown OFPT_")
+		return Error{
+			Type: OFPET_BAD_REQUEST,
+			Code: OFPBRC_BAD_TYPE,
+		}
 	case OFPT_FEATURES_REQUEST, OFPT_GET_CONFIG_REQUEST, OFPT_BARRIER_REQUEST, OFPT_BARRIER_REPLY, OFPT_GET_ASYNC_REQUEST:
 		// no body
 	case OFPT_HELLO:
 		var elements []encoding.BinaryMarshaler
-		for cur := 8; cur < length; {
+		for len(buf) > 0 {
 			// look ahead
-			eType := binary.BigEndian.Uint16(data[cur : cur+2])
-			eLength := int(binary.BigEndian.Uint16(data[cur+2 : cur+4]))
-			payload := data[cur : cur+eLength]
+			eType := binary.BigEndian.Uint16(buf[:2])
+			eLength := int(binary.BigEndian.Uint16(buf[2:]))
 			switch eType {
 			default:
-				return errors.New("Unknown OFPHET_")
+				return Error{
+					Type: OFPET_HELLO_FAILED,
+					Code: OFPHFC_EPERM,
+				}
 			case OFPHET_VERSIONBITMAP:
-				element := new(HelloElementVersionbitmap)
-				if err := element.UnmarshalBinary(payload); err != nil {
+				var element HelloElementVersionbitmap
+				if err := element.UnmarshalBinary(buf[:eLength]); err != nil {
 					return err
 				}
 				elements = append(elements, element)
 			}
-			cur += eLength
+			buf = buf[eLength:]
 		}
 		obj.Body = Array(elements)
 	case OFPT_ERROR:
-		body = new(Error)
+		var body Error
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_ECHO_REQUEST, OFPT_ECHO_REPLY:
 		obj.Body = Bytes(data[8:length])
 	case OFPT_EXPERIMENTER:
-		body = new(Experimenter)
+		var body Experimenter
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_FEATURES_REPLY:
-		body = new(SwitchFeatures)
+		var body SwitchFeatures
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_GET_CONFIG_REPLY, OFPT_SET_CONFIG:
-		body = new(SwitchConfig)
+		var body SwitchConfig
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_PACKET_IN:
-		body = new(PacketIn)
+		var body PacketIn
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_FLOW_REMOVED:
-		body = new(FlowRemoved)
+		var body FlowRemoved
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_PORT_STATUS:
-		body = new(PortStatus)
+		var body PortStatus
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_PACKET_OUT:
-		body = new(PacketOut)
+		var body PacketOut
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_FLOW_MOD:
-		body = new(FlowMod)
+		var body FlowMod
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_GROUP_MOD:
-		body = new(GroupMod)
+		var body GroupMod
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_PORT_MOD:
-		body = new(PortMod)
+		var body PortMod
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_TABLE_MOD:
-		body = new(TableMod)
+		var body TableMod
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_MULTIPART_REQUEST:
-		body = new(MultipartRequest)
+		var body MultipartRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_MULTIPART_REPLY:
-		body = new(MultipartReply)
+		var body MultipartReply
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_QUEUE_GET_CONFIG_REQUEST:
-		body = new(QueueGetConfigRequest)
+		var body QueueGetConfigRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_QUEUE_GET_CONFIG_REPLY:
-		body = new(QueueGetConfigReply)
+		var body QueueGetConfigReply
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_ROLE_REQUEST, OFPT_ROLE_REPLY:
-		body = new(RoleRequest)
+		var body RoleRequest
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_GET_ASYNC_REPLY, OFPT_SET_ASYNC:
-		body = new(AsyncConfig)
+		var body AsyncConfig
+		if err := body.UnmarshalBinary(buf); err != nil {
+			return err
+		}
+		obj.Body = body
 	case OFPT_METER_MOD:
-		body = new(MeterMod)
-	}
-	if body != nil {
-		if err := body.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[8:length]); err != nil {
+		var body MeterMod
+		if err := body.UnmarshalBinary(buf); err != nil {
 			return err
 		}
 		obj.Body = body
@@ -338,23 +415,23 @@ func (obj *SwitchConfig) UnmarshalBinary(data []byte) error {
 }
 
 type Match struct {
-	Type      uint16
-	OxmFields []byte
+	Type uint16
+	Data []byte // oxm_fields when type==OFPMT_OXM
 }
 
 func (obj Match) MarshalBinary() ([]byte, error) {
-	length := 4 + len(obj.OxmFields) // excluding padding
+	length := 4 + len(obj.Data) // excluding padding
 	data := make([]byte, align8(length))
 	binary.BigEndian.PutUint16(data[0:2], obj.Type)
 	binary.BigEndian.PutUint16(data[2:4], uint16(length))
-	copy(data[4:], obj.OxmFields)
+	copy(data[4:], obj.Data)
 	return data, nil
 }
 
 func (obj *Match) UnmarshalBinary(data []byte) error {
 	length := int(binary.BigEndian.Uint16(data[2:4]))
 	obj.Type = binary.BigEndian.Uint16(data[0:2])
-	obj.OxmFields = data[4:length]
+	obj.Data = data[4:length]
 	return nil
 }
 
@@ -700,6 +777,7 @@ func (obj *Bucket) UnmarshalBinary(data []byte) error {
 	obj.Weight = binary.BigEndian.Uint16(data[2:4])
 	obj.WatchPort = binary.BigEndian.Uint32(data[4:8])
 	obj.WatchGroup = binary.BigEndian.Uint32(data[8:12])
+
 	var actions actionList
 	if err := actions.UnmarshalBinary(data[16:length]); err != nil {
 		return err
@@ -793,11 +871,11 @@ func (obj *QueueGetConfigReply) UnmarshalBinary(data []byte) error {
 	var queues []PacketQueue
 	for cur := 16; cur < len(data); {
 		length := int(binary.BigEndian.Uint16(data[8+cur : 10+cur]))
-		queue := new(PacketQueue)
+		queue := PacketQueue{}
 		if err := queue.UnmarshalBinary(data[cur : cur+length]); err != nil {
 			return err
 		}
-		queues = append(queues, *queue)
+		queues = append(queues, queue)
 		cur += length
 	}
 	obj.Port = binary.BigEndian.Uint32(data[0:4])

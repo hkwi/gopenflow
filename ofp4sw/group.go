@@ -10,19 +10,17 @@ type bucket struct {
 	weight     uint16
 	watchPort  uint32
 	watchGroup uint32
-	actionSet  map[uint16]action // Ignore Actions
+	actionSet  actionSet
 }
 
 func (b *bucket) fromMessage(msg ofp4.Bucket) error {
 	b.weight = msg.Weight
 	b.watchPort = msg.WatchPort
 	b.watchGroup = msg.WatchGroup
+	b.actionSet = makeActionSet()
 
-	var actions actionSet
-	if err := actions.fromMessage(msg.Actions); err != nil {
+	if err := b.actionSet.fromMessage(msg.Actions); err != nil {
 		return err
-	} else {
-		b.actionSet = map[uint16]action(actions)
 	}
 	return nil
 }
@@ -164,7 +162,7 @@ func (pipe Pipeline) groupChains(groupId uint32, seen []uint32) []uint32 {
 						return true
 					}
 				}
-				if act, ok := b.actionSet[ofp4.OFPAT_GROUP]; ok {
+				if act, ok := b.actionSet.hash[uint16(ofp4.OFPAT_GROUP)]; ok {
 					if act.(actionGroup).GroupId == groupId {
 						return true
 					}

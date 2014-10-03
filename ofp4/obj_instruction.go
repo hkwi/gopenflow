@@ -1,7 +1,6 @@
 package ofp4
 
 import (
-	"encoding"
 	"encoding/binary"
 )
 
@@ -24,25 +23,44 @@ func (obj *instructionList) UnmarshalBinary(data []byte) error {
 	for cur := 0; cur < len(data); {
 		iType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		iLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var instruction Instruction
+		buf := data[cur : cur+iLen]
 		switch iType {
 		default:
-			return Error{OFPET_BAD_INSTRUCTION, OFPBIC_UNKNOWN_INST, nil}
+			return Error{
+				Type: OFPET_BAD_INSTRUCTION,
+				Code: OFPBIC_UNKNOWN_INST,
+			}
 		case OFPIT_GOTO_TABLE:
-			instruction = new(InstructionGotoTable)
+			var instruction InstructionGotoTable
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		case OFPIT_WRITE_METADATA:
-			instruction = new(InstructionWriteMetadata)
+			var instruction InstructionWriteMetadata
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		case OFPIT_WRITE_ACTIONS, OFPIT_APPLY_ACTIONS, OFPIT_CLEAR_ACTIONS:
-			instruction = new(InstructionActions)
+			var instruction InstructionActions
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		case OFPIT_METER:
-			instruction = new(InstructionMeter)
+			var instruction InstructionMeter
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		case OFPIT_EXPERIMENTER:
-			instruction = new(InstructionExperimenter)
+			var instruction InstructionExperimenter
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		}
-		if err := instruction.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+iLen]); err != nil {
-			return err
-		}
-		instructions = append(instructions, instruction)
 		cur += iLen
 	}
 	*obj = instructions
@@ -60,19 +78,26 @@ func (obj *instructionIdList) UnmarshalBinary(data []byte) error {
 	for cur := 0; cur < len(data); {
 		iType := binary.BigEndian.Uint16(data[cur : 2+cur])
 		iLen := int(binary.BigEndian.Uint16(data[2+cur : 4+cur]))
-		var instruction Instruction
+		buf := data[cur : cur+iLen]
 		switch iType {
 		default:
-			return Error{OFPET_BAD_INSTRUCTION, OFPBIC_UNKNOWN_INST, nil}
+			return Error{
+				Type: OFPET_BAD_INSTRUCTION,
+				Code: OFPBIC_UNKNOWN_INST,
+			}
 		case OFPIT_GOTO_TABLE, OFPIT_WRITE_METADATA, OFPIT_WRITE_ACTIONS, OFPIT_APPLY_ACTIONS, OFPIT_CLEAR_ACTIONS, OFPIT_METER:
-			instruction = new(InstructionId)
+			var instruction InstructionId
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		case OFPIT_EXPERIMENTER:
-			instruction = new(InstructionExperimenter)
+			var instruction InstructionExperimenter
+			if err := instruction.UnmarshalBinary(buf); err != nil {
+				return err
+			}
+			instructions = append(instructions, instruction)
 		}
-		if err := instruction.(encoding.BinaryUnmarshaler).UnmarshalBinary(data[cur : cur+iLen]); err != nil {
-			return err
-		}
-		instructions = append(instructions, instruction)
 		cur += iLen
 	}
 	*obj = instructions
@@ -182,7 +207,7 @@ func (obj *InstructionMeter) UnmarshalBinary(data []byte) (err error) {
 
 type InstructionExperimenter struct {
 	Experimenter uint32
-	ExpType      uint32
+	ExpType      uint32 // expected in instruction set identification key
 	Data         []byte
 }
 
