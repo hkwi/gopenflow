@@ -73,10 +73,11 @@ type TableHandler interface {
 var tableHandlers map[experimenterKey]TableHandler = make(map[experimenterKey]TableHandler)
 
 func AddTableHandler(experimenter uint32, expType uint32, handler TableHandler) {
-	tableHandlers[experimenterKey{
+	key := experimenterKey{
 		Id:   experimenter,
 		Type: expType,
-	}] = handler
+	}
+	tableHandlers[key] = handler
 }
 
 // special rule here. nil means "NOT SET"

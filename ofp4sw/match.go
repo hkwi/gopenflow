@@ -15,8 +15,8 @@ AddOxmHandler registers this OxmHandler.
 */
 type OxmHandler interface {
 	// return true if target frame matches
-	Match(frame []byte, oxm []byte) (bool, error)
-	SetField(frame []byte, oxm []byte) ([]byte, error)
+	Match(frame Frame, oxm []byte) (bool, error)
+	SetField(frame Frame, oxm []byte) (newFrame Frame, err error)
 
 	// Fits returns true if this could be matched by oxm.
 	// Arguments of narrow, wide is a serialized form of multiple oxm.
@@ -284,17 +284,18 @@ func (self match) Match(data frame) bool {
 		}
 	}
 	if len(self.exp) > 0 {
-		if buf, err := data.data(); err != nil {
+		var pkt Frame
+		if err := pkt.pull(data); err != nil {
+			log.Print(err)
 			return false
-		} else {
-			for k, oxm := range self.exp {
-				if handler, ok := oxmHandlers[k]; ok {
-					if result, err := handler.Match(buf, oxm); err != nil {
-						log.Print(err)
-						return false
-					} else if !result {
-						return false
-					}
+		}
+		for k, oxm := range self.exp {
+			if handler, ok := oxmHandlers[k]; ok {
+				if result, err := handler.Match(pkt, oxm); err != nil {
+					log.Print(err)
+					return false
+				} else if !result {
+					return false
 				}
 			}
 		}
@@ -419,6 +420,9 @@ func (self *match) UnmarshalBinary(msg []byte) error {
 				Type:         mt.Type(),
 				Experimenter: binary.BigEndian.Uint32(oxmtlv[4:]),
 			}
+			if self.exp == nil {
+				self.exp = make(map[oxmExperimenterKey][]byte)
+			}
 			self.exp[key] = append(self.exp[key], oxmtlv...)
 		default:
 			return ofp4.Error{
@@ -495,6 +499,9 @@ func (self match) Expand() (match, error) {
 		var buf []byte
 		for _, v := range hash {
 			buf = append(buf, v...)
+		}
+		if ret.exp == nil {
+			ret.exp = make(map[oxmExperimenterKey][]byte)
 		}
 		ret.exp[k] = buf
 	}

@@ -102,15 +102,18 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 				if portInt.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_RECV) != 0 {
 					continue
 				}
+
 				portInt.stats.RxPackets++
-				portInt.stats.RxBytes += uint64(len(pkt))
+				portInt.stats.RxBytes += uint64(len(pkt.Data))
+
+				data := &frame{
+					inPort:    portNo,
+					phyInPort: phyInPort,
+				}
+				pkt.push(data)
 
 				pipe.datapath <- &flowTableWork{
-					data: &frame{
-						serialized: pkt,
-						inPort:     portNo,
-						phyInPort:  phyInPort,
-					},
+					data:    data,
 					pipe:    &pipe,
 					tableId: 0,
 				}
@@ -169,13 +172,13 @@ type normalPort struct {
 }
 
 func (self *normalPort) Outlet(pout *outputToPort) {
-	pkt, err := pout.data.data()
-	if err != nil {
-		log.Println(err)
-		return
-	}
 	if self.config&(ofp4.OFPPC_PORT_DOWN|ofp4.OFPPC_NO_FWD) != 0 {
 		self.stats.TxDropped++
+		return
+	}
+	var pkt Frame
+	if err := pkt.pull(*pout.data); err != nil {
+		log.Print(err)
 		return
 	}
 	if err := self.public.Egress(pkt); err != nil {
@@ -183,7 +186,7 @@ func (self *normalPort) Outlet(pout *outputToPort) {
 		log.Print(err)
 	} else {
 		self.stats.TxPackets++
-		self.stats.TxBytes += uint64(len(pkt))
+		self.stats.TxBytes += uint64(len(pkt.Data))
 	}
 }
 

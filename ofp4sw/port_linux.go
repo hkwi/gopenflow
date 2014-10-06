@@ -15,7 +15,7 @@ type NamedPort struct {
 	name         string
 	physicalPort uint32
 	close        chan error
-	ingress      chan []byte
+	ingress      chan Frame
 	watch        chan *PortState
 	handle       *pktSock
 }
@@ -28,13 +28,13 @@ func (self NamedPort) PhysicalPort() uint32 {
 	return self.physicalPort
 }
 
-func (self NamedPort) Ingress() <-chan []byte {
+func (self NamedPort) Ingress() <-chan Frame {
 	return self.ingress
 }
 
-func (self NamedPort) Egress(pkt []byte) error {
+func (self NamedPort) Egress(pkt Frame) error {
 	if self.handle != nil {
-		return self.handle.Put(pkt)
+		return self.handle.Put(pkt.Data)
 	}
 	return errors.New("not open")
 }
@@ -46,7 +46,7 @@ func (self NamedPort) Watch() <-chan *PortState {
 func NewNamedPort(name string) *NamedPort {
 	self := &NamedPort{
 		name:    name,
-		ingress: make(chan []byte, 64),
+		ingress: make(chan Frame, 64),
 		watch:   make(chan *PortState),
 	}
 	go func() {
@@ -156,7 +156,9 @@ func (self *NamedPort) handleNetdev(ev NetdevUpdate) {
 									return
 								}
 							} else {
-								self.ingress <- data
+								self.ingress <- Frame{
+									Data: data,
+								}
 							}
 						}
 					}()

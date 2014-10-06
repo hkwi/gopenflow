@@ -20,6 +20,6 @@ type Port interface {
 	PhysicalPort() uint32
 
 	Watch() <-chan *PortState
-	Ingress() <-chan []byte
-	Egress([]byte) error
+	Ingress() <-chan Frame
+	Egress(Frame) error
 }

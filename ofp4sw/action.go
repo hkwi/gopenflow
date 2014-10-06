@@ -28,7 +28,7 @@ AddActionHandler registers this ActionHandler.
 */
 type ActionHandler interface {
 	Order() int
-	Execute(frame, userData []byte) ([]byte, error)
+	Execute(frame Frame, actionData []byte) (Frame, error)
 }
 
 var actionHandlers map[experimenterKey]ActionHandler = make(map[experimenterKey]ActionHandler)
@@ -505,13 +505,14 @@ func (a actionSetField) process(data *frame) (*outputToPort, *outputToGroup, err
 		}
 		for key, oxm := range ms.exp {
 			if handler, ok := oxmHandlers[key]; ok {
-				if orig, err := data.data(); err != nil {
+				var pkt Frame
+				if err := pkt.pull(*data); err != nil {
 					return nil, nil, err
-				} else if buf, err := handler.SetField(orig, oxm); err != nil {
+				}
+				if newPkt, err := handler.SetField(pkt, oxm); err != nil {
 					return nil, nil, err
-				} else {
-					data.serialized = buf
-					data.layers = data.layers[:0]
+				} else if err := newPkt.push(data); err != nil {
+					return nil, nil, err
 				}
 			} else {
 				return nil, nil, ofp4.Error{
@@ -535,13 +536,14 @@ func (self actionExperimenter) Key() actionKey {
 }
 
 func (self actionExperimenter) process(data *frame) (*outputToPort, *outputToGroup, error) {
-	if orig, err := data.data(); err != nil {
+	var pkt Frame
+	if err := pkt.pull(*data); err != nil {
 		return nil, nil, err
-	} else if buf, err := self.Handler.Execute(orig, self.Data); err != nil {
+	}
+	if newPkt, err := self.Handler.Execute(pkt, self.Data); err != nil {
 		return nil, nil, err
-	} else {
-		data.serialized = buf
-		data.layers = data.layers[:0]
+	} else if err := newPkt.push(data); err != nil {
+		return nil, nil, err
 	}
 	return nil, nil, nil
 }

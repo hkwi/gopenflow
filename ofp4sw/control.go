@@ -2,7 +2,6 @@ package ofp4sw
 
 import (
 	"encoding"
-	"encoding/binary"
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
 	"log"
@@ -417,56 +416,18 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 	if self.packetInMask[0]&(1<<pout.reason) != 0 {
 		return nil
 	}
-	data := pout.data
-	eth, err := data.data()
-	if err != nil {
+
+	var pkt Frame
+	if err := pkt.pull(*pout.data); err != nil {
 		return err
 	}
-	totalLen := len(eth)
+
+	eth := pkt.Data
+	totalLen := len(pkt.Data)
 	if int(pout.maxLen) < totalLen {
 		eth = eth[:pout.maxLen]
 	}
-	assocMatch := match{}
-	{
-		m := oxmBasic{
-			Type:  uint32(ofp4.OXM_OF_IN_PORT),
-			Mask:  []byte{255, 255, 255, 255},
-			Value: []byte{0, 0, 0, 0},
-		}
-		binary.BigEndian.PutUint32(m.Value, data.inPort)
-		assocMatch.basic = append(assocMatch.basic, m)
-	}
-	if data.phyInPort != 0 && data.phyInPort != data.inPort {
-		m := oxmBasic{
-			Type:  uint32(ofp4.OXM_OF_IN_PHY_PORT),
-			Mask:  []byte{255, 255, 255, 255},
-			Value: []byte{0, 0, 0, 0},
-		}
-		binary.BigEndian.PutUint32(m.Value, data.phyInPort)
-		assocMatch.basic = append(assocMatch.basic, m)
-	}
-	if data.tunnelId != 0 {
-		m := oxmBasic{
-			Type:  uint32(ofp4.OXM_OF_TUNNEL_ID),
-			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
-			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
-		}
-		binary.BigEndian.PutUint64(m.Value, data.tunnelId)
-		assocMatch.basic = append(assocMatch.basic, m)
-	}
-	if data.metadata != 0 {
-		m := oxmBasic{
-			Type:  uint32(ofp4.OXM_OF_METADATA),
-			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
-			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
-		}
-		binary.BigEndian.PutUint64(m.Value, data.metadata)
-		assocMatch.basic = append(assocMatch.basic, m)
-	}
-	fields, e2 := assocMatch.MarshalBinary()
-	if e2 != nil {
-		return e2
-	}
+
 	msg := ofp4.Message{
 		Header: ofp4.Header{
 			Version: 4,
@@ -478,7 +439,7 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 			TotalLen: uint16(totalLen),
 			Match: ofp4.Match{
 				Type: ofp4.OFPMT_OXM,
-				Data: fields,
+				Data: pkt.Match,
 			},
 			Reason:  pout.reason,
 			TableId: pout.tableId,
@@ -687,7 +648,7 @@ func (self *ofmGetConfigRequest) Map() Reducable {
 			Xid:     self.req.Xid,
 		},
 		Body: ofp4.SwitchConfig{
-			Flags:       self.ctrl.pipe.flags, // XXX:
+			Flags:       self.ctrl.pipe.flags, // XXX: FRAG not supported yet.
 			MissSendLen: self.ctrl.missSendLen,
 		},
 	}
@@ -781,7 +742,7 @@ func (self *ofmPortMod) Map() Reducable {
 		switch port := p.(type) {
 		case *normalPort:
 			port.config = req.Config&req.Mask | port.config&^req.Mask
-			if req.Advertise != 0 {
+			if req.Advertise != 0 { // zero all bits to prevent any action taking place.
 				// XXX:
 			}
 		default:
@@ -1462,7 +1423,7 @@ func (self *ofmMpTableFeatures) Map() Reducable {
 				}
 				feature.importProps(f.Properties)
 
-				if tbl, ok := pipe.flows[f.TableId]; ok && tbl == nil {
+				if tbl := pipe.flows[f.TableId]; tbl == nil {
 					// table explicitly set to nil means, "that table does not exists."
 					self.createError(ofp4.OFPET_TABLE_FEATURES_FAILED, ofp4.OFPTFFC_BAD_TABLE)
 				} else if _, ok := candidate[f.TableId]; ok {

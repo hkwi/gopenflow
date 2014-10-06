@@ -13,20 +13,109 @@ import (
 	"time"
 )
 
+// Frame is a public interface that represents ethernet frame.
+type Frame struct {
+	// ethernet frame
+	Data []byte
+	// oxm tlv outband metadata
+	Match []byte
+}
+
+func (self Frame) push(data *frame) error {
+	data.serialized = self.Data
+	data.layers = data.layers[:0]
+
+	var m match
+	if err := m.UnmarshalBinary(self.Match); err != nil {
+		return err
+	}
+	for _, b := range m.basic {
+		switch b.Type {
+		case ofp4.OXM_OF_IN_PORT:
+			data.inPort = binary.BigEndian.Uint32(b.Value)
+		case ofp4.OXM_OF_IN_PHY_PORT:
+			data.phyInPort = binary.BigEndian.Uint32(b.Value)
+		case ofp4.OXM_OF_TUNNEL_ID:
+			data.tunnelId = binary.BigEndian.Uint64(b.Value)
+		case ofp4.OXM_OF_METADATA:
+			data.metadata = binary.BigEndian.Uint64(b.Value)
+		default:
+			return fmt.Errorf("unsupported outband data.")
+		}
+	}
+	data.experimenter = m.exp
+	return nil
+}
+
+func (self *Frame) pull(data frame) error {
+	if buf, err := data.data(); err != nil {
+		return err
+	} else {
+		self.Data = append([]byte(nil), buf...)
+	}
+
+	ms := match{
+		exp: data.experimenter,
+	}
+	{
+		m := oxmBasic{
+			Type:  uint32(ofp4.OXM_OF_IN_PORT),
+			Mask:  []byte{255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0},
+		}
+		binary.BigEndian.PutUint32(m.Value, data.inPort)
+		ms.basic = append(ms.basic, m)
+	}
+	if data.phyInPort != 0 && data.phyInPort != data.inPort {
+		m := oxmBasic{
+			Type:  uint32(ofp4.OXM_OF_IN_PHY_PORT),
+			Mask:  []byte{255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0},
+		}
+		binary.BigEndian.PutUint32(m.Value, data.phyInPort)
+		ms.basic = append(ms.basic, m)
+	}
+	if data.tunnelId != 0 {
+		m := oxmBasic{
+			Type:  uint32(ofp4.OXM_OF_TUNNEL_ID),
+			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
+		}
+		binary.BigEndian.PutUint64(m.Value, data.tunnelId)
+		ms.basic = append(ms.basic, m)
+	}
+	if data.metadata != 0 {
+		m := oxmBasic{
+			Type:  uint32(ofp4.OXM_OF_METADATA),
+			Mask:  []byte{255, 255, 255, 255, 255, 255, 255, 255},
+			Value: []byte{0, 0, 0, 0, 0, 0, 0, 0},
+		}
+		binary.BigEndian.PutUint64(m.Value, data.metadata)
+		ms.basic = append(ms.basic, m)
+	}
+
+	if buf, err := ms.MarshalBinary(); err != nil {
+		return err
+	} else {
+		self.Match = buf
+	}
+	return nil
+}
+
 // data associated with a packet, which is
 // alive while the packet travels the pipeline
 type frame struct {
 	// serialized or layers may be 0 length(or nil), not both at a time.
 	// If both are 0, then it is INVALID packet, this may happen on TTL decrement.
-	serialized []byte
-	layers     []gopacket.Layer // Not a gopacket.Packet, because Data() returns original packet bytes even when layers were modified.
-	inPort     uint32
-	phyInPort  uint32
-	metadata   uint64
-	tunnelId   uint64
-	queueId    uint32
-	actionSet  actionSet
-	expOxm     map[experimenterKey][]byte // experimenter may set frame associated oxms, which will be sent over by PacketIn
+	serialized   []byte
+	layers       []gopacket.Layer // Not a gopacket.Packet, because Data() returns original packet bytes even when layers were modified.
+	inPort       uint32
+	phyInPort    uint32
+	metadata     uint64
+	tunnelId     uint64
+	queueId      uint32
+	actionSet    actionSet
+	experimenter map[oxmExperimenterKey][]byte // experimenter may set frame associated oxm tlvs, which will be sent over by PacketIn
 }
 
 func (self frame) isInvalid() bool {
@@ -84,17 +173,26 @@ func (self frame) clone() *frame {
 		log.Println(err)
 		// in this case, returned data will be not nil but isInvalid().
 	}
+
 	aset := makeActionSet()
 	aset.Write(self.actionSet)
 
+	exp := make(map[oxmExperimenterKey][]byte)
+	for k, v := range self.experimenter {
+		value := make([]byte, len(v))
+		copy(value, v)
+		exp[k] = value
+	}
+
 	return &frame{
-		serialized: frameBytes,
-		inPort:     self.inPort,
-		phyInPort:  self.phyInPort,
-		metadata:   self.metadata,
-		tunnelId:   self.tunnelId,
-		queueId:    self.queueId,
-		actionSet:  aset,
+		serialized:   frameBytes,
+		inPort:       self.inPort,
+		phyInPort:    self.phyInPort,
+		metadata:     self.metadata,
+		tunnelId:     self.tunnelId,
+		queueId:      self.queueId,
+		actionSet:    aset,
+		experimenter: exp,
 	}
 }
 
@@ -976,13 +1074,14 @@ func (self *flowTableWork) Map() Reducable {
 
 		instExp := func(pos int) error {
 			for _, exp := range entry.instExp[pos] {
-				if pre, err := self.data.data(); err != nil {
+				var pkt Frame
+				if err := pkt.pull(*self.data); err != nil {
 					return err
-				} else if post, err := exp.Handler.Execute(pre, exp.Data); err != nil {
+				}
+				if newPkt, err := exp.Handler.Execute(pkt, exp.Data); err != nil {
 					return err
-				} else {
-					self.data.serialized = post
-					self.data.layers = self.data.layers[:0]
+				} else if err := newPkt.push(self.data); err != nil {
+					return err
 				}
 			}
 			return nil
