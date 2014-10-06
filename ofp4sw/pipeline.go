@@ -9,11 +9,11 @@ import (
 	"log"
 	"sync"
 	"time"
-	//	"math"
 )
 
 type Pipeline struct {
-	lock     *sync.RWMutex
+	lock *sync.RWMutex
+	// special rule for flows: value nil means that the table is forbidden by table feature spec.
 	flows    map[uint8]*flowTable
 	ports    map[uint32]portInternal
 	groups   map[uint32]*group

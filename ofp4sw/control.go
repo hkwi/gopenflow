@@ -225,8 +225,14 @@ func (self *controller) addChannel(channel ControlChannel) error {
 				req := ofm.Body.(ofp4.MultipartRequest)
 				multipartCollect[ofm.Xid] = append(multipartCollect[ofm.Xid], req.Body)
 				if req.Flags&ofp4.OFPMPF_REQ_MORE == 0 {
-					mreply := ofmMulti{reply, multipartCollect[ofm.Xid], nil}
+					reqs := multipartCollect[ofm.Xid]
 					delete(multipartCollect, ofm.Xid)
+
+					mreply := ofmMulti{
+						ofmReply: reply,
+						reqs:     reqs,
+						chunks:   nil,
+					}
 
 					// capture
 					switch req.Type {
@@ -1129,18 +1135,28 @@ type ofmMpTable struct {
 }
 
 func (self *ofmMpTable) Map() Reducable {
-	for tableId, table := range self.ctrl.pipe.getFlowTables(ofp4.OFPTT_ALL) {
-		chunk := func() encoding.BinaryMarshaler {
-			table.lock.RLock()
-			defer table.lock.RUnlock()
-			return ofp4.TableStats{
-				TableId:      tableId,
-				ActiveCount:  table.activeCount,
-				LookupCount:  table.lookupCount,
-				MatchedCount: table.matchCount,
+	tables := self.ctrl.pipe.getFlowTables(ofp4.OFPTT_ALL)
+	for tableId := uint8(0); tableId <= ofp4.OFPTT_MAX; tableId++ {
+		if table, ok := tables[tableId]; ok {
+			if table != nil {
+				chunk := func() encoding.BinaryMarshaler {
+					table.lock.RLock()
+					defer table.lock.RUnlock()
+					return ofp4.TableStats{
+						TableId:      tableId,
+						ActiveCount:  table.activeCount,
+						LookupCount:  table.lookupCount,
+						MatchedCount: table.matchCount,
+					}
+				}()
+				self.chunks = append(self.chunks, chunk)
 			}
-		}()
-		self.chunks = append(self.chunks, chunk)
+		} else {
+			chunk := ofp4.TableStats{
+				TableId: tableId,
+			}
+			self.chunks = append(self.chunks, chunk)
+		}
 	}
 	return self
 }
@@ -1397,58 +1413,91 @@ type ofmMpTableFeatures struct {
 }
 
 func (self *ofmMpTableFeatures) Map() Reducable {
-	if len(self.reqs) == 0 {
-		for tableId, t := range self.ctrl.pipe.getFlowTables(ofp4.OFPTT_ALL) {
-			f := t.feature
-			rf := ofp4.TableFeatures{
-				TableId:       tableId,
-				Name:          f.name,
-				MetadataMatch: f.metadataMatch,
-				MetadataWrite: f.metadataWrite,
-				Config:        f.config,
-				MaxEntries:    f.maxEntries,
+	if len(self.reqs) == 0 { // This is getter.
+		tables := self.ctrl.pipe.getFlowTables(ofp4.OFPTT_ALL)
+		for tableId := uint8(0); tableId <= ofp4.OFPTT_MAX; tableId++ {
+			if table, ok := tables[tableId]; ok {
+				if table != nil {
+					f := table.feature
+					chunk := ofp4.TableFeatures{
+						TableId:       tableId,
+						Name:          f.name,
+						MetadataMatch: f.metadataMatch,
+						MetadataWrite: f.metadataWrite,
+						Config:        f.config,
+						MaxEntries:    f.maxEntries,
+						Properties:    f.exportProps(),
+					}
+					self.chunks = append(self.chunks, chunk)
+				}
+			} else {
+				f := makeFlowTableFeature()
+				chunk := ofp4.TableFeatures{
+					TableId:       tableId,
+					Name:          f.name,
+					MetadataMatch: f.metadataMatch,
+					MetadataWrite: f.metadataWrite,
+					Config:        f.config,
+					MaxEntries:    f.maxEntries,
+					Properties:    f.exportProps(),
+				}
+				self.chunks = append(self.chunks, chunk)
 			}
-			props := map[uint16][]oxmKey{
-				ofp4.OFPTFPT_MATCH:               f.match,
-				ofp4.OFPTFPT_WILDCARDS:           f.wildcards,
-				ofp4.OFPTFPT_WRITE_SETFIELD:      f.hit.writeSetfield,
-				ofp4.OFPTFPT_WRITE_SETFIELD_MISS: f.miss.writeSetfield,
-				ofp4.OFPTFPT_APPLY_SETFIELD:      f.hit.applySetfield,
-				ofp4.OFPTFPT_APPLY_SETFIELD_MISS: f.miss.applySetfield,
-			}
-			for pType, oxmTypes := range props {
-				var ids []uint32
-				for _, oxmType := range oxmTypes {
-					switch t := oxmType.(type) {
-					case uint32:
-						ids = append(ids, t)
-					case oxmExperimenterKey:
-						if handler, ok := oxmHandlers[t]; ok {
-							base := make([]byte, 8)
-							binary.BigEndian.PutUint32(base, t.Type)
-							binary.BigEndian.PutUint32(base[4:], t.Experimenter)
-							if oxmId, err := handler.OxmId(base); err != nil {
-								log.Print(err)
-							} else {
-								ids = append(ids, binary.BigEndian.Uint32(oxmId))
-								ids = append(ids, binary.BigEndian.Uint32(oxmId[4:]))
-							}
-						} else {
-							log.Print("unknown oxm experimenter key")
-						}
+		}
+	} else { // This is setter.
+		pipe := self.ctrl.pipe
+		pipe.lock.Lock()
+		defer pipe.lock.Unlock()
+
+		candidate := make(map[uint8]*flowTable)
+		for _, arr := range self.reqs {
+			for _, req := range []encoding.BinaryMarshaler(arr.(ofp4.Array)) {
+				f := req.(ofp4.TableFeatures)
+				feature := flowTableFeature{
+					name:          f.Name,
+					metadataMatch: f.MetadataMatch,
+					metadataWrite: f.MetadataWrite,
+					config:        f.Config,
+					maxEntries:    f.MaxEntries,
+				}
+				feature.importProps(f.Properties)
+
+				if tbl, ok := pipe.flows[f.TableId]; ok && tbl == nil {
+					// table explicitly set to nil means, "that table does not exists."
+					self.createError(ofp4.OFPET_TABLE_FEATURES_FAILED, ofp4.OFPTFFC_BAD_TABLE)
+				} else if _, ok := candidate[f.TableId]; ok {
+					// DUP in request
+					self.createError(ofp4.OFPET_TABLE_FEATURES_FAILED, ofp4.OFPTFFC_EPERM)
+				} else {
+					candidate[f.TableId] = &flowTable{
+						lock:    &sync.RWMutex{},
+						feature: feature,
 					}
 				}
-				if len(oxmTypes) > 0 {
-					rf.Properties = append(rf.Properties, ofp4.TableFeaturePropOxm{
-						Type:   pType,
-						OxmIds: ids,
-					})
-				}
 			}
-			self.chunks = append(self.chunks, rf)
 		}
-	} else {
-		// XXX: set
+		for i := uint8(0); i <= ofp4.OFPTT_MAX; i++ {
+			if newTable, ok := candidate[i]; ok {
+				if oldTable, ok := pipe.flows[i]; ok && oldTable != nil {
+					for _, prio := range oldTable.priorities {
+						var newFlows []*flowEntry
+						for _, flows := range prio.flows {
+							for _, flow := range flows {
+								if err := newTable.feature.accepts(flow, prio.priority); err == nil {
+									newFlows = append(newFlows, flow)
+								} else {
+									log.Print(err) // notification
+								}
+							}
+						}
+						prio.rebuildIndex(newFlows)
+					}
+					oldTable.feature = newTable.feature
+				}
+			} else {
+				pipe.flows[i] = nil
+			}
+		}
 	}
 	return self
 }

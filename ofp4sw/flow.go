@@ -24,11 +24,8 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 		table = trial
 	} else {
 		table = &flowTable{
-			lock: &sync.RWMutex{},
-			feature: flowTableFeature{
-				metadataMatch: 0xFFFFFFFFFFFFFFFF,
-				metadataWrite: 0xFFFFFFFFFFFFFFFF,
-			},
+			lock:    &sync.RWMutex{},
+			feature: makeFlowTableFeature(),
 		}
 		pipe.flows[req.TableId] = table
 	}
@@ -85,8 +82,11 @@ type flowTable struct {
 }
 
 func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
-	flow, err := newFlowEntry(req)
-	if err != nil {
+	flow, e1 := newFlowEntry(req)
+	if e1 != nil {
+		return e1
+	}
+	if err := self.feature.accepts(flow, req.Priority); err != nil {
 		return err
 	}
 

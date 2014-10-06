@@ -2,7 +2,9 @@ package ofp4sw
 
 import (
 	"encoding"
+	"encoding/binary"
 	"github.com/hkwi/gopenflow/ofp4"
+	"log"
 )
 
 // Experimenter instructions and actions are identified by (experimenter-id, experimenter-type) pair.
@@ -64,6 +66,19 @@ func (self oxmKeyList) Have(key oxmKey) bool {
 	return false
 }
 
+type TableHandler interface {
+	// XXX: TBD
+}
+
+var tableHandlers map[experimenterKey]TableHandler = make(map[experimenterKey]TableHandler)
+
+func AddTableHandler(experimenter uint32, expType uint32, handler TableHandler) {
+	tableHandlers[experimenterKey{
+		Id:   experimenter,
+		Type: expType,
+	}] = handler
+}
+
 // special rule here. nil means "NOT SET"
 type flowTableFeatureProps struct {
 	inst          []instructionKey
@@ -77,8 +92,8 @@ type flowTableFeatureProps struct {
 
 type flowTableFeature struct {
 	name          string
-	metadataMatch uint64 // manually initialize with 0xFFFFFFFFFFFFFFFF
-	metadataWrite uint64 // manually initialize with 0xFFFFFFFFFFFFFFFF
+	metadataMatch uint64
+	metadataWrite uint64
 	config        uint32
 	maxEntries    uint32
 	// properties
@@ -88,7 +103,144 @@ type flowTableFeature struct {
 	miss      flowTableFeatureProps
 }
 
-func (self *flowTableFeature) importProps(props []encoding.BinaryMarshaler) {
+func makeFlowTableFeature() flowTableFeature {
+	return flowTableFeature{
+		metadataMatch: 0xFFFFFFFFFFFFFFFF,
+		metadataWrite: 0xFFFFFFFFFFFFFFFF,
+		maxEntries:    0xFFFFFFFF,
+	}
+}
+
+func (self flowTableFeature) exportProps() []encoding.BinaryMarshaler {
+	var props []encoding.BinaryMarshaler
+
+	instExport := func(pType uint16, keys []instructionKey) {
+		if keys == nil {
+			return
+		}
+		var ids []ofp4.Instruction
+		for _, key := range keys {
+			switch k := key.(type) {
+			case uint16:
+				ids = append(ids, ofp4.InstructionId{
+					Type: k,
+				})
+			case experimenterKey:
+				ids = append(ids, ofp4.InstructionExperimenter{
+					Experimenter: k.Id,
+					ExpType:      k.Type,
+				})
+			default:
+				panic("unexpected instruction key type")
+			}
+		}
+		props = append(props, ofp4.TableFeaturePropInstructions{
+			Type:           pType,
+			InstructionIds: ids,
+		})
+	}
+	instExport(ofp4.OFPTFPT_INSTRUCTIONS, self.hit.inst)
+	instExport(ofp4.OFPTFPT_INSTRUCTIONS_MISS, self.miss.inst)
+
+	oxmExport := func(pType uint16, keys []oxmKey) {
+		if keys == nil {
+			return
+		}
+		var ids []uint32
+		for _, key := range keys {
+			switch k := key.(type) {
+			case uint32:
+				ids = append(ids, k)
+			case oxmExperimenterKey:
+				if handler, ok := oxmHandlers[k]; ok {
+					base := make([]byte, 8)
+					binary.BigEndian.PutUint32(base, k.Type)
+					binary.BigEndian.PutUint32(base[4:], k.Experimenter)
+					if oxmId, err := handler.OxmId(base); err != nil {
+						log.Print(err)
+					} else {
+						ids = append(ids, binary.BigEndian.Uint32(oxmId))
+						ids = append(ids, binary.BigEndian.Uint32(oxmId[4:]))
+					}
+				} else {
+					log.Print("unknown oxm experimenter key")
+				}
+			}
+		}
+		props = append(props, ofp4.TableFeaturePropOxm{
+			Type:   pType,
+			OxmIds: ids,
+		})
+	}
+	oxmExport(ofp4.OFPTFPT_MATCH, self.match)
+	oxmExport(ofp4.OFPTFPT_WILDCARDS, self.wildcards)
+	oxmExport(ofp4.OFPTFPT_WRITE_SETFIELD, self.hit.writeSetfield)
+	oxmExport(ofp4.OFPTFPT_WRITE_SETFIELD_MISS, self.miss.writeSetfield)
+	oxmExport(ofp4.OFPTFPT_APPLY_SETFIELD, self.hit.applySetfield)
+	oxmExport(ofp4.OFPTFPT_APPLY_SETFIELD_MISS, self.miss.applySetfield)
+
+	nextExport := func(pType uint16, keys []uint8) {
+		if keys == nil {
+			return
+		}
+		props = append(props, ofp4.TableFeaturePropNextTables{
+			Type:         pType,
+			NextTableIds: keys,
+		})
+	}
+	nextExport(ofp4.OFPTFPT_NEXT_TABLES, self.hit.next)
+	nextExport(ofp4.OFPTFPT_NEXT_TABLES_MISS, self.miss.next)
+
+	actionExport := func(pType uint16, keys []actionKey) {
+		if keys == nil {
+			return
+		}
+		var ids []ofp4.Action
+		for _, key := range keys {
+			switch k := key.(type) {
+			case uint16:
+				ids = append(ids, ofp4.ActionGeneric{
+					Type: k,
+				})
+			case experimenterKey:
+				ids = append(ids, ofp4.ActionExperimenter{
+					Experimenter: k.Id,
+					ExpType:      k.Type,
+				})
+			default:
+				panic("unexpected action key type")
+			}
+		}
+		props = append(props, ofp4.TableFeaturePropActions{
+			Type:      pType,
+			ActionIds: ids,
+		})
+	}
+	actionExport(ofp4.OFPTFPT_WRITE_ACTIONS, self.hit.writeActions)
+	actionExport(ofp4.OFPTFPT_WRITE_ACTIONS_MISS, self.miss.writeActions)
+	actionExport(ofp4.OFPTFPT_APPLY_ACTIONS, self.hit.applyActions)
+	actionExport(ofp4.OFPTFPT_APPLY_ACTIONS_MISS, self.miss.applyActions)
+
+	experimenterExport := func(pType uint16, exps []experimenterProp) {
+		if exps == nil {
+			return
+		}
+		for _, exp := range exps {
+			props = append(props, ofp4.TableFeaturePropExperimenter{
+				Type:         pType,
+				Experimenter: exp.Id,
+				ExpType:      exp.Type,
+				Data:         exp.Data,
+			})
+		}
+	}
+	experimenterExport(ofp4.OFPTFPT_EXPERIMENTER, self.hit.experimenter)
+	experimenterExport(ofp4.OFPTFPT_EXPERIMENTER_MISS, self.miss.experimenter)
+
+	return props
+}
+
+func (self *flowTableFeature) importProps(props []encoding.BinaryMarshaler) error {
 	for _, prop := range props {
 		switch p := prop.(type) {
 		case *ofp4.TableFeaturePropInstructions:
@@ -183,12 +335,19 @@ func (self *flowTableFeature) importProps(props []encoding.BinaryMarshaler) {
 				panic("unexpected")
 			}
 		case *ofp4.TableFeaturePropExperimenter:
+			eKey := experimenterKey{
+				Id:   p.Experimenter,
+				Type: p.ExpType,
+			}
+			if _, ok := tableHandlers[eKey]; !ok {
+				return ofp4.Error{
+					Type: ofp4.OFPET_TABLE_FEATURES_FAILED,
+					Code: ofp4.OFPTFFC_BAD_ARGUMENT,
+				}
+			}
 			exp := experimenterProp{
-				experimenterKey: experimenterKey{
-					Id:   p.Experimenter,
-					Type: p.ExpType,
-				},
-				Data: p.Data,
+				experimenterKey: eKey,
+				Data:            p.Data,
 			}
 			switch p.Type {
 			case ofp4.OFPTFPT_EXPERIMENTER:
@@ -200,6 +359,7 @@ func (self *flowTableFeature) importProps(props []encoding.BinaryMarshaler) {
 			}
 		}
 	}
+	return nil
 }
 
 // See openflow switch 1.3.4 spec "Flow Table Modification Messages" page 40
@@ -217,7 +377,7 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 	}
 
 	if entry.instGoto != 0 {
-		if !instKeys.Have(uint16(ofp4.OFPIT_GOTO_TABLE)) {
+		if instKeys != nil && !instKeys.Have(uint16(ofp4.OFPIT_GOTO_TABLE)) {
 			return ofp4.Error{
 				Type: ofp4.OFPET_BAD_INSTRUCTION,
 				Code: ofp4.OFPBIC_UNSUP_INST,
@@ -245,8 +405,9 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 			}
 		}
 	}
+
 	if entry.instMetadata != nil {
-		if !instKeys.Have(uint16(ofp4.OFPIT_WRITE_METADATA)) {
+		if instKeys != nil && !instKeys.Have(uint16(ofp4.OFPIT_WRITE_METADATA)) {
 			return ofp4.Error{
 				Type: ofp4.OFPET_BAD_INSTRUCTION,
 				Code: ofp4.OFPBIC_UNSUP_INST,
@@ -265,6 +426,7 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 			}
 		}
 	}
+
 	if !isTableMiss && self.match != nil {
 		specified := make(map[oxmKey]bool)
 		for _, k := range self.match {
@@ -309,7 +471,7 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 	}
 
 	if len([]action(entry.instApply)) > 0 {
-		if !instKeys.Have(uint16(ofp4.OFPIT_APPLY_ACTIONS)) {
+		if instKeys != nil && !instKeys.Have(uint16(ofp4.OFPIT_APPLY_ACTIONS)) {
 			return ofp4.Error{
 				Type: ofp4.OFPET_BAD_INSTRUCTION,
 				Code: ofp4.OFPBIC_UNSUP_INST,
@@ -354,8 +516,9 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 			// XXX: Experimenter
 		}
 	}
+
 	if entry.instWrite.Len() > 0 {
-		if !instKeys.Have(uint16(ofp4.OFPIT_WRITE_ACTIONS)) {
+		if instKeys != nil && !instKeys.Have(uint16(ofp4.OFPIT_WRITE_ACTIONS)) {
 			return ofp4.Error{
 				Type: ofp4.OFPET_BAD_INSTRUCTION,
 				Code: ofp4.OFPBIC_UNSUP_INST,
@@ -386,9 +549,10 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 			}
 		}
 	}
+
 	for _, insts := range entry.instExp {
 		for _, inst := range insts {
-			if !instKeys.Have(inst.experimenterKey) {
+			if instKeys != nil && !instKeys.Have(inst.experimenterKey) {
 				return ofp4.Error{
 					Type: ofp4.OFPET_BAD_INSTRUCTION,
 					Code: ofp4.OFPBIC_UNSUP_INST,
@@ -396,8 +560,9 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 			}
 		}
 	}
+
 	if entry.instMeter != 0 {
-		if !instKeys.Have(uint16(ofp4.OFPIT_METER)) {
+		if instKeys != nil && !instKeys.Have(uint16(ofp4.OFPIT_METER)) {
 			return ofp4.Error{
 				Type: ofp4.OFPET_BAD_INSTRUCTION,
 				Code: ofp4.OFPBIC_UNSUP_INST,

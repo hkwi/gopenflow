@@ -26,7 +26,7 @@ type frame struct {
 	tunnelId   uint64
 	queueId    uint32
 	actionSet  actionSet
-	expData    map[experimenterKey]interface{}
+	expOxm     map[experimenterKey][]byte // experimenter may set frame associated oxms, which will be sent over by PacketIn
 }
 
 func (self frame) isInvalid() bool {

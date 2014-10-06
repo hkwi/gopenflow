@@ -15,7 +15,7 @@ AddInstructionHandler registers this InstructionHandler.
 */
 type InstructionHandler interface {
 	Order() int
-	Execute(frame, userData []byte) ([]byte, error)
+	Execute(frame, instructionData []byte) ([]byte, error)
 }
 
 var instructionHandlers map[experimenterKey]InstructionHandler = make(map[experimenterKey]InstructionHandler)
