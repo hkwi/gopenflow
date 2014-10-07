@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+type MessageHandler interface {
+	Execute(request []byte) (response [][]byte)
+}
+
+var messageHandlers map[experimenterKey]MessageHandler = make(map[experimenterKey]MessageHandler)
+
+func AddMessageHandler(experimenter uint32, expType uint32, handler MessageHandler) {
+	messageHandlers[experimenterKey{
+		Id:   experimenter,
+		Type: expType,
+	}] = handler
+}
+
 type controller struct {
 	lock         *sync.RWMutex
 	channels     []*channelInternal
@@ -545,7 +558,7 @@ type ofmReply struct {
 	ctrl    *controller
 	channel ControlChannel
 	req     *ofp4.Message
-	resps   [][]byte
+	resps   []encoding.BinaryMarshaler
 }
 
 func (self *ofmReply) createError(ofpet uint16, code uint16) {
@@ -564,17 +577,15 @@ func (self *ofmReply) createError(ofpet uint16, code uint16) {
 				Data: buf,
 			},
 		}
-		if msgbin, err := msg.MarshalBinary(); err != nil {
-			panic(err)
-		} else {
-			self.resps = append(self.resps, msgbin)
-		}
+		self.resps = append(self.resps, msg)
 	}
 }
 
 func (self ofmReply) Reduce() {
 	for _, resp := range self.resps {
-		if err := self.channel.Egress(resp); err != nil {
+		if msgbin, err := resp.MarshalBinary(); err != nil {
+			panic(err)
+		} else if err := self.channel.Egress(msgbin); err != nil {
 			log.Print(err)
 		}
 	}
@@ -593,11 +604,7 @@ func (self *ofmEcho) Map() Reducable {
 		},
 		Body: self.req.Body,
 	}
-	if msgbin, err := msg.MarshalBinary(); err != nil {
-		log.Print(err)
-	} else {
-		self.resps = append(self.resps, msgbin)
-	}
+	self.resps = append(self.resps, msg)
 	return self
 }
 
@@ -606,7 +613,30 @@ type ofmExperimenter struct {
 }
 
 func (self *ofmExperimenter) Map() Reducable {
-	self.createError(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BAD_EXPERIMENTER)
+	exp := self.req.Body.(ofp4.Experimenter)
+	key := experimenterKey{
+		Id:   exp.Experimenter,
+		Type: exp.ExpType,
+	}
+	if handler, ok := messageHandlers[key]; ok {
+		for _, rep := range handler.Execute(exp.Data) {
+			msg := ofp4.Message{
+				Header: ofp4.Header{
+					Version: self.req.Version,
+					Type:    ofp4.OFPT_EXPERIMENTER,
+					Xid:     self.req.Xid,
+				},
+				Body: ofp4.Experimenter{
+					Experimenter: exp.Experimenter,
+					ExpType:      exp.ExpType,
+					Data:         rep,
+				},
+			}
+			self.resps = append(self.resps, msg)
+		}
+	} else {
+		self.createError(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BAD_EXPERIMENTER)
+	}
 	return self
 }
 
@@ -628,11 +658,7 @@ func (self *ofmFeaturesRequest) Map() Reducable {
 			Capabilities: 0,
 		},
 	}
-	if msgbin, err := msg.MarshalBinary(); err != nil {
-		log.Print(err)
-	} else {
-		self.resps = append(self.resps, msgbin)
-	}
+	self.resps = append(self.resps, msg)
 	return self
 }
 
@@ -652,11 +678,7 @@ func (self *ofmGetConfigRequest) Map() Reducable {
 			MissSendLen: self.ctrl.missSendLen,
 		},
 	}
-	if msgbin, err := msg.MarshalBinary(); err != nil {
-		log.Print(err)
-	} else {
-		self.resps = append(self.resps, msgbin)
-	}
+	self.resps = append(self.resps, msg)
 	return self
 }
 
@@ -987,11 +1009,7 @@ func (self *ofmMulti) Reduce() {
 					Body:  ofp4.Array(payload),
 				},
 			}
-			if msgbin, err := msg.MarshalBinary(); err != nil {
-				log.Print(err)
-			} else {
-				self.resps = append(self.resps, msgbin)
-			}
+			self.resps = append(self.resps, msg)
 			payload = payload[:0]
 			payloadLength = 0
 		}
@@ -1010,11 +1028,7 @@ func (self *ofmMulti) Reduce() {
 			Body:  ofp4.Array(payload),
 		},
 	}
-	if msgbin, err := msg.MarshalBinary(); err != nil {
-		log.Print(err)
-	} else {
-		self.resps = append(self.resps, msgbin)
-	}
+	self.resps = append(self.resps, msg)
 	self.ofmReply.Reduce()
 }
 
@@ -1523,11 +1537,7 @@ func (self *ofmBarrierRequest) Map() Reducable {
 			Xid:     self.req.Xid,
 		},
 	}
-	if msgbin, err := msg.MarshalBinary(); err != nil {
-		log.Print(err)
-	} else {
-		self.resps = append(self.resps, msgbin)
-	}
+	self.resps = append(self.resps, msg)
 	return self
 }
 
