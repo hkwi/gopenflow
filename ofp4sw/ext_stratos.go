@@ -32,14 +32,18 @@ func (self StratosOxm) Match(data Frame, oxms []byte) (bool, error) {
 			default:
 				return false, fmt.Errorf("unsupported field")
 			case STRATOS_BASIC_LINKTYPE:
+				fieldEmpty := true
 				for p := range ofp4.OxmBytes(data.Match).Iter() {
 					field := ofp4.OxmGenericBytes(p)
-					if field.Ok() &&
-						ofp4.OxmExperimenterBytes(field).Id() == StratosOxmBasicId &&
-						field.ExpType() == STRATOS_BASIC_LINKTYPE &&
-						bytes.Equal(field.Value(), oxm.Value()) {
-						matchFail = false
+					if field.Ok() && oxm.Id() == field.Id() {
+						fieldEmpty = false
+						if bytes.Equal(oxm.Value(), field.Value()) {
+							matchFail = false
+						}
 					}
+				}
+				if fieldEmpty && oxm.Value()[0] == 1 { // 1=LINKTYPE_ETHERNET
+					matchFail = false
 				}
 			}
 		}
@@ -64,9 +68,7 @@ func (self StratosOxm) Fit(narrow, wide []byte) (bool, error) {
 			case STRATOS_BASIC_LINKTYPE:
 				for w := range ofp4.OxmBytes(wide).Iter() {
 					wg := ofp4.OxmGenericBytes(w)
-					if wg.Ok() &&
-						ofp4.OxmExperimenterBytes(w).Id() == StratosOxmBasicId &&
-						wg.ExpType() == STRATOS_BASIC_LINKTYPE &&
+					if wg.Ok() && ng.Id() == wg.Id() &&
 						bytes.Equal(ng.Value(), wg.Value()) {
 						matchFail = false
 					}
@@ -88,9 +90,7 @@ func (self StratosOxm) Conflict(a, b []byte) (bool, error) {
 			case STRATOS_BASIC_LINKTYPE:
 				for bb := range ofp4.OxmBytes(b).Iter() {
 					bbg := ofp4.OxmGenericBytes(bb)
-					if bbg.Ok() &&
-						ofp4.OxmExperimenterBytes(bb).Id() == StratosOxmBasicId &&
-						bbg.ExpType() == STRATOS_BASIC_LINKTYPE {
+					if bbg.Ok() && abg.Id() == bbg.Id() {
 						if !bytes.Equal(abg.Value(), bbg.Value()) {
 							return true, nil
 						}
