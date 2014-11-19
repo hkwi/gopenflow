@@ -3,6 +3,7 @@
 package ofp4sw
 
 import (
+	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"errors"
 	"log"
@@ -122,7 +123,7 @@ func (self *NamedPort) handleNetdev(ev NetdevUpdate) {
 						}
 						evs := []syscall.EpollEvent{syscall.EpollEvent{}}
 						for {
-							if data, err := handle.Get(); err != nil {
+							if data, hatype, err := handle.Get(); err != nil {
 								switch e := err.(type) {
 								case pktSockIgnore:
 									// continue
@@ -156,9 +157,17 @@ func (self *NamedPort) handleNetdev(ev NetdevUpdate) {
 									return
 								}
 							} else {
-								self.ingress <- Frame{
-									Data: data,
+								fr := Frame{Data: data}
+								arpHardwareToLinkType := map[uint16]layers.LinkType{
+									syscall.ARPHRD_ETHER:              layers.LinkTypeEthernet,
+									syscall.ARPHRD_IEEE80211:          layers.LinkTypeIEEE802_11,
+									syscall.ARPHRD_IEEE80211_RADIOTAP: layers.LinkTypeIEEE80211Radio,
 								}
+								if linkType, ok := arpHardwareToLinkType[hatype]; ok && linkType != layers.LinkTypeEthernet {
+									value := [1]byte{uint8(linkType)}
+									fr.Match = []byte(MakeOxmStratosBasic(STRATOS_BASIC_LINKTYPE, value[:], nil))
+								}
+								self.ingress <- fr
 							}
 						}
 					}()
@@ -241,21 +250,22 @@ func (self pktSockIgnore) Error() string {
 	return string(self)
 }
 
-func (self pktSock) Get() ([]byte, error) {
+func (self pktSock) Get() ([]byte, uint16, error) {
 	p := make([]byte, 32*1024)                 // enough for jumbo frame
 	oob := make([]byte, syscall.CmsgSpace(20)) // msg_control, 20 = sizeof(auxdata)
 	n, _, flags, from, err := syscall.Recvmsg(self.fd, p, oob, syscall.MSG_TRUNC|syscall.MSG_DONTWAIT)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	if from.(*syscall.SockaddrLinklayer).Ifindex != self.ifindex {
-		return nil, pktSockIgnore("ifindex mismatch")
+	sa_ll := from.(*syscall.SockaddrLinklayer)
+	if sa_ll.Ifindex != self.ifindex {
+		return nil, 0, pktSockIgnore("ifindex mismatch")
 	}
 
 	if flags&syscall.MSG_CTRUNC == 0 {
 		if cmsgs, err := syscall.ParseSocketControlMessage(oob); err != nil {
-			return nil, err
+			return nil, 0, err
 		} else {
 			for _, cmsg := range cmsgs {
 				if cmsg.Header.Type == PACKET_AUXDATA {
@@ -271,7 +281,7 @@ func (self pktSock) Get() ([]byte, error) {
 					case 18:
 						// pass
 					default:
-						return nil, errors.New("unexpected PACKET_AUXDATA")
+						return nil, 0, errors.New("unexpected PACKET_AUXDATA")
 					}
 					if aux.Status&TP_STATUS_VLAN_VALID != 0 {
 						vlanTci = aux.VlanTci
@@ -279,13 +289,13 @@ func (self pktSock) Get() ([]byte, error) {
 						copy(p[16:], p[12:n])
 						binary.BigEndian.PutUint16(p[12:], vlanTpid)
 						binary.BigEndian.PutUint16(p[14:], vlanTci)
-						return p[:n+4], nil
+						return p[:n+4], sa_ll.Hatype, nil
 					}
 				}
 			}
 		}
 	}
-	return p[:n], nil
+	return p[:n], sa_ll.Hatype, nil
 }
 
 func (self pktSock) Put(data []byte) error {

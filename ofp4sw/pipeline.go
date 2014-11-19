@@ -110,7 +110,9 @@ func (pipe Pipeline) AddPort(port Port, portNo uint32) error {
 					inPort:    portNo,
 					phyInPort: phyInPort,
 				}
-				pkt.push(data)
+				if err := pkt.push(data); err != nil {
+					log.Print("unsupported packet")
+				}
 
 				pipe.datapath <- &flowTableWork{
 					data:    data,

@@ -26,6 +26,8 @@ func main() {
 	flag.Int64Var(&datapathId, "i", 0, "datapath id")
 	flag.Parse()
 
+	ofp4sw.AddOxmHandler(0xffff<<16, 0xFF00E04D, ofp4sw.StratosOxm{})
+
 	pipe := ofp4sw.NewPipeline()
 	pipe.DatapathId = uint64(datapathId)
 	for i, e := range strings.Split(ports, ",") {

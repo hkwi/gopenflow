@@ -44,6 +44,7 @@ func (self Frame) push(data *frame) error {
 		}
 	}
 	data.experimenter = m.exp
+
 	return nil
 }
 
@@ -124,8 +125,24 @@ func (self frame) isInvalid() bool {
 
 // useLayers makes sure that layers are available, and invalidate serialized buffer for future layer modification.
 func (self *frame) useLayers() {
+	hwmap := map[layers.LinkType]gopacket.Decoder{
+		layers.LinkTypeEthernet:       layers.LayerTypeEthernet,
+		layers.LinkTypeIEEE802_11:     layers.LayerTypeDot11,
+		layers.LinkTypeIEEE80211Radio: layers.LayerTypeRadioTap,
+	}
 	if len(self.layers) == 0 {
-		self.layers = gopacket.NewPacket(self.serialized, layers.LayerTypeEthernet, gopacket.NoCopy).Layers()
+		var rootLayer gopacket.Decoder = layers.LayerTypeEthernet
+		if oxms, ok := self.experimenter[StratosOxmBasicId]; ok {
+			for f := range ofp4.OxmBytes(oxms).Iter() {
+				gen := ofp4.OxmGenericBytes(f)
+				if gen.Ok() && gen.ExpType() == STRATOS_BASIC_LINKTYPE {
+					if l, ok := hwmap[layers.LinkType(gen.Value()[0])]; ok {
+						rootLayer = l
+					}
+				}
+			}
+		}
+		self.layers = gopacket.NewPacket(self.serialized, rootLayer, gopacket.NoCopy).Layers()
 	}
 	self.serialized = self.serialized[:0]
 }
