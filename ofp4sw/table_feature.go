@@ -52,7 +52,7 @@ func (self actionKeyList) Have(key actionKey) bool {
 
 // Static types are
 // 1) uint32 for OFPXMC_OPENFLOW_BASIC oxm field
-// 2) oxmExperimenterKey
+// 2) uint64 for OFPXMC_EXPERIMENTER oxm field
 type oxmKey interface{}
 
 type oxmKeyList []oxmKey
@@ -152,12 +152,11 @@ func (self flowTableFeature) exportProps() []encoding.BinaryMarshaler {
 			switch k := key.(type) {
 			case uint32:
 				ids = append(ids, k)
-			case oxmExperimenterKey:
+			case uint64:
 				if handler, ok := oxmHandlers[k]; ok {
 					base := make([]byte, 8)
-					binary.BigEndian.PutUint32(base, k.Type)
-					binary.BigEndian.PutUint32(base[4:], k.Experimenter)
-					if oxmId, err := handler.OxmId(base); err != nil {
+					binary.BigEndian.PutUint64(base, k)
+					if oxmId, err := handler.OxmId(base); err != nil { // give handler a chance to modify the key
 						log.Print(err)
 					} else {
 						ids = append(ids, binary.BigEndian.Uint32(oxmId))
@@ -305,17 +304,17 @@ func (self *flowTableFeature) importProps(props []encoding.BinaryMarshaler) erro
 			}
 		case *ofp4.TableFeaturePropOxm:
 			ids := []oxmKey{}
-			var exp *oxmExperimenterKey
+			var exp *uint64
 			for _, v := range p.OxmIds {
 				if exp == nil {
 					if ofp4.OxmHeader(v).Class() == ofp4.OFPXMC_EXPERIMENTER {
-						exp = &oxmExperimenterKey{Type: v}
+						capture := uint64(v) << 32
+						exp = &capture
 					} else {
 						ids = append(ids, v)
 					}
 				} else {
-					exp.Experimenter = v
-					ids = append(ids, *exp)
+					ids = append(ids, *exp|uint64(v))
 					exp = nil
 				}
 			}

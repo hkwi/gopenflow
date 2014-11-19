@@ -36,16 +36,14 @@ type OxmHandler interface {
 /*
 oxm_type without oxm_has_mask and oxm_length for OFPXMC_EXPERIMENTER.
 */
-var oxmHandlers map[oxmExperimenterKey]OxmHandler = make(map[oxmExperimenterKey]OxmHandler)
+var oxmHandlers map[uint64]OxmHandler = make(map[uint64]OxmHandler)
 
 func AddOxmHandler(oxmType uint32, experimenter uint32, handle OxmHandler) {
 	if ofp4.OxmHeader(oxmType).Class() != ofp4.OFPXMC_EXPERIMENTER {
 		panic("oxmType must have OFPXMC_EXPERIMENTER class")
 	}
-	oxmHandlers[oxmExperimenterKey{
-		Type:         ofp4.OxmHeader(oxmType).Type(), // mask-out HasMask and Length
-		Experimenter: experimenter,
-	}] = handle
+	key := uint64(oxmType&ofp4.OXM_TYPE_MASK)<<32 | uint64(experimenter)
+	oxmHandlers[key] = handle
 }
 
 var oxmOfbAll []uint32 = []uint32{
@@ -245,36 +243,9 @@ func (self oxmBasic) Equal(target oxmBasic) bool {
 	return true
 }
 
-type oxmExperimenterKey struct {
-	Type         uint32 // experimenter may define field
-	Experimenter uint32
-}
-
-type oxmExperimenter struct {
-	oxmExperimenterKey
-	Data []byte
-}
-
-func (self oxmExperimenter) MarshalBinary() ([]byte, error) {
-	mt := ofp4.OxmHeader(self.Type)
-	mt.SetLength(4 + len(self.Data))
-	buf := make([]byte, 8+len(self.Data))
-	binary.BigEndian.PutUint32(buf, uint32(mt))
-	binary.BigEndian.PutUint32(buf[4:], self.Experimenter)
-	copy(buf[8:], self.Data)
-	return buf, nil
-}
-
-func (self oxmExperimenter) Equal(target oxmExperimenter) bool {
-	if self.oxmExperimenterKey != target.oxmExperimenterKey {
-		return false
-	}
-	return bytes.Equal(self.Data, target.Data)
-}
-
 type match struct {
 	basic []oxmBasic
-	exp   map[oxmExperimenterKey][]byte // value may contain multiple oxmtlv.
+	exp   map[uint64][]byte // value may contain multiple oxmtlv.
 }
 
 func (self match) Match(data frame) bool {
@@ -390,40 +361,29 @@ func (self match) MarshalBinary() ([]byte, error) {
 }
 
 func (self *match) UnmarshalBinary(msg []byte) error {
-	for _, oxmtlv := range OxmSplit(msg) {
-		mt := ofp4.OxmHeader(binary.BigEndian.Uint32(oxmtlv))
-		if mt == 0 { // this happens at OFPAT_SET_FIELD padding
-			break
-		}
-
-		switch mt.Class() {
+	for oxm := range ofp4.OxmBytes(msg).Iter() {
+		hdr := oxm.Header()
+		switch hdr.Class() {
 		case ofp4.OFPXMC_OPENFLOW_BASIC:
 			m := oxmBasic{
-				Type: mt.Type(),
-			}
-			if mt.HasMask() {
-				length := mt.Length() / 2
-				m.Value = oxmtlv[4 : 4+length]
-				m.Mask = oxmtlv[4+length:]
-			} else {
-				m.Value = oxmtlv[4:]
+				Type:  hdr.Type(),
+				Value: oxm.Value(),
+				Mask:  oxm.Mask(),
 			}
 			self.basic = append(self.basic, m)
 		case ofp4.OFPXMC_EXPERIMENTER:
-			if len(oxmtlv) < 8 {
+			exp := ofp4.OxmExperimenterBytes(oxm)
+			if !exp.Ok() {
 				return ofp4.Error{
 					Code: ofp4.OFPET_BAD_MATCH,
 					Type: ofp4.OFPBRC_BAD_LEN,
 				}
 			}
-			key := oxmExperimenterKey{
-				Type:         mt.Type(),
-				Experimenter: binary.BigEndian.Uint32(oxmtlv[4:]),
-			}
+			key := exp.Id()
 			if self.exp == nil {
-				self.exp = make(map[oxmExperimenterKey][]byte)
+				self.exp = make(map[uint64][]byte)
 			}
-			self.exp[key] = append(self.exp[key], oxmtlv...)
+			self.exp[key] = append(self.exp[key], []byte(oxm)...)
 		default:
 			return ofp4.Error{
 				Type: ofp4.OFPET_BAD_MATCH,
@@ -437,7 +397,7 @@ func (self *match) UnmarshalBinary(msg []byte) error {
 func (self match) Expand() (match, error) {
 	var ret match
 	basicMap := make(map[uint32]oxmBasic)
-	expMap := make(map[oxmExperimenterKey]BytesSet)
+	expMap := make(map[uint64]BytesSet)
 
 	addBasic := func(b oxmBasic) error {
 		k := b.Type
@@ -481,9 +441,9 @@ func (self match) Expand() (match, error) {
 				}
 			}
 			for k, tlvs := range full.exp {
-				for _, tlv := range OxmSplit(tlvs) {
+				for oxm := range ofp4.OxmBytes(tlvs).Iter() {
 					c := expMap[k]
-					c.Add(tlv)
+					c.Add([]byte(oxm))
 					expMap[k] = c
 				}
 			}
@@ -501,7 +461,7 @@ func (self match) Expand() (match, error) {
 			buf = append(buf, v...)
 		}
 		if ret.exp == nil {
-			ret.exp = make(map[oxmExperimenterKey][]byte)
+			ret.exp = make(map[uint64][]byte)
 		}
 		ret.exp[k] = buf
 	}

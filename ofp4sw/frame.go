@@ -115,7 +115,7 @@ type frame struct {
 	tunnelId     uint64
 	queueId      uint32
 	actionSet    actionSet
-	experimenter map[oxmExperimenterKey][]byte // experimenter may set frame associated oxm tlvs, which will be sent over by PacketIn
+	experimenter map[uint64][]byte // experimenter may set frame associated oxm tlvs, which will be sent over by PacketIn
 }
 
 func (self frame) isInvalid() bool {
@@ -177,7 +177,7 @@ func (self frame) clone() *frame {
 	aset := makeActionSet()
 	aset.Write(self.actionSet)
 
-	exp := make(map[oxmExperimenterKey][]byte)
+	exp := make(map[uint64][]byte)
 	for k, v := range self.experimenter {
 		value := make([]byte, len(v))
 		copy(value, v)
