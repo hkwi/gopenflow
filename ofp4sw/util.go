@@ -67,6 +67,15 @@ func MapReduce(works chan MapReducable, workers int) {
 	}
 }
 
+/*
+BytesSet is useful to remove duplicate byte sequence.
+
+Usage:
+       vat bset BytesSet
+       bset.Add([]byte("test"))
+       bset.Add([]byte("test"))
+       log.Print([][]byte(bset))
+*/
 type BytesSet [][]byte
 
 func (self *BytesSet) Add(seq []byte) {
