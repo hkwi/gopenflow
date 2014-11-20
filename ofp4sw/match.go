@@ -170,19 +170,6 @@ func oxmBasicPrereq(oxmType uint32) *oxmBasic {
 	return ext
 }
 
-func OxmSplit(msg []byte) (oxms [][]byte) {
-	for len(msg) > 4 {
-		mt := ofp4.OxmHeader(binary.BigEndian.Uint32(msg))
-		if mt == 0 { // this happens at OFPAT_SET_FIELD padding
-			break
-		}
-		length := mt.Length()
-		oxms = append(oxms, msg[:4+length])
-		msg = msg[4+length:]
-	}
-	return
-}
-
 // basicMatch represents OFPMT_OXM + OFPXMC_OPENFLOW_BASIC series.
 type oxmBasic struct {
 	Type  uint32 // mask and length must be masked-out
