@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"code.google.com/p/gopacket"
+	"code.google.com/p/gopacket/layers"
 	"github.com/hkwi/gopenflow/ofp4"
 )
 
@@ -19,11 +21,38 @@ var StratosOxmBasicId uint64 = (ofp4.OFPXMC_EXPERIMENTER<<ofp4.OXM_CLASS_SHIFT|S
 
 const (
 	STRATOS_BASIC_LINKTYPE = 1
+	STRATOS_BASIC_DOT11_FRAME_CTRL = 2
+	STRATOS_BASIC_BSSID = 3
+	STRATOS_BASIC_SSID = 4
 )
+
+func getLinkType(data Frame) uint8 {
+	for oxm := range ofp4.OxmBytes(data.Match).Iter() {
+		g := ofp4.OxmGenericBytes(oxm)
+		if g.Ok() && ofp4.OxmExperimenterBytes(oxm).Id()==StratosOxmBasicId && g.ExpType()==STRATOS_BASIC_LINKTYPE {
+			return g.Value()[0]
+		}
+	}
+	return 1
+}
+
+func getPacket(data Frame) gopacket.Packet {
+	hwmap := map[uint8]gopacket.Decoder{
+		0x01: layers.LayerTypeEthernet,
+		0x69: layers.LayerTypeDot11,
+		0x7f: layers.LayerTypeRadioTap,
+	}
+	if dec,ok := hwmap[getLinkType(data)]; ok {
+		return gopacket.NewPacket(data.Data, dec, gopacket.Lazy)
+	}
+	return nil
+}
 
 type StratosOxm struct{}
 
 func (self StratosOxm) Match(data Frame, oxms []byte) (bool, error) {
+	var pkt gopacket.Packet
+	linkType := getLinkType(data)
 	for m := range ofp4.OxmBytes(oxms).Iter() {
 		matchFail := true
 		oxm := ofp4.OxmGenericBytes(m)
@@ -32,18 +61,81 @@ func (self StratosOxm) Match(data Frame, oxms []byte) (bool, error) {
 			default:
 				return false, fmt.Errorf("unsupported field")
 			case STRATOS_BASIC_LINKTYPE:
-				fieldEmpty := true
-				for p := range ofp4.OxmBytes(data.Match).Iter() {
-					field := ofp4.OxmGenericBytes(p)
-					if field.Ok() && oxm.Id() == field.Id() {
-						fieldEmpty = false
-						if bytes.Equal(oxm.Value(), field.Value()) {
+				if oxm.Value()[0]==linkType {
+					matchFail = false
+				}
+			case STRATOS_BASIC_DOT11_FRAME_CTRL:
+				if pkt == nil {
+					pkt = getPacket(data)
+				}
+				if dot11,ok := pkt.Layer(layers.LayerTypeDot11).(*layers.Dot11); ok {
+					field := make([]byte, 2)
+					field[0] = uint8(dot11.Type) << 2 | dot11.Proto
+					field[1] = uint8(dot11.Flags)
+					
+					value := oxm.Value()
+					mask := oxm.Mask()
+					if len(mask) > 0 {
+						field = maskBytes(field, mask)
+						value = maskBytes(value, mask)
+					}
+					if bytes.Equal(field, value) {
+						matchFail = false
+					}
+				}
+			case STRATOS_BASIC_BSSID:
+				if pkt == nil {
+					pkt = getPacket(data)
+				}
+				if dot11 := pkt.Layer(layers.LayerTypeDot11); dot11 != nil {
+					var bssid []byte
+					if t, ok := dot11.(*layers.Dot11); ok {
+						if t.Flags.ToDS() {
+							if t.Flags.FromDS() {
+								// 4addr, no bssid
+							} else {
+								bssid = []byte(t.Address1)
+							}
+						} else {
+							if t.Flags.FromDS() {
+								bssid = []byte(t.Address2)
+							} else {
+								bssid = []byte(t.Address3)
+							}
+						}
+					}
+					if bssid != nil {
+						value := oxm.Value()
+						mask := oxm.Mask()
+						if len(mask) > 0 {
+							bssid = maskBytes(bssid, mask)
+							value = maskBytes(value, mask)
+						}
+						if bytes.Equal(bssid, value) {
 							matchFail = false
 						}
 					}
 				}
-				if fieldEmpty && oxm.Value()[0] == 1 { // 1=LINKTYPE_ETHERNET
-					matchFail = false
+			case STRATOS_BASIC_SSID:
+				if pkt == nil {
+					pkt = getPacket(data)
+				}
+				for _, l := range pkt.Layers() {
+					if el,ok := l.(*layers.Dot11InformationElement); ok {
+						if el.ID == layers.Dot11InformationElementIDSSID {
+							info := make([]byte, 32)
+							copy(info, el.Info)
+							value := oxm.Value()
+							mask := oxm.Mask()
+							if len(mask) > 0 {
+								info = maskBytes(info, mask)
+								value = maskBytes(value, mask)
+							}
+							if bytes.Equal(info, value) {
+								matchFail = false
+							}
+						}
+					}
 				}
 			}
 		}
@@ -139,3 +231,5 @@ func MakeOxmStratosBasic(field uint16, value []byte, mask []byte) ofp4.OxmBytes 
 	ret = append(ret, mask...)
 	return ofp4.OxmBytes(ret)
 }
+
+

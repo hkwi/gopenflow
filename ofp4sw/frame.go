@@ -274,11 +274,29 @@ func (data frame) getValue(oxmType uint32) ([]byte, error) {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				return toMatchBytes(t.DstMAC)
 			}
+			if t, ok := layer.(*layers.Dot11); ok {
+				if t.Flags.ToDS() {
+					return toMatchBytes(t.Address3)
+				} else {
+					return toMatchBytes(t.Address1)
+				}
+			}
 		}
 	case ofp4.OXM_OF_ETH_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				return toMatchBytes(t.SrcMAC)
+			}
+			if t, ok := layer.(*layers.Dot11); ok {
+				if t.Flags.FromDS() {
+					if t.Flags.ToDS() {
+						return toMatchBytes(t.Address4)
+					} else {
+						return toMatchBytes(t.Address3)
+					}
+				} else {
+					return toMatchBytes(t.Address2)
+				}
 			}
 		}
 	case ofp4.OXM_OF_ETH_TYPE:
