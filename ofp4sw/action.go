@@ -27,17 +27,14 @@ const (
 AddActionHandler registers this ActionHandler.
 */
 type ActionHandler interface {
-	Order() int
+	Order([]byte) int
 	Execute(frame Frame, actionData []byte) (Frame, error)
 }
 
-var actionHandlers map[experimenterKey]ActionHandler = make(map[experimenterKey]ActionHandler)
+var actionHandlers map[uint32]ActionHandler = make(map[uint32]ActionHandler)
 
-func AddActionHandler(experimenter uint32, expType uint32, handle ActionHandler) {
-	actionHandlers[experimenterKey{
-		Id:   experimenter,
-		Type: expType,
-	}] = handle
+func AddActionHandler(experimenter uint32, handle ActionHandler) {
+	actionHandlers[experimenter] = handle
 }
 
 type outputToPort struct {
@@ -45,6 +42,7 @@ type outputToPort struct {
 	outPort   uint32
 	maxLen    uint16
 	tableId   uint8
+	cookie    uint64
 	reason    uint8
 	tableMiss bool
 }
@@ -56,36 +54,49 @@ type outputToGroup struct {
 
 type action interface {
 	Key() actionKey
-	process(f *frame) (*outputToPort, *outputToGroup, error)
+	Process(f *frame) (*outputToPort, *outputToGroup, error)
+	MarshalBinary() (data []byte, err error)
 }
 
-type actionOutput ofp4.ActionOutput
+type actionOutput struct {
+	Port   uint32
+	MaxLen uint16
+}
 
 func (self actionOutput) Key() actionKey {
 	return uint16(ofp4.OFPAT_OUTPUT)
 }
 
-func (a actionOutput) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionOutput) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	return &outputToPort{
 		data:    data.clone(),
-		outPort: a.Port,
-		maxLen:  a.MaxLen,
+		outPort: self.Port,
+		maxLen:  self.MaxLen,
 		reason:  ofp4.OFPR_ACTION,
 	}, nil, nil
 }
 
-type actionGeneric ofp4.ActionGeneric
+func (self actionOutput) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionOutput(self.Port, self.MaxLen), nil
+}
+
+type actionGeneric struct {
+	Type uint16
+}
 
 func (self actionGeneric) Key() actionKey {
 	return self.Type
 }
 
-func (a actionGeneric) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	data.useLayers()
 
-	switch a.Type {
+	switch self.Type {
 	default:
-		return nil, nil, ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
+		return nil, nil, ofp4.MakeErrorMsg(
+			ofp4.OFPET_BAD_ACTION,
+			ofp4.OFPBAC_BAD_TYPE,
+		)
 	case ofp4.OFPAT_COPY_TTL_OUT:
 		var ttl uint8
 		found := 0
@@ -258,18 +269,25 @@ func (a actionGeneric) process(data *frame) (*outputToPort, *outputToGroup, erro
 	return nil, nil, nil
 }
 
-type actionPush ofp4.ActionPush
+func (self actionGeneric) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionHeader(self.Type), nil
+}
+
+type actionPush struct {
+	Type      uint16
+	Ethertype uint16
+}
 
 func (self actionPush) Key() actionKey {
 	return self.Type
 }
 
-func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionPush) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	data.useLayers()
 
 	var buf []gopacket.Layer
 	found := false
-	switch a.Type {
+	switch self.Type {
 	case ofp4.OFPAT_PUSH_VLAN:
 		for i, layer := range data.layers {
 			buf = append(buf, layer)
@@ -279,7 +297,7 @@ func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) 
 				case layers.LayerTypeEthernet:
 					eth := layer.(*layers.Ethernet)
 					ethertype := eth.EthernetType
-					eth.EthernetType = layers.EthernetType(a.Ethertype)
+					eth.EthernetType = layers.EthernetType(self.Ethertype)
 
 					dot1q := &layers.Dot1Q{Type: ethertype}
 					if d, ok := data.layers[i+1].(*layers.Dot1Q); ok {
@@ -315,9 +333,9 @@ func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) 
 				}
 				if base != nil {
 					if base.LayerType() == layers.LayerTypeEthernet {
-						base.(*layers.Ethernet).EthernetType = layers.EthernetType(a.Ethertype)
+						base.(*layers.Ethernet).EthernetType = layers.EthernetType(self.Ethertype)
 					} else if base.LayerType() == layers.LayerTypeDot1Q {
-						base.(*layers.Dot1Q).Type = layers.EthernetType(a.Ethertype)
+						base.(*layers.Dot1Q).Type = layers.EthernetType(self.Ethertype)
 					} else {
 						return nil, nil, errors.New("unsupported")
 					}
@@ -347,7 +365,7 @@ func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) 
 				case layers.LayerTypeEthernet:
 					eth := layer.(*layers.Ethernet)
 					ethertype := eth.EthernetType
-					eth.EthernetType = layers.EthernetType(a.Ethertype)
+					eth.EthernetType = layers.EthernetType(self.Ethertype)
 					buf = append(buf, &PBB{
 						DstMAC: eth.DstMAC,
 						SrcMAC: eth.SrcMAC,
@@ -358,7 +376,10 @@ func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) 
 			}
 		}
 	default:
-		return nil, nil, ofp4.Error{Type: ofp4.OFPET_BAD_ACTION, Code: ofp4.OFPBAC_BAD_TYPE}
+		return nil, nil, ofp4.MakeErrorMsg(
+			ofp4.OFPET_BAD_ACTION,
+			ofp4.OFPBAC_BAD_TYPE,
+		)
 	}
 	if found {
 		data.layers = buf
@@ -368,13 +389,19 @@ func (a actionPush) process(data *frame) (*outputToPort, *outputToGroup, error) 
 	return nil, nil, nil
 }
 
-type actionPopMpls ofp4.ActionPopMpls
+func (self actionPush) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionPush(self.Type, self.Ethertype), nil
+}
+
+type actionPopMpls struct {
+	Ethertype uint16
+}
 
 func (self actionPopMpls) Key() actionKey {
 	return uint16(ofp4.OFPAT_POP_MPLS)
 }
 
-func (a actionPopMpls) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionPopMpls) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	data.useLayers()
 
 	var buf []gopacket.Layer
@@ -388,9 +415,9 @@ func (a actionPopMpls) process(data *frame) (*outputToPort, *outputToGroup, erro
 				}
 				base := data.layers[i-1]
 				if base.LayerType() == layers.LayerTypeEthernet {
-					base.(*layers.Ethernet).EthernetType = layers.EthernetType(a.Ethertype)
+					base.(*layers.Ethernet).EthernetType = layers.EthernetType(self.Ethertype)
 				} else if base.LayerType() == layers.LayerTypeDot1Q {
-					base.(*layers.Dot1Q).Type = layers.EthernetType(a.Ethertype)
+					base.(*layers.Dot1Q).Type = layers.EthernetType(self.Ethertype)
 				} else {
 					return nil, nil, errors.New("unsupported")
 				}
@@ -423,79 +450,109 @@ func (a actionPopMpls) process(data *frame) (*outputToPort, *outputToGroup, erro
 	return nil, nil, nil
 }
 
-type actionSetQueue ofp4.ActionSetQueue
+func (self actionPopMpls) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionPopMpls(self.Ethertype), nil
+}
+
+type actionSetQueue struct {
+	QueueId uint32
+}
 
 func (self actionSetQueue) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_QUEUE)
 }
 
-func (a actionSetQueue) process(data *frame) (*outputToPort, *outputToGroup, error) {
-	data.queueId = a.QueueId
+func (self actionSetQueue) Process(data *frame) (*outputToPort, *outputToGroup, error) {
+	data.queueId = self.QueueId
 	return nil, nil, nil
 }
 
-type actionMplsTtl ofp4.ActionMplsTtl
+func (self actionSetQueue) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionSetQueue(self.QueueId), nil
+}
+
+type actionMplsTtl struct {
+	MplsTtl uint8
+}
 
 func (self actionMplsTtl) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_MPLS_TTL)
 }
 
-func (a actionMplsTtl) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionMplsTtl) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	data.useLayers()
 
 	for _, layer := range data.layers {
 		if layer.LayerType() == layers.LayerTypeMPLS {
-			layer.(*layers.MPLS).TTL = a.MplsTtl
+			layer.(*layers.MPLS).TTL = self.MplsTtl
 			return nil, nil, nil
 		}
 	}
 	return nil, nil, errors.New("set mpls ttl failed")
 }
 
-type actionGroup ofp4.ActionGroup
+func (self actionMplsTtl) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionMplsTtl(self.MplsTtl), nil
+}
+
+type actionGroup struct {
+	GroupId uint32
+}
 
 func (self actionGroup) Key() actionKey {
 	return uint16(ofp4.OFPAT_GROUP)
 }
 
-func (a actionGroup) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionGroup) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	return nil, &outputToGroup{
 		data:    data.clone(),
-		groupId: a.GroupId,
+		groupId: self.GroupId,
 	}, nil
 }
 
-type actionNwTtl ofp4.ActionNwTtl
+func (self actionGroup) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionGroup(self.GroupId), nil
+}
+
+type actionNwTtl struct {
+	NwTtl uint8
+}
 
 func (self actionNwTtl) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_NW_TTL)
 }
 
-func (a actionNwTtl) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionNwTtl) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	data.useLayers()
 
 	for _, layer := range data.layers {
 		switch t := layer.(type) {
 		case *layers.IPv4:
-			t.TTL = a.NwTtl
+			t.TTL = self.NwTtl
 			return nil, nil, nil
 		case *layers.IPv6:
-			t.HopLimit = a.NwTtl
+			t.HopLimit = self.NwTtl
 			return nil, nil, nil
 		}
 	}
 	return nil, nil, errors.New("set nw ttl failed")
 }
 
-type actionSetField ofp4.ActionSetField
+func (self actionNwTtl) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionNwTtl(self.NwTtl), nil
+}
+
+type actionSetField struct {
+	Field []byte
+}
 
 func (self actionSetField) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_FIELD)
 }
 
-func (a actionSetField) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionSetField) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	var ms match
-	if err := ms.UnmarshalBinary(a.Field); err != nil {
+	if err := ms.UnmarshalBinary(self.Field); err != nil {
 		return nil, nil, err
 	} else {
 		for _, m := range ms.basic {
@@ -515,129 +572,136 @@ func (a actionSetField) process(data *frame) (*outputToPort, *outputToGroup, err
 					return nil, nil, err
 				}
 			} else {
-				return nil, nil, ofp4.Error{
-					Type: ofp4.OFPBAC_BAD_EXPERIMENTER,
-					Code: ofp4.OFPBAC_BAD_TYPE,
-				}
+				return nil, nil, ofp4.MakeErrorMsg(
+					ofp4.OFPBAC_BAD_EXPERIMENTER,
+					ofp4.OFPBAC_BAD_TYPE,
+				)
 			}
 		}
 	}
 	return nil, nil, nil
 }
 
+func (self actionSetField) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeActionSetField(self.Field), nil
+}
+
 type actionExperimenter struct {
-	experimenterKey
-	Handler ActionHandler
-	Data    []byte
+	Experimenter uint32
+	Data         []byte
+	Handler      ActionHandler
 }
 
 func (self actionExperimenter) Key() actionKey {
-	return self.experimenterKey
+	return self.Experimenter
 }
 
-func (self actionExperimenter) process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionExperimenter) Process(data *frame) (*outputToPort, *outputToGroup, error) {
 	var pkt Frame
 	if err := pkt.pull(*data); err != nil {
 		return nil, nil, err
 	}
-	if newPkt, err := self.Handler.Execute(pkt, self.Data); err != nil {
-		return nil, nil, err
-	} else if err := newPkt.push(data); err != nil {
-		return nil, nil, err
+	if handler, ok := actionHandlers[self.Experimenter]; ok {
+		if newPkt, err := handler.Execute(pkt, self.Data); err != nil {
+			return nil, nil, err
+		} else if err := newPkt.push(data); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		return nil, nil, errors.New("action handler not registered")
 	}
 	return nil, nil, nil
 }
 
+func (self actionExperimenter) MarshalBinary() ([]byte, error) {
+	return ofp4.ActionExperimenterHeader(ofp4.MakeActionExperimenterHeader(self.Experimenter)).AppendData(self.Data), nil
+}
+
 type actionList []action
 
-func (self *actionList) fromMessage(msg []ofp4.Action) error {
-	actions := make([]action, len(msg))
-	for i, mact := range msg {
-		switch act := mact.(type) {
+func (self *actionList) UnmarshalBinary(data []byte) error {
+	var actions []action
+	for cur := 0; cur < len(data); {
+		var act action
+		msg := ofp4.ActionHeader(data[cur:])
+		switch msg.Type() {
 		default:
 			return errors.New("unknown ofp4.Action type")
-		case ofp4.ActionGeneric:
-			actions[i] = (actionGeneric)(act)
-		case ofp4.ActionOutput:
-			actions[i] = (actionOutput)(act)
-		case ofp4.ActionMplsTtl:
-			actions[i] = (actionMplsTtl)(act)
-		case ofp4.ActionPush:
-			actions[i] = (actionPush)(act)
-		case ofp4.ActionPopMpls:
-			actions[i] = (actionPopMpls)(act)
-		case ofp4.ActionSetQueue:
-			actions[i] = (actionSetQueue)(act)
-		case ofp4.ActionGroup:
-			actions[i] = (actionGroup)(act)
-		case ofp4.ActionNwTtl:
-			actions[i] = (actionNwTtl)(act)
-		case ofp4.ActionSetField:
-			actions[i] = (actionSetField)(act)
-		case ofp4.ActionExperimenter:
-			key := experimenterKey{
-				Id:   act.Experimenter,
-				Type: act.ExpType,
+		case ofp4.OFPAT_COPY_TTL_OUT,
+			ofp4.OFPAT_COPY_TTL_IN,
+			ofp4.OFPAT_DEC_MPLS_TTL,
+			ofp4.OFPAT_POP_VLAN,
+			ofp4.OFPAT_DEC_NW_TTL,
+			ofp4.OFPAT_POP_PBB:
+			act = actionGeneric{
+				Type: msg.Type(),
 			}
-			if handler, ok := actionHandlers[key]; ok {
-				actions[i] = actionExperimenter{
-					experimenterKey: key,
-					Handler:         handler,
-					Data:            act.Data,
+		case ofp4.OFPAT_OUTPUT:
+			a := ofp4.ActionOutput(msg)
+			act = actionOutput{
+				Port:   a.Port(),
+				MaxLen: a.MaxLen(),
+			}
+		case ofp4.OFPAT_SET_MPLS_TTL:
+			act = actionMplsTtl{
+				MplsTtl: ofp4.ActionMplsTtl(msg).MplsTtl(),
+			}
+		case ofp4.OFPAT_PUSH_VLAN,
+			ofp4.OFPAT_PUSH_MPLS,
+			ofp4.OFPAT_PUSH_PBB:
+			act = actionPush{
+				Type:      msg.Type(),
+				Ethertype: ofp4.ActionPush(msg).Ethertype(),
+			}
+		case ofp4.OFPAT_POP_MPLS:
+			act = actionPopMpls{
+				Ethertype: ofp4.ActionPopMpls(msg).Ethertype(),
+			}
+		case ofp4.OFPAT_SET_QUEUE:
+			act = actionSetQueue{
+				QueueId: ofp4.ActionSetQueue(msg).QueueId(),
+			}
+		case ofp4.OFPAT_GROUP:
+			act = actionGroup{
+				GroupId: ofp4.ActionGroup(msg).GroupId(),
+			}
+		case ofp4.OFPAT_SET_NW_TTL:
+			act = actionNwTtl{
+				NwTtl: ofp4.ActionNwTtl(msg).NwTtl(),
+			}
+		case ofp4.OFPAT_SET_FIELD:
+			act = actionSetField{
+				Field: ofp4.ActionSetField(msg).Field(),
+			}
+		case ofp4.OFPAT_EXPERIMENTER:
+			a := ofp4.ActionExperimenterHeader(msg)
+			if handler, ok := actionHandlers[a.Experimenter()]; ok {
+				act = actionExperimenter{
+					Experimenter: a.Experimenter(),
+					Data:         msg[8:],
+					Handler:      handler,
 				}
 			} else {
-				for k, _ := range actionHandlers {
-					if k.Id == act.Experimenter {
-						return ofp4.Error{
-							Type: ofp4.OFPET_BAD_ACTION,
-							Code: ofp4.OFPBAC_BAD_EXP_TYPE,
-						}
-					}
-				}
-				return ofp4.Error{
-					Type: ofp4.OFPET_BAD_ACTION,
-					Code: ofp4.OFPBAC_BAD_EXPERIMENTER,
-				}
+				return ofp4.MakeErrorMsg(
+					ofp4.OFPET_BAD_ACTION,
+					ofp4.OFPBAC_BAD_EXPERIMENTER,
+				)
 			}
 		}
+		actions = append(actions, act)
+		cur += msg.Len()
 	}
-	*self = actionList(actions)
+	*self = actions
 	return nil
 }
 
-func (self actionList) toMessage() ([]ofp4.Action, error) {
-	actions := make([]ofp4.Action, len([]action(self)))
-	for i, mact := range []action(self) {
-		switch act := mact.(type) {
-		default:
-			return nil, ofp4.Error{
-				Type: ofp4.OFPET_BAD_ACTION,
-				Code: ofp4.OFPBAC_BAD_TYPE,
-			}
-		case actionGeneric:
-			actions[i] = ofp4.ActionGeneric(act)
-		case actionOutput:
-			actions[i] = ofp4.ActionOutput(act)
-		case actionMplsTtl:
-			actions[i] = ofp4.ActionMplsTtl(act)
-		case actionPush:
-			actions[i] = ofp4.ActionPush(act)
-		case actionPopMpls:
-			actions[i] = ofp4.ActionPopMpls(act)
-		case actionSetQueue:
-			actions[i] = ofp4.ActionSetQueue(act)
-		case actionGroup:
-			actions[i] = ofp4.ActionGroup(act)
-		case actionNwTtl:
-			actions[i] = ofp4.ActionNwTtl(act)
-		case actionSetField:
-			actions[i] = ofp4.ActionSetField(act)
-		case actionExperimenter:
-			actions[i] = ofp4.ActionExperimenter{
-				Experimenter: act.Id,
-				ExpType:      act.Type,
-				Data:         act.Data,
-			}
+func (self actionList) MarshalBinary() ([]byte, error) {
+	var actions []byte
+	for _, mact := range []action(self) {
+		if bin, err := mact.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			actions = append(actions, bin...)
 		}
 	}
 	return actions, nil
@@ -683,9 +747,21 @@ func (self actionSet) Write(rule actionSet) {
 	}
 }
 
-func (self actionSet) fromMessage(msg []ofp4.Action) error {
+func (self actionSet) MarshalBinary() ([]byte, error) {
+	var actions []byte
+	for _, action := range self.hash {
+		if bin, err := action.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			actions = append(actions, bin...)
+		}
+	}
+	return actions, nil
+}
+
+func (self *actionSet) UnmarshalBinary(data []byte) error {
 	var alist actionList
-	if err := alist.fromMessage(msg); err != nil {
+	if err := alist.UnmarshalBinary(data); err != nil {
 		return err
 	}
 	for k, _ := range self.hash {
@@ -694,13 +770,13 @@ func (self actionSet) fromMessage(msg []ofp4.Action) error {
 	for k, _ := range self.exp {
 		delete(self.exp, k)
 	}
-	for _, v := range []action(alist) {
-		key := v.Key()
+	for _, act := range []action(alist) {
+		key := act.Key()
 		if _, ok := self.hash[key]; !ok {
-			self.hash[key] = v
-			if e, ok := v.(actionExperimenter); ok {
-				o := e.Handler.Order()
-				self.exp[o] = append(self.exp[o], e)
+			self.hash[key] = act
+			if exp, ok := act.(actionExperimenter); ok {
+				order := exp.Handler.Order(exp.Data)
+				self.exp[order] = append(self.exp[order], exp)
 			}
 		} else {
 			return errors.New("duplicate action found in action set.")
@@ -709,18 +785,10 @@ func (self actionSet) fromMessage(msg []ofp4.Action) error {
 	return nil
 }
 
-func (self actionSet) toMessage() ([]ofp4.Action, error) {
-	actions := make([]action, 0, len(self.hash))
-	for _, v := range self.hash {
-		actions = append(actions, v)
-	}
-	return actionList(actions).toMessage()
-}
-
-func (self actionSet) process(data *frame) (pouts []*outputToPort, gouts []*outputToGroup) {
+func (self actionSet) Process(data *frame) (pouts []*outputToPort, gouts []*outputToGroup) {
 	builtinExecute := func(key uint16) (stop bool) {
 		if act, ok := self.hash[key]; ok {
-			if pout, gout, err := act.process(data); err != nil {
+			if pout, gout, err := act.Process(data); err != nil {
 				log.Print(err)
 				return true
 			} else {
@@ -742,7 +810,7 @@ func (self actionSet) process(data *frame) (pouts []*outputToPort, gouts []*outp
 	}
 	expExecute := func(order int) (stop bool) {
 		for _, act := range self.exp[order] {
-			if pout, gout, err := act.process(data); err != nil {
+			if pout, gout, err := act.Process(data); err != nil {
 				log.Print(err)
 				return true
 			} else {

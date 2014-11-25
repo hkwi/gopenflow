@@ -59,17 +59,17 @@ func (m *meter) process(data *frame) error {
 				drain = meterInterval * float64(bi.getRate())
 			}
 			switch b := bi.(type) {
-			case *bandDrop:
+			case bandDrop:
 				b.bucket -= drain
 				if b.bucket < 0 {
 					b.bucket = 0
 				}
-			case *bandDscpRemark:
+			case bandDscpRemark:
 				b.bucket -= drain
 				if b.bucket < 0 {
 					b.bucket = 0
 				}
-			case *bandExperimenter:
+			case bandExperimenter:
 				b.bucket -= drain
 				if b.bucket < 0 {
 					b.bucket = 0
@@ -160,6 +160,9 @@ func (m *meter) process(data *frame) error {
 
 type band interface {
 	getRate() uint32
+	getPacketCount() uint64
+	getByteCount() uint64
+	MarshalBinary() ([]byte, error)
 }
 
 type bandCommon struct {
@@ -171,17 +174,33 @@ type bandCommon struct {
 	byteCount   uint64
 }
 
-func (b bandCommon) getRate() uint32 {
-	return b.rate
+func (self bandCommon) getRate() uint32 {
+	return self.rate
+}
+
+func (self bandCommon) getPacketCount() uint64 {
+	return self.packetCount
+}
+
+func (self bandCommon) getByteCount() uint64 {
+	return self.byteCount
 }
 
 type bandDrop struct {
 	bandCommon
 }
 
+func (self bandDrop) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeMeterBandDrop(self.rate, self.burstSize), nil
+}
+
 type bandDscpRemark struct {
 	bandCommon
 	precLevel uint8
+}
+
+func (self bandDscpRemark) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeMeterBandDscpRemark(self.rate, self.burstSize, self.precLevel), nil
 }
 
 func (self bandDscpRemark) remark(data *frame) error {
@@ -213,61 +232,47 @@ type bandExperimenter struct {
 	data         []byte
 }
 
-func newMeter(msg ofp4.MeterMod) *meter {
-	var highestBand band
-	var bands []band
-	for _, bi := range msg.Bands {
-		var b band
-		switch msgBand := bi.(type) {
-		case ofp4.MeterBandDrop:
-			b = &bandDrop{
-				bandCommon: bandCommon{
-					rate:      msgBand.Rate,
-					burstSize: msgBand.BurstSize,
-				},
-			}
-		case ofp4.MeterBandDscpRemark:
-			b = &bandDscpRemark{
-				bandCommon: bandCommon{
-					rate:      msgBand.Rate,
-					burstSize: msgBand.BurstSize,
-				},
-				precLevel: msgBand.PrecLevel,
-			}
-		case ofp4.MeterBandExperimenter:
-			b = &bandExperimenter{
-				bandCommon: bandCommon{
-					rate:      msgBand.Rate,
-					burstSize: msgBand.BurstSize,
-				},
-				experimenter: msgBand.Experimenter,
-				data:         msgBand.Data,
-			}
-		}
-		if b != nil {
-			bands = append(bands, b)
-			if highestBand == nil || highestBand.getRate() < b.getRate() {
-				highestBand = b
-			}
-		}
-	}
+func (self bandExperimenter) MarshalBinary() ([]byte, error) {
+	return ofp4.MakeMeterBandExperimenter(self.rate, self.burstSize, self.experimenter).AppendData(self.data), nil
+}
 
-	self := &meter{
-		lock:        &sync.Mutex{},
-		created:     time.Now(),
-		bands:       bands,
-		highestBand: highestBand,
+type bandList []band
+
+func (self *bandList) UnmarshalBinary(data []byte) error {
+	msgs := ofp4.MeterBandHeader(data).Iter()
+	bands := make([]band, len(msgs))
+	for i, msg := range msgs {
+		var b band
+		switch msg.Type() {
+		case ofp4.OFPMBT_DROP:
+			b = bandDrop{
+				bandCommon: bandCommon{
+					rate:      msg.Rate(),
+					burstSize: msg.BurstSize(),
+				},
+			}
+		case ofp4.OFPMBT_DSCP_REMARK:
+			b = bandDscpRemark{
+				bandCommon: bandCommon{
+					rate:      msg.Rate(),
+					burstSize: msg.BurstSize(),
+				},
+				precLevel: ofp4.MeterBandDscpRemark(msg).PrecLevel(),
+			}
+		case ofp4.OFPMBT_EXPERIMENTER:
+			b = bandExperimenter{
+				bandCommon: bandCommon{
+					rate:      msg.Rate(),
+					burstSize: msg.BurstSize(),
+				},
+				experimenter: ofp4.MeterBandExperimenter(msg).Experimenter(),
+				data:         msg[16:],
+			}
+		}
+		bands[i] = b
 	}
-	if msg.Flags&ofp4.OFPMF_PKTPS != 0 {
-		self.flagPkts = true
-	}
-	if msg.Flags&ofp4.OFPMF_BURST != 0 {
-		self.flagBurst = true
-	}
-	if msg.Flags&ofp4.OFPMF_STATS != 0 {
-		self.flagStats = true
-	}
-	return self
+	*self = bands
+	return nil
 }
 
 func (pipe *Pipeline) deleteMeterInside(meterId uint32) error {
@@ -280,10 +285,10 @@ func (pipe *Pipeline) deleteMeterInside(meterId uint32) error {
 			meterId:      meterId,
 		})
 	} else {
-		return &ofp4.Error{
-			Type: ofp4.OFPET_METER_MOD_FAILED,
-			Code: ofp4.OFPMMFC_UNKNOWN_METER,
-		}
+		return ofp4.MakeErrorMsg(
+			ofp4.OFPET_METER_MOD_FAILED,
+			ofp4.OFPMMFC_UNKNOWN_METER,
+		)
 	}
 	return nil
 }

@@ -1,7 +1,6 @@
 package ofp4sw
 
 import (
-	"encoding"
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
 	"log"
@@ -18,8 +17,8 @@ var messageHandlers map[experimenterKey]MessageHandler = make(map[experimenterKe
 
 func AddMessageHandler(experimenter uint32, expType uint32, handler MessageHandler) {
 	messageHandlers[experimenterKey{
-		Id:   experimenter,
-		Type: expType,
+		Experimenter: experimenter,
+		ExpType:      expType,
 	}] = handler
 }
 
@@ -200,19 +199,14 @@ func (self *controller) addChannel(channel ControlChannel) error {
 	go func() {
 		defer close(worker)
 
-		multipartCollect := make(map[uint32][]encoding.BinaryMarshaler)
+		multipartCollect := make(map[uint32][][]byte)
 		for {
 			msg, err := channel.Ingress()
 			if err != nil {
 				return
 			}
-			var ofm ofp4.Message
-			if err := ofm.UnmarshalBinary(msg); err != nil {
-				log.Println(err)
-				return
-			}
-			reply := ofmReply{ctrl: self, channel: channel, req: &ofm}
-			switch ofm.Type {
+			reply := ofmReply{ctrl: self, channel: channel, req: msg}
+			switch ofp4.Header(msg).Type() {
 			case ofp4.OFPT_ECHO_REQUEST:
 				worker <- &ofmEcho{reply}
 			case ofp4.OFPT_EXPERIMENTER:
@@ -234,11 +228,13 @@ func (self *controller) addChannel(channel ControlChannel) error {
 			case ofp4.OFPT_TABLE_MOD:
 				worker <- &ofmTableMod{reply}
 			case ofp4.OFPT_MULTIPART_REQUEST:
-				req := ofm.Body.(ofp4.MultipartRequest)
-				multipartCollect[ofm.Xid] = append(multipartCollect[ofm.Xid], req.Body)
-				if req.Flags&ofp4.OFPMPF_REQ_MORE == 0 {
-					reqs := multipartCollect[ofm.Xid]
-					delete(multipartCollect, ofm.Xid)
+				xid := ofp4.Header(msg).Xid()
+				req := ofp4.MultipartRequest(msg)
+
+				multipartCollect[xid] = append(multipartCollect[xid], req.Body())
+				if req.Flags()&ofp4.OFPMPF_REQ_MORE == 0 {
+					reqs := multipartCollect[xid]
+					delete(multipartCollect, xid)
 
 					mreply := ofmMulti{
 						ofmReply: reply,
@@ -247,7 +243,7 @@ func (self *controller) addChannel(channel ControlChannel) error {
 					}
 
 					// capture
-					switch req.Type {
+					switch req.Type() {
 					case ofp4.OFPMP_DESC:
 						worker <- &ofmMpDesc{mreply}
 					case ofp4.OFPMP_TABLE:
@@ -302,11 +298,11 @@ func (self *controller) addChannel(channel ControlChannel) error {
 	return nil
 }
 
-func (self controller) Stats() *PortStats {
-	return &self.stats
+func (self controller) Stats() PortStats {
+	return self.stats
 }
 
-func (self controller) State() *PortState {
+func (self controller) State() PortState {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
@@ -314,7 +310,7 @@ func (self controller) State() *PortState {
 	if len(self.channels) > 0 {
 		state.Live = true
 	}
-	return &state
+	return state
 }
 
 func (self controller) GetConfig() uint32 {
@@ -344,37 +340,28 @@ type channelInternal struct {
 
 func (self *channelInternal) hello() error {
 	{ // SEND hello
-		msg := ofp4.Message{
-			Header: ofp4.Header{
-				Version: 4,
-				Type:    ofp4.OFPT_HELLO,
-				Xid:     self.newXid(),
-			},
-			Body: ofp4.Array{
-				ofp4.HelloElementVersionbitmap{
-					Bitmaps: []uint32{uint32(1 << 4)},
-				},
-			},
-		}
-		if msgbin, err := msg.MarshalBinary(); err != nil {
-			return err
-		} else if err := self.channel.Egress(msgbin); err != nil {
+		msg := ofp4.MakeHello(ofp4.MakeHelloElemVersionbitmap([]uint32{uint32(1 << 4)}))
+		msg.SetXid(self.newXid())
+		if err := self.channel.Egress(msg); err != nil {
 			return err
 		}
 	}
 
 	{ // RECV hello
-		var ofm ofp4.Message
+		var msg ofp4.Header
 		if buf, err := self.channel.Ingress(); err != nil {
 			return err
-		} else if err := ofm.UnmarshalBinary(buf); err != nil {
-			return err
+		} else {
+			msg = ofp4.Header(buf)
+		}
+		if msg.Type() != ofp4.OFPT_HELLO {
+			return errors.New("The first message must be HELLO")
 		}
 		satisfied := false
-		for _, element := range []encoding.BinaryMarshaler(ofm.Body.(ofp4.Array)) {
-			switch telement := element.(type) {
-			case ofp4.HelloElementVersionbitmap:
-				bitmaps := telement.Bitmaps
+		for _, element := range ofp4.Hello(msg).Elements().Iter() {
+			switch element.Type() {
+			case ofp4.OFPHET_VERSIONBITMAP:
+				bitmaps := ofp4.HelloElemVersionbitmap(element).Bitmaps()
 				if len(bitmaps) > 0 && (bitmaps[0]&(1<<4) != 0) {
 					satisfied = true
 				}
@@ -389,27 +376,16 @@ func (self *channelInternal) hello() error {
 				}
 			}
 		}
-		if !satisfied && ofm.Version == 4 {
+		if !satisfied && msg.Version() == 4 {
 			satisfied = true
 		}
 		if !satisfied {
-			err := ofp4.Error{
-				Type: ofp4.OFPET_HELLO_FAILED,
-				Code: ofp4.OFPHFC_INCOMPATIBLE,
-			}
-			msg := ofp4.Message{
-				Header: ofp4.Header{
-					Version: 4,
-					Type:    ofp4.OFPT_ERROR,
-					Xid:     ofm.Xid,
-				},
-				Body: err,
-			}
-			if msgbin, err := msg.MarshalBinary(); err != nil {
-				return err
-			} else {
-				return self.channel.Egress(msgbin)
-			}
+			err := ofp4.MakeErrorMsg(
+				ofp4.OFPET_HELLO_FAILED,
+				ofp4.OFPHFC_INCOMPATIBLE,
+			)
+			self.channel.Egress(ofp4.Header(err).SetXid(msg.Xid()))
+			return err
 		}
 	}
 	return nil
@@ -441,29 +417,14 @@ func (self channelInternal) packetIn(buffer_id uint32, pout *outputToPort) error
 		eth = eth[:pout.maxLen]
 	}
 
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: 4,
-			Type:    ofp4.OFPT_PACKET_IN,
-			Xid:     self.newXid(),
-		},
-		Body: ofp4.PacketIn{
-			BufferId: buffer_id,
-			TotalLen: uint16(totalLen),
-			Match: ofp4.Match{
-				Type: ofp4.OFPMT_OXM,
-				Data: pkt.Match,
-			},
-			Reason:  pout.reason,
-			TableId: pout.tableId,
-			Data:    eth,
-		},
-	}
-	if msgbin, err := msg.MarshalBinary(); err != nil {
-		return err
-	} else {
-		return self.channel.Egress(msgbin)
-	}
+	msg := ofp4.MakePacketIn(buffer_id,
+		uint16(totalLen),
+		pout.reason,
+		pout.tableId,
+		pout.cookie,
+		ofp4.MakeMatch(pkt.Match),
+		eth)
+	return self.channel.Egress(msg.SetXid(self.newXid()))
 }
 
 func (self *channelInternal) portChange(portNo uint32, port portInternal) error {
@@ -484,34 +445,19 @@ func (self *channelInternal) portChange(portNo uint32, port portInternal) error 
 		state |= ofp4.OFPPS_LIVE
 	}
 
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: 4,
-			Type:    ofp4.OFPT_PORT_STATUS,
-			Xid:     self.newXid(),
-		},
-		Body: ofp4.PortStatus{
-			Reason: reason,
-			Desc: ofp4.Port{
-				PortNo:     portNo,
-				HwAddr:     portState.HwAddr,
-				Name:       portState.Name,
-				Config:     port.GetConfig(),
-				State:      state,
-				Curr:       portState.Curr,
-				Advertised: portState.Advertised,
-				Supported:  portState.Supported,
-				Peer:       portState.Peer,
-				CurrSpeed:  portState.CurrSpeed,
-				MaxSpeed:   portState.MaxSpeed,
-			},
-		},
-	}
-	msgbin, e2 := msg.MarshalBinary()
-	if e2 != nil {
-		return e2
-	}
-	return self.channel.Egress(msgbin)
+	msg := ofp4.MakePortStatus(reason, ofp4.MakePort(portNo,
+		portState.HwAddr,
+		[]byte(portState.Name),
+		port.GetConfig(),
+		state,
+		portState.Curr,
+		portState.Advertised,
+		portState.Supported,
+		portState.Peer,
+		portState.CurrSpeed,
+		portState.MaxSpeed,
+	))
+	return self.channel.Egress(msg.SetXid(self.newXid()))
 }
 
 func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *flowEntry, reason uint8) error {
@@ -524,68 +470,44 @@ func (self channelInternal) sendFlowRem(tableId uint8, priority uint16, flow *fl
 	}
 
 	dur := time.Now().Sub(flow.created)
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: 4,
-			Type:    ofp4.OFPT_FLOW_REMOVED,
-			Xid:     self.newXid(),
-		},
-		Body: ofp4.FlowRemoved{
-			Cookie:       flow.cookie,
-			Priority:     priority,
-			Reason:       reason,
-			TableId:      tableId,
-			DurationSec:  uint32(dur / time.Second),
-			DurationNsec: uint32(dur % time.Second), // time.Nanosecond == 1
-			IdleTimeout:  flow.idleTimeout,
-			HardTimeout:  flow.hardTimeout,
-			PacketCount:  flow.packetCount,
-			ByteCount:    flow.byteCount,
-			Match: ofp4.Match{
-				Type: ofp4.OFPMT_OXM,
-				Data: fields,
-			},
-		},
-	}
-	msgbin, e3 := msg.MarshalBinary()
-	if e3 != nil {
-		return e3
-	}
-	return self.channel.Egress(msgbin)
+	msg := ofp4.MakeFlowRemoved(
+		flow.cookie,
+		priority,
+		reason,
+		tableId,
+		uint32(dur/time.Second),
+		uint32(dur%time.Second), // time.Nanosecond == 1
+		flow.idleTimeout,
+		flow.hardTimeout,
+		flow.packetCount,
+		flow.byteCount,
+		ofp4.MakeMatch(fields))
+	return self.channel.Egress(msg.SetXid(self.newXid()))
 }
 
 type ofmReply struct {
 	ctrl    *controller
 	channel ControlChannel
-	req     *ofp4.Message
-	resps   []encoding.BinaryMarshaler
+	req     ofp4.Header
+	resps   []ofp4.Header
 }
 
 func (self *ofmReply) createError(ofpet uint16, code uint16) {
-	if buf, err := self.req.MarshalBinary(); err != nil {
-		panic(err)
-	} else {
-		msg := ofp4.Message{
-			Header: ofp4.Header{
-				Version: self.req.Version,
-				Type:    ofp4.OFPT_ERROR,
-				Xid:     self.req.Xid,
-			},
-			Body: ofp4.Error{
-				Type: ofpet,
-				Code: code,
-				Data: buf,
-			},
-		}
-		self.resps = append(self.resps, msg)
+	self.resps = append(self.resps,
+		ofp4.Header(ofp4.MakeErrorMsg(ofpet, code)).AppendData(self.req).SetXid(self.req.Xid()))
+}
+
+func (self *ofmReply) putError(msg ofp4.ErrorMsg) {
+	hdr := ofp4.Header(msg)
+	if len(msg) == 12 {
+		hdr = hdr.AppendData(self.req)
 	}
+	self.resps = append(self.resps, hdr.SetXid(self.req.Xid()))
 }
 
 func (self ofmReply) Reduce() {
 	for _, resp := range self.resps {
-		if msgbin, err := resp.MarshalBinary(); err != nil {
-			panic(err)
-		} else if err := self.channel.Egress(msgbin); err != nil {
+		if err := self.channel.Egress(resp); err != nil {
 			log.Print(err)
 		}
 	}
@@ -596,14 +518,7 @@ type ofmEcho struct {
 }
 
 func (self *ofmEcho) Map() Reducable {
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: self.req.Version,
-			Type:    ofp4.OFPT_ECHO_REPLY,
-			Xid:     self.req.Xid,
-		},
-		Body: self.req.Body,
-	}
+	msg := ofp4.MakeHeader(ofp4.OFPT_ECHO_REPLY).AppendData(self.req[8:]).SetXid(self.req.Xid())
 	self.resps = append(self.resps, msg)
 	return self
 }
@@ -613,29 +528,18 @@ type ofmExperimenter struct {
 }
 
 func (self *ofmExperimenter) Map() Reducable {
-	exp := self.req.Body.(ofp4.Experimenter)
+	exp := ofp4.ExperimenterHeader(self.req)
 	key := experimenterKey{
-		Id:   exp.Experimenter,
-		Type: exp.ExpType,
+		Experimenter: exp.Experimenter(),
+		ExpType:      exp.ExpType(),
 	}
 	if handler, ok := messageHandlers[key]; ok {
-		for _, rep := range handler.Execute(exp.Data) {
-			msg := ofp4.Message{
-				Header: ofp4.Header{
-					Version: self.req.Version,
-					Type:    ofp4.OFPT_EXPERIMENTER,
-					Xid:     self.req.Xid,
-				},
-				Body: ofp4.Experimenter{
-					Experimenter: exp.Experimenter,
-					ExpType:      exp.ExpType,
-					Data:         rep,
-				},
-			}
+		for _, rep := range handler.Execute(exp[16:]) {
+			msg := ofp4.MakeExperimenterHeader(exp.Experimenter(), exp.ExpType()).AppendData(rep).SetXid(self.req.Xid())
 			self.resps = append(self.resps, msg)
 		}
 	} else {
-		self.createError(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BAD_EXPERIMENTER)
+		self.putError(ofp4.MakeErrorMsg(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BAD_EXPERIMENTER))
 	}
 	return self
 }
@@ -645,20 +549,14 @@ type ofmFeaturesRequest struct {
 }
 
 func (self *ofmFeaturesRequest) Map() Reducable {
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: self.req.Version,
-			Type:    ofp4.OFPT_FEATURES_REPLY,
-			Xid:     self.req.Xid,
-		},
-		Body: ofp4.SwitchFeatures{
-			DatapathId:   self.ctrl.pipe.DatapathId,
-			NBuffers:     0x7fffffff,
-			NTables:      0xff,
-			Capabilities: 0,
-		},
-	}
-	self.resps = append(self.resps, msg)
+	msg := ofp4.MakeSwitchFeatures(
+		self.ctrl.pipe.DatapathId,
+		0x7fffffff,
+		0xff, // nTables
+		0,    // XXX: auxiliaryId
+		0,    // XXX: capabilities
+	)
+	self.resps = append(self.resps, msg.SetXid(self.req.Xid()))
 	return self
 }
 
@@ -667,18 +565,11 @@ type ofmGetConfigRequest struct {
 }
 
 func (self *ofmGetConfigRequest) Map() Reducable {
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: 4,
-			Type:    ofp4.OFPT_GET_CONFIG_REPLY,
-			Xid:     self.req.Xid,
-		},
-		Body: ofp4.SwitchConfig{
-			Flags:       self.ctrl.pipe.flags, // XXX: FRAG not supported yet.
-			MissSendLen: self.ctrl.missSendLen,
-		},
-	}
-	self.resps = append(self.resps, msg)
+	msg := ofp4.MakeSwitchConfig(
+		self.ctrl.pipe.flags, // xxx: FRAG not supported yet.
+		self.ctrl.missSendLen,
+	)
+	self.resps = append(self.resps, msg.SetXid(self.req.Xid()))
 	return self
 }
 
@@ -687,9 +578,9 @@ type ofmSetConfig struct {
 }
 
 func (self ofmSetConfig) Map() Reducable {
-	config := self.req.Body.(ofp4.SwitchConfig)
-	self.ctrl.pipe.flags = config.Flags
-	self.ctrl.missSendLen = config.MissSendLen
+	config := ofp4.SwitchConfig(self.req)
+	self.ctrl.pipe.flags = config.Flags()
+	self.ctrl.missSendLen = config.MissSendLen()
 	return self
 }
 
@@ -699,13 +590,13 @@ type ofmGroupMod struct {
 
 func (self *ofmGroupMod) Map() Reducable {
 	pipe := self.ctrl.pipe
-	req := self.req.Body.(ofp4.GroupMod)
+	req := ofp4.GroupMod(self.req)
 
-	switch req.Command {
+	switch req.Command() {
 	case ofp4.OFPGC_ADD:
 		if err := pipe.addGroup(req); err != nil {
-			if e, ok := err.(ofp4.Error); ok {
-				self.createError(e.Type, e.Code)
+			if e, ok := err.(ofp4.ErrorMsg); ok {
+				self.putError(e)
 			} else {
 				log.Print(err)
 			}
@@ -715,15 +606,15 @@ func (self *ofmGroupMod) Map() Reducable {
 			pipe.lock.Lock()
 			defer pipe.lock.Unlock()
 
-			if group, exists := pipe.groups[req.GroupId]; exists {
-				buckets := make([]bucket, len(req.Buckets))
-				for i, _ := range buckets {
-					buckets[i].fromMessage(req.Buckets[i])
+			if group, exists := pipe.groups[req.GroupId()]; exists {
+				var buckets bucketList
+				if err := buckets.UnmarshalBinary(req.Buckets()); err != nil {
+					log.Print(err)
 				}
-				group.groupType = req.Type
+				group.groupType = req.Type()
 				group.buckets = buckets
 			} else {
-				self.createError(ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_UNKNOWN_GROUP)
+				self.putError(ofp4.MakeErrorMsg(ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_UNKNOWN_GROUP))
 			}
 		}()
 	case ofp4.OFPGC_DELETE:
@@ -731,19 +622,19 @@ func (self *ofmGroupMod) Map() Reducable {
 			pipe.lock.Lock()
 			defer pipe.lock.Unlock()
 
-			if req.GroupId == ofp4.OFPG_ALL {
+			if req.GroupId() == ofp4.OFPG_ALL {
 				for groupId, _ := range pipe.groups {
 					if err := pipe.deleteGroupInside(groupId); err != nil {
 						return err
 					}
 				}
 			} else {
-				return pipe.deleteGroupInside(req.GroupId)
+				return pipe.deleteGroupInside(req.GroupId())
 			}
 			return nil
 		}(); err != nil {
-			if e, ok := err.(ofp4.Error); ok {
-				self.createError(e.Type, e.Code)
+			if e, ok := err.(ofp4.ErrorMsg); ok {
+				self.putError(e)
 			} else {
 				log.Print(err)
 			}
@@ -758,13 +649,13 @@ type ofmPortMod struct {
 
 func (self *ofmPortMod) Map() Reducable {
 	pipe := self.ctrl.pipe
-	req := self.req.Body.(ofp4.PortMod)
+	msg := ofp4.PortMod(self.req)
 
-	for _, p := range pipe.getPorts(req.PortNo) {
+	for _, p := range pipe.getPorts(msg.PortNo()) {
 		switch port := p.(type) {
 		case *normalPort:
-			port.config = req.Config&req.Mask | port.config&^req.Mask
-			if req.Advertise != 0 { // zero all bits to prevent any action taking place.
+			port.config = msg.Config()&msg.Mask() | port.config&^msg.Mask()
+			if msg.Advertise() != 0 { // zero all bits to prevent any action taking place.
 				// XXX:
 			}
 		default:
@@ -779,12 +670,12 @@ type ofmTableMod struct {
 }
 
 func (self ofmTableMod) Map() Reducable {
-	req := self.req.Body.(ofp4.TableMod)
-	for _, table := range self.ctrl.pipe.getFlowTables(req.TableId) {
+	msg := ofp4.TableMod(self.req)
+	for _, table := range self.ctrl.pipe.getFlowTables(msg.TableId()) {
 		func() {
 			table.lock.Lock()
 			defer table.lock.Unlock()
-			table.feature.config = req.Config
+			table.feature.config = msg.Config()
 		}()
 	}
 	return self
@@ -823,40 +714,40 @@ type ofmPacketOut struct {
 }
 
 func (self *ofmPacketOut) Map() Reducable {
-	req := self.req.Body.(ofp4.PacketOut)
+	msg := ofp4.PacketOut(self.req)
 
 	var eth []byte
-	if req.BufferId == ofp4.OFP_NO_BUFFER {
-		eth = req.Data
+	if msg.BufferId() == ofp4.OFP_NO_BUFFER {
+		eth = msg.Data()
 	} else {
 		func() {
 			self.ctrl.lock.Lock()
 			defer self.ctrl.lock.Unlock()
 
-			if original, ok := self.ctrl.buffer[req.BufferId]; ok {
-				delete(self.ctrl.buffer, req.BufferId)
+			if original, ok := self.ctrl.buffer[msg.BufferId()]; ok {
+				delete(self.ctrl.buffer, msg.BufferId())
 				if data, err := original.data.data(); err != nil {
 					log.Print(err)
 				} else {
 					eth = data
 				}
 			} else {
-				self.createError(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BUFFER_UNKNOWN)
+				self.putError(ofp4.MakeErrorMsg(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BUFFER_UNKNOWN))
 			}
 		}()
 	}
 	if eth != nil {
 		data := &frame{
 			serialized: eth,
-			inPort:     req.InPort,
-			phyInPort:  self.ctrl.pipe.getPortPhysicalPort(req.InPort),
+			inPort:     msg.InPort(),
+			phyInPort:  self.ctrl.pipe.getPortPhysicalPort(msg.InPort()),
 		}
 		var actions actionList
-		actions.fromMessage(req.Actions)
+		actions.UnmarshalBinary(msg.Actions())
 
 		var gouts []*outputToGroup
 		for _, act := range []action(actions) {
-			if pout, gout, e := act.(action).process(data); e != nil {
+			if pout, gout, e := act.Process(data); e != nil {
 				log.Print(e)
 			} else {
 				if pout != nil {
@@ -877,34 +768,34 @@ type ofmFlowMod struct {
 }
 
 func (self *ofmFlowMod) Map() Reducable {
-	req := self.req.Body.(ofp4.FlowMod)
+	msg := ofp4.FlowMod(self.req)
 
-	switch req.Command {
+	switch msg.Command() {
 	case ofp4.OFPFC_ADD:
-		if err := self.ctrl.pipe.addFlowEntry(req); err != nil {
-			if e, ok := err.(ofp4.Error); ok {
-				self.createError(e.Type, e.Code)
+		if err := self.ctrl.pipe.addFlowEntry(msg); err != nil {
+			if e, ok := err.(ofp4.ErrorMsg); ok {
+				self.putError(e)
 			} else {
 				log.Print(err)
 			}
 		}
 	case ofp4.OFPFC_MODIFY, ofp4.OFPFC_MODIFY_STRICT:
 		var reqMatch match
-		if err := reqMatch.UnmarshalBinary(req.Match.Data); err != nil {
+		if err := reqMatch.UnmarshalBinary(msg.Match().OxmFields()); err != nil {
 			log.Print(err)
-		} else if req.TableId > ofp4.OFPTT_MAX {
-			self.createError(ofp4.OFPET_FLOW_MOD_FAILED, ofp4.OFPFMFC_BAD_TABLE_ID)
+		} else if msg.TableId() > ofp4.OFPTT_MAX {
+			self.putError(ofp4.MakeErrorMsg(ofp4.OFPET_FLOW_MOD_FAILED, ofp4.OFPFMFC_BAD_TABLE_ID))
 		} else {
 			filter := flowFilter{
-				cookie:     req.Cookie,
-				cookieMask: req.CookieMask,
-				tableId:    req.TableId,
+				cookie:     msg.Cookie(),
+				cookieMask: msg.CookieMask(),
+				tableId:    msg.TableId(),
 				outPort:    ofp4.OFPP_ANY,
 				outGroup:   ofp4.OFPG_ANY,
 				match:      reqMatch,
 			}
-			if req.Command == ofp4.OFPFC_MODIFY_STRICT {
-				filter.priority = req.Priority
+			if msg.Command() == ofp4.OFPFC_MODIFY_STRICT {
+				filter.priority = msg.Priority()
 				filter.opStrict = true
 			}
 			for _, stat := range self.ctrl.pipe.filterFlows(filter) {
@@ -913,14 +804,14 @@ func (self *ofmFlowMod) Map() Reducable {
 					flow.lock.Lock()
 					defer flow.lock.Unlock()
 
-					if req.Flags&ofp4.OFPFF_RESET_COUNTS != 0 {
+					if msg.Flags()&ofp4.OFPFF_RESET_COUNTS != 0 {
 						flow.packetCount = 0
 						flow.byteCount = 0
 					}
-					return flow.importInstructions(req.Instructions)
+					return flow.importInstructions(msg.Instructions())
 				}(); err != nil {
-					if e, ok := err.(ofp4.Error); ok {
-						self.createError(e.Type, e.Code)
+					if e, ok := err.(ofp4.ErrorMsg); ok {
+						self.putError(e)
 					} else {
 						log.Print(err)
 					}
@@ -929,20 +820,20 @@ func (self *ofmFlowMod) Map() Reducable {
 		}
 	case ofp4.OFPFC_DELETE, ofp4.OFPFC_DELETE_STRICT:
 		var reqMatch match
-		if err := reqMatch.UnmarshalBinary(req.Match.Data); err != nil {
+		if err := reqMatch.UnmarshalBinary(msg.Match().OxmFields()); err != nil {
 			log.Print(err)
 		} else {
 			filter := flowFilter{
 				opUnregister: true,
-				cookie:       req.Cookie,
-				cookieMask:   req.CookieMask,
-				tableId:      req.TableId,
-				outPort:      req.OutPort,
-				outGroup:     req.OutGroup,
+				cookie:       msg.Cookie(),
+				cookieMask:   msg.CookieMask(),
+				tableId:      msg.TableId(),
+				outPort:      msg.OutPort(),
+				outGroup:     msg.OutGroup(),
 				match:        reqMatch,
 			}
-			if req.Command == ofp4.OFPFC_DELETE_STRICT {
-				filter.priority = req.Priority
+			if msg.Command() == ofp4.OFPFC_DELETE_STRICT {
+				filter.priority = msg.Priority()
 				filter.opStrict = true
 			}
 			for _, stat := range self.ctrl.pipe.filterFlows(filter) {
@@ -952,14 +843,15 @@ func (self *ofmFlowMod) Map() Reducable {
 			}
 		}
 	}
-	if req.BufferId != ofp4.OFP_NO_BUFFER {
+	bufferId := msg.BufferId()
+	if bufferId != ofp4.OFP_NO_BUFFER {
 		original, ok := func() (*outputToPort, bool) {
 			self.ctrl.lock.Lock()
 			defer self.ctrl.lock.Unlock()
 
-			original, ok := self.ctrl.buffer[req.BufferId]
+			original, ok := self.ctrl.buffer[bufferId]
 			if ok {
-				delete(self.ctrl.buffer, req.BufferId)
+				delete(self.ctrl.buffer, bufferId)
 			}
 			return original, ok
 		}()
@@ -971,7 +863,7 @@ func (self *ofmFlowMod) Map() Reducable {
 				tableId: 0,
 			}
 		} else {
-			self.createError(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BUFFER_UNKNOWN)
+			self.putError(ofp4.MakeErrorMsg(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BUFFER_UNKNOWN))
 		}
 	}
 	return self
@@ -979,56 +871,36 @@ func (self *ofmFlowMod) Map() Reducable {
 
 type ofmMulti struct {
 	ofmReply
-	reqs   []encoding.BinaryMarshaler // multipart version of ofmReply.req
-	chunks []encoding.BinaryMarshaler // multipart response payload chunks
+	reqs   [][]byte // multipart version of ofmReply.req
+	chunks [][]byte // multipart response payload chunks
 }
 
 func (self *ofmMulti) Reduce() {
-	req := self.req.Body.(ofp4.MultipartRequest)
+	msg := ofp4.MultipartRequest(self.req)
 	payloadMaxLength := math.MaxUint16 - 16
 
-	var payload []encoding.BinaryMarshaler
+	var payload []byte
 	var payloadLength int
 	for _, chunk := range self.chunks {
-		data, err := chunk.MarshalBinary()
-		if err != nil {
-			log.Print(err)
-			continue
-		}
-		payloadLength += len(data)
+		payloadLength += len(chunk)
 		if payloadLength >= payloadMaxLength {
-			msg := ofp4.Message{
-				Header: ofp4.Header{
-					Version: self.req.Version,
-					Type:    ofp4.OFPT_MULTIPART_REPLY,
-					Xid:     self.req.Xid,
-				},
-				Body: ofp4.MultipartReply{
-					Type:  req.Type,
-					Flags: ofp4.OFPMPF_REPLY_MORE,
-					Body:  ofp4.Array(payload),
-				},
-			}
-			self.resps = append(self.resps, msg)
+			msg := ofp4.MakeMultipartReply(
+				msg.Type(),
+				ofp4.OFPMPF_REPLY_MORE,
+				payload)
+			self.resps = append(self.resps, msg.SetXid(self.req.Xid()))
 			payload = payload[:0]
 			payloadLength = 0
 		}
-		payload = append(payload, chunk)
-		payloadLength += len(data)
+		payload = append(payload, chunk...)
 	}
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: self.req.Version,
-			Type:    ofp4.OFPT_MULTIPART_REPLY,
-			Xid:     self.req.Xid,
-		},
-		Body: ofp4.MultipartReply{
-			Type:  req.Type,
-			Flags: 0,
-			Body:  ofp4.Array(payload),
-		},
+	{
+		msg := ofp4.MakeMultipartReply(
+			msg.Type(),
+			0,
+			payload)
+		self.resps = append(self.resps, msg.SetXid(self.req.Xid()))
 	}
-	self.resps = append(self.resps, msg)
 	self.ofmReply.Reduce()
 }
 
@@ -1050,17 +922,17 @@ func (self *ofmMpFlow) Map() Reducable {
 
 	var flows []flowStats
 	for _, req := range self.reqs {
-		mreq := req.(ofp4.FlowStatsRequest)
+		mreq := ofp4.FlowStatsRequest(req)
 		var reqMatch match
-		if e := reqMatch.UnmarshalBinary(mreq.Match.Data); e != nil {
+		if e := reqMatch.UnmarshalBinary(mreq.Match().OxmFields()); e != nil {
 			log.Print(e)
 		} else {
 			filter := flowFilter{
-				tableId:    mreq.TableId,
-				outPort:    mreq.OutPort,
-				outGroup:   mreq.OutGroup,
-				cookie:     mreq.Cookie,
-				cookieMask: mreq.CookieMask,
+				tableId:    mreq.TableId(),
+				outPort:    mreq.OutPort(),
+				outGroup:   mreq.OutGroup(),
+				cookie:     mreq.Cookie(),
+				cookieMask: mreq.CookieMask(),
 				match:      reqMatch,
 			}
 			for _, f := range pipe.filterFlows(filter) {
@@ -1082,23 +954,19 @@ func (self *ofmMpFlow) Map() Reducable {
 		if buf, e := f.flow.fields.MarshalBinary(); e != nil {
 			log.Print(e)
 		} else {
-			chunk := ofp4.FlowStats{
-				TableId:      f.tableId,
-				DurationSec:  uint32(duration.Seconds()),
-				DurationNsec: uint32(duration.Nanoseconds() % int64(time.Second)),
-				Priority:     f.priority,
-				IdleTimeout:  f.flow.idleTimeout,
-				HardTimeout:  f.flow.hardTimeout,
-				Flags:        f.flow.flags, // OFPFF_
-				Cookie:       f.flow.cookie,
-				PacketCount:  f.flow.packetCount,
-				ByteCount:    f.flow.byteCount,
-				Match: ofp4.Match{
-					Type: ofp4.OFPMT_OXM,
-					Data: buf,
-				},
-				Instructions: f.flow.exportInstructions(),
-			}
+			chunk := ofp4.MakeFlowStats(
+				f.tableId,
+				uint32(duration.Seconds()),
+				uint32(duration.Nanoseconds()%int64(time.Second)),
+				f.priority,
+				f.flow.idleTimeout,
+				f.flow.hardTimeout,
+				f.flow.flags, // OFPFF_
+				f.flow.cookie,
+				f.flow.packetCount,
+				f.flow.byteCount,
+				ofp4.MakeMatch(buf),
+				f.flow.exportInstructions())
 			self.chunks = append(self.chunks, chunk)
 		}
 	}
@@ -1114,22 +982,21 @@ func (self *ofmMpTable) Map() Reducable {
 	for tableId := uint8(0); tableId <= ofp4.OFPTT_MAX; tableId++ {
 		if table, ok := tables[tableId]; ok {
 			if table != nil {
-				chunk := func() encoding.BinaryMarshaler {
+				chunk := func() []byte {
 					table.lock.RLock()
 					defer table.lock.RUnlock()
-					return ofp4.TableStats{
-						TableId:      tableId,
-						ActiveCount:  table.activeCount,
-						LookupCount:  table.lookupCount,
-						MatchedCount: table.matchCount,
-					}
+
+					return ofp4.MakeTableStats(
+						tableId,
+						table.activeCount,
+						table.lookupCount,
+						table.matchCount)
 				}()
 				self.chunks = append(self.chunks, chunk)
 			}
 		} else {
-			chunk := ofp4.TableStats{
-				TableId: tableId,
-			}
+			chunk := ofp4.MakeTableStats(
+				tableId, 0, 0, 0)
 			self.chunks = append(self.chunks, chunk)
 		}
 	}
@@ -1141,27 +1008,31 @@ type ofmMpAggregate struct {
 }
 
 func (self *ofmMpAggregate) Map() Reducable {
-	mpreq := self.req.Body.(ofp4.MultipartRequest)
-	mreq := mpreq.Body.(ofp4.AggregateStatsRequest)
+	mpreq := ofp4.MultipartRequest(self.req)
+	mreq := ofp4.AggregateStatsRequest(mpreq.Body())
 
 	var reqMatch match
-	if err := reqMatch.UnmarshalBinary(mreq.Match.Data); err != nil {
+	if err := reqMatch.UnmarshalBinary(mreq.Match().OxmFields()); err != nil {
 		log.Print(err)
 	} else {
 		filter := flowFilter{
-			tableId:    mreq.TableId,
-			outPort:    mreq.OutPort,
-			outGroup:   mreq.OutGroup,
-			cookie:     mreq.Cookie,
-			cookieMask: mreq.CookieMask,
+			tableId:    mreq.TableId(),
+			outPort:    mreq.OutPort(),
+			outGroup:   mreq.OutGroup(),
+			cookie:     mreq.Cookie(),
+			cookieMask: mreq.CookieMask(),
 			match:      reqMatch,
 		}
-		var chunk ofp4.AggregateStatsReply
+		var packetCount uint64
+		var byteCount uint64
+		var flowCount uint32
 		for _, f := range self.ctrl.pipe.filterFlows(filter) {
-			chunk.PacketCount += f.flow.packetCount
-			chunk.ByteCount += f.flow.byteCount
-			chunk.FlowCount++
+			packetCount += f.flow.packetCount
+			byteCount += f.flow.byteCount
+			flowCount++
 		}
+		var chunk ofp4.AggregateStatsReply
+
 		self.chunks = append(self.chunks, chunk)
 	}
 	return self
@@ -1172,21 +1043,29 @@ type ofmMpPortStats struct {
 }
 
 func (self *ofmMpPortStats) Map() Reducable {
-	mpreq := self.req.Body.(ofp4.MultipartRequest)
-	for portNo, bport := range self.ctrl.pipe.getPorts(mpreq.Body.(ofp4.PortStatsRequest).PortNo) {
+	mpreq := ofp4.MultipartRequest(self.req)
+	for portNo, bport := range self.ctrl.pipe.getPorts(ofp4.PortStatsRequest(mpreq.Body()).PortNo()) {
 		switch port := bport.(type) {
 		case *normalPort:
 			pstats := port.Stats()
 			duration := time.Now().Sub(port.created)
-			chunk := ofp4.PortStats{
-				PortNo:       portNo,
-				RxPackets:    pstats.RxPackets,
-				TxPackets:    pstats.TxPackets,
-				RxBytes:      pstats.RxBytes,
-				TxBytes:      pstats.TxBytes,
-				DurationSec:  uint32(duration.Seconds()),
-				DurationNsec: uint32(duration.Nanoseconds() % int64(time.Second)),
-			}
+			chunk := ofp4.MakePortStats(
+				portNo,
+				pstats.RxPackets,
+				pstats.TxPackets,
+				pstats.RxBytes,
+				pstats.TxBytes,
+				0, // rxDropped
+				0, // txDropped
+				0, // rxErrors
+				0, // txErrors
+				0, // rxFrameErr
+				0, // rxOverErr
+				0, // rxCrcErr
+				0, // collisions
+				uint32(duration.Seconds()),
+				uint32(duration.Nanoseconds()%int64(time.Second)),
+			)
 			self.chunks = append(self.chunks, chunk)
 		case *controller:
 			// exluding
@@ -1221,19 +1100,18 @@ type ofmMpGroupDesc struct {
 
 func (self *ofmMpGroupDesc) Map() Reducable {
 	for i, g := range self.ctrl.pipe.getGroups(ofp4.OFPG_ALL) {
-		var buckets []encoding.BinaryMarshaler
+		var buckets []byte
 		for _, b := range g.buckets {
-			if bucket, e := b.toMessage(); e != nil {
-				panic(e)
+			if bin, err := b.MarshalBinary(); err != nil {
+				panic(err)
 			} else {
-				buckets = append(buckets, bucket)
+				buckets = append(buckets, bin...)
 			}
 		}
-		chunk := ofp4.GroupDesc{
-			Type:    g.groupType,
-			GroupId: i,
-			Buckets: buckets,
-		}
+		chunk := ofp4.MakeGroupDesc(
+			g.groupType,
+			i,
+			buckets)
 		self.chunks = append(self.chunks, chunk)
 	}
 	return self
@@ -1262,12 +1140,12 @@ func (self *ofmMpGroupFeatures) Map() Reducable {
 	actionBits |= 1 << ofp4.OFPAT_PUSH_PBB
 	actionBits |= 1 << ofp4.OFPAT_POP_PBB
 	// OFPAT_EXPERIMENTER overflows
-	chunk := ofp4.GroupFeatures{
-		Types:        1<<ofp4.OFPGT_ALL | 1<<ofp4.OFPGT_SELECT | 1<<ofp4.OFPGT_INDIRECT | 1<<ofp4.OFPGT_FF,
-		Capabilities: ofp4.OFPGFC_SELECT_WEIGHT | ofp4.OFPGFC_SELECT_LIVENESS | ofp4.OFPGFC_CHAINING | ofp4.OFPGFC_CHAINING_CHECKS,
-		MaxGroups:    [...]uint32{ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX},
-		Actions:      [...]uint32{actionBits, actionBits, actionBits, actionBits},
-	}
+
+	chunk := ofp4.MakeGroupFeatures(
+		1<<ofp4.OFPGT_ALL|1<<ofp4.OFPGT_SELECT|1<<ofp4.OFPGT_INDIRECT|1<<ofp4.OFPGT_FF,
+		ofp4.OFPGFC_SELECT_WEIGHT|ofp4.OFPGFC_SELECT_LIVENESS|ofp4.OFPGFC_CHAINING|ofp4.OFPGFC_CHAINING_CHECKS,
+		[...]uint32{ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX, ofp4.OFPG_MAX},
+		[...]uint32{actionBits, actionBits, actionBits, actionBits})
 	self.chunks = append(self.chunks, chunk)
 	return self
 }
@@ -1288,43 +1166,27 @@ type ofmMpMeter struct {
 func (self *ofmMpMeter) Map() Reducable {
 	pipe := self.ctrl.pipe
 
-	meterId := self.req.Body.(ofp4.MeterMultipartRequest).MeterId
+	meterId := ofp4.MeterMultipartRequest(ofp4.MultipartRequest(self.req).Body()).MeterId()
 	for meterId, meter := range pipe.getMeters(meterId) {
 		duration := time.Now().Sub(meter.created)
-		var bands []encoding.BinaryMarshaler
-		for _, bi := range meter.bands {
-			switch b := bi.(type) {
-			case *bandDrop:
-				bands = append(bands, ofp4.MeterBandStats{
-					PacketBandCount: b.packetCount,
-					ByteBandCount:   b.byteCount,
-				})
-			case *bandDscpRemark:
-				bands = append(bands, ofp4.MeterBandStats{
-					PacketBandCount: b.packetCount,
-					ByteBandCount:   b.byteCount,
-				})
-			case *bandExperimenter:
-				bands = append(bands, ofp4.MeterBandStats{
-					PacketBandCount: b.packetCount,
-					ByteBandCount:   b.byteCount,
-				})
-			}
+		var bands []byte
+		for _, b := range meter.bands {
+			bands = append(bands, ofp4.MakeMeterBandStats(b.getPacketCount(), b.getByteCount())...)
 		}
-		chunk := ofp4.MeterStats{
-			MeterId: meterId,
-			FlowCount: uint32(len(pipe.filterFlows(flowFilter{
-				tableId:  ofp4.OFPTT_ALL,
-				outPort:  ofp4.OFPP_ANY,
-				outGroup: ofp4.OFPG_ANY,
-				meterId:  meterId,
-			}))),
-			PacketInCount: meter.packetCount,
-			ByteInCount:   meter.byteCount,
-			DurationSec:   uint32(duration.Seconds()),
-			DurationNsec:  uint32(duration.Nanoseconds() % int64(time.Second)),
-			BandStats:     bands,
-		}
+		flowCount := len(pipe.filterFlows(flowFilter{
+			tableId:  ofp4.OFPTT_ALL,
+			outPort:  ofp4.OFPP_ANY,
+			outGroup: ofp4.OFPG_ANY,
+			meterId:  meterId,
+		}))
+		chunk := ofp4.MakeMeterStats(
+			meterId,
+			uint32(flowCount),
+			meter.packetCount,
+			meter.byteCount,
+			uint32(duration.Seconds()),
+			uint32(duration.Nanoseconds()%int64(time.Second)),
+			bands)
 		self.chunks = append(self.chunks, chunk)
 	}
 	return self
@@ -1335,30 +1197,15 @@ type ofmMpMeterConfig struct {
 }
 
 func (self *ofmMpMeterConfig) Map() Reducable {
-	mpreq := self.req.Body.(ofp4.MultipartRequest)
-	meterId := mpreq.Body.(ofp4.MeterMultipartRequest).MeterId
+	mpreq := ofp4.MeterMultipartRequest(ofp4.MultipartRequest(self.req).Body())
+	meterId := mpreq.MeterId()
 	for meterId, meter := range self.ctrl.pipe.getMeters(meterId) {
-		var bands []ofp4.Band
-		for _, bi := range meter.bands {
-			switch b := bi.(type) {
-			case *bandDrop:
-				bands = append(bands, ofp4.MeterBandDrop{
-					Rate:      b.rate,
-					BurstSize: b.burstSize,
-				})
-			case *bandDscpRemark:
-				bands = append(bands, ofp4.MeterBandDscpRemark{
-					Rate:      b.rate,
-					BurstSize: b.burstSize,
-					PrecLevel: b.precLevel,
-				})
-			case *bandExperimenter:
-				bands = append(bands, ofp4.MeterBandExperimenter{
-					Rate:         b.rate,
-					BurstSize:    b.burstSize,
-					Experimenter: b.experimenter,
-					Data:         b.data,
-				})
+		var bands []byte
+		for _, b := range meter.bands {
+			if bin, err := b.MarshalBinary(); err != nil {
+				panic(err)
+			} else {
+				bands = append(bands, bin...)
 			}
 		}
 		var flags uint16
@@ -1373,11 +1220,7 @@ func (self *ofmMpMeterConfig) Map() Reducable {
 		if meter.flagStats {
 			flags |= ofp4.OFPMF_STATS
 		}
-		chunk := ofp4.MeterConfig{
-			Flags:   flags,
-			MeterId: meterId,
-			Bands:   bands,
-		}
+		chunk := ofp4.MakeMeterConfig(flags, meterId, bands)
 		self.chunks = append(self.chunks, chunk)
 	}
 	return self
@@ -1394,28 +1237,26 @@ func (self *ofmMpTableFeatures) Map() Reducable {
 			if table, ok := tables[tableId]; ok {
 				if table != nil {
 					f := table.feature
-					chunk := ofp4.TableFeatures{
-						TableId:       tableId,
-						Name:          f.name,
-						MetadataMatch: f.metadataMatch,
-						MetadataWrite: f.metadataWrite,
-						Config:        f.config,
-						MaxEntries:    f.maxEntries,
-						Properties:    f.exportProps(),
-					}
+					chunk := ofp4.MakeTableFeatures(
+						tableId,
+						[]byte(f.name),
+						f.metadataMatch,
+						f.metadataWrite,
+						f.config,
+						f.maxEntries,
+						f.exportProps())
 					self.chunks = append(self.chunks, chunk)
 				}
 			} else {
 				f := makeFlowTableFeature()
-				chunk := ofp4.TableFeatures{
-					TableId:       tableId,
-					Name:          f.name,
-					MetadataMatch: f.metadataMatch,
-					MetadataWrite: f.metadataWrite,
-					Config:        f.config,
-					MaxEntries:    f.maxEntries,
-					Properties:    f.exportProps(),
-				}
+				chunk := ofp4.MakeTableFeatures(
+					tableId,
+					[]byte(f.name),
+					f.metadataMatch,
+					f.metadataWrite,
+					f.config,
+					f.maxEntries,
+					f.exportProps())
 				self.chunks = append(self.chunks, chunk)
 			}
 		}
@@ -1425,26 +1266,25 @@ func (self *ofmMpTableFeatures) Map() Reducable {
 		defer pipe.lock.Unlock()
 
 		candidate := make(map[uint8]*flowTable)
-		for _, arr := range self.reqs {
-			for _, req := range []encoding.BinaryMarshaler(arr.(ofp4.Array)) {
-				f := req.(ofp4.TableFeatures)
+		for _, msg := range self.reqs {
+			for _, req := range ofp4.TableFeatures(msg).Iter() {
 				feature := flowTableFeature{
-					name:          f.Name,
-					metadataMatch: f.MetadataMatch,
-					metadataWrite: f.MetadataWrite,
-					config:        f.Config,
-					maxEntries:    f.MaxEntries,
+					name:          string(req.Name()),
+					metadataMatch: req.MetadataMatch(),
+					metadataWrite: req.MetadataWrite(),
+					config:        req.Config(),
+					maxEntries:    req.MaxEntries(),
 				}
-				feature.importProps(f.Properties)
+				feature.importProps(req.Properties())
 
-				if tbl := pipe.flows[f.TableId]; tbl == nil {
+				if tbl := pipe.flows[req.TableId()]; tbl == nil {
 					// table explicitly set to nil means, "that table does not exists."
 					self.createError(ofp4.OFPET_TABLE_FEATURES_FAILED, ofp4.OFPTFFC_BAD_TABLE)
-				} else if _, ok := candidate[f.TableId]; ok {
+				} else if _, ok := candidate[req.TableId()]; ok {
 					// DUP in request
 					self.createError(ofp4.OFPET_TABLE_FEATURES_FAILED, ofp4.OFPTFFC_EPERM)
 				} else {
-					candidate[f.TableId] = &flowTable{
+					candidate[req.TableId()] = &flowTable{
 						lock:    &sync.RWMutex{},
 						feature: feature,
 					}
@@ -1485,27 +1325,31 @@ func (self *ofmMpPortDesc) Map() Reducable {
 	for portNo, bport := range self.ctrl.pipe.getPorts(ofp4.OFPP_ANY) {
 		switch port := bport.(type) {
 		case *normalPort:
-			chunk := ofp4.Port{
-				PortNo: portNo,
-				Name:   port.public.Name(),
-				Config: port.config,
+			portState := port.State()
+
+			var state uint32
+			if portState.LinkDown {
+				state |= ofp4.OFPPS_LINK_DOWN
 			}
-			state := port.State()
-			if state != nil {
-				chunk.Advertised = state.Advertised
-				chunk.Curr = state.Curr
-				chunk.Peer = state.Peer
-				chunk.HwAddr = state.HwAddr
-				if state.LinkDown {
-					chunk.State |= ofp4.OFPPS_LINK_DOWN
-				}
-				if state.Blocked {
-					chunk.State |= ofp4.OFPPS_BLOCKED
-				}
+			if portState.Blocked {
+				state |= ofp4.OFPPS_BLOCKED
 			}
-			if chunk.Config&ofp4.OFPPC_PORT_DOWN == 0 && chunk.State&ofp4.OFPPS_LINK_DOWN == 0 {
-				chunk.State |= ofp4.OFPPS_LIVE
+			if port.config&ofp4.OFPPC_PORT_DOWN == 0 && state&ofp4.OFPPS_LINK_DOWN == 0 {
+				state |= ofp4.OFPPS_LIVE
 			}
+
+			chunk := ofp4.MakePort(
+				portNo,
+				portState.HwAddr,
+				[]byte(port.public.Name()),
+				port.config,
+				state,
+				portState.Curr,
+				portState.Advertised,
+				portState.Supported,
+				portState.Peer,
+				portState.CurrSpeed,
+				portState.MaxSpeed)
 			self.chunks = append(self.chunks, chunk)
 		case *controller:
 			// exluding
@@ -1530,13 +1374,7 @@ type ofmBarrierRequest struct {
 }
 
 func (self *ofmBarrierRequest) Map() Reducable {
-	msg := ofp4.Message{
-		Header: ofp4.Header{
-			Version: self.req.Version,
-			Type:    ofp4.OFPT_BARRIER_REPLY,
-			Xid:     self.req.Xid,
-		},
-	}
+	msg := ofp4.MakeHeader(ofp4.OFPT_BARRIER_REPLY).SetXid(self.req.Xid())
 	self.resps = append(self.resps, msg)
 	return self
 }
@@ -1580,50 +1418,78 @@ type ofmMeterMod struct {
 func (self *ofmMeterMod) Map() Reducable {
 	pipe := self.ctrl.pipe
 
-	req := self.req.Body.(ofp4.MeterMod)
-	switch req.Command {
+	req := ofp4.MeterMod(self.req)
+	switch req.Command() {
 	case ofp4.OFPMC_ADD:
-		if req.MeterId == 0 || (req.MeterId > ofp4.OFPM_MAX && req.MeterId != ofp4.OFPM_CONTROLLER) {
-			self.createError(ofp4.OFPET_METER_MOD_FAILED, ofp4.OFPMMFC_INVALID_METER)
+		meterId := req.MeterId()
+		if meterId == 0 || (meterId > ofp4.OFPM_MAX && meterId != ofp4.OFPM_CONTROLLER) {
+			self.putError(ofp4.MakeErrorMsg(ofp4.OFPET_METER_MOD_FAILED, ofp4.OFPMMFC_INVALID_METER))
 		} else {
-			meter := newMeter(req)
+			var bands bandList
+			if err := bands.UnmarshalBinary(req.Bands()); err != nil {
+				log.Print(err)
+			}
+
+			var highestBand band
+			for _, b := range bands {
+				if highestBand == nil || highestBand.getRate() < b.getRate() {
+					highestBand = b
+				}
+			}
+			newMeter := &meter{
+				lock:        &sync.Mutex{},
+				created:     time.Now(),
+				bands:       bands,
+				highestBand: highestBand,
+			}
+			if req.Flags()&ofp4.OFPMF_PKTPS != 0 {
+				newMeter.flagPkts = true
+			}
+			if req.Flags()&ofp4.OFPMF_BURST != 0 {
+				newMeter.flagBurst = true
+			}
+			if req.Flags()&ofp4.OFPMF_STATS != 0 {
+				newMeter.flagStats = true
+			}
+
 			if err := func() error {
 				pipe.lock.Lock()
 				defer pipe.lock.Unlock()
 
-				if _, exists := pipe.meters[req.MeterId]; exists {
-					return ofp4.Error{
-						Type: ofp4.OFPET_METER_MOD_FAILED,
-						Code: ofp4.OFPMMFC_METER_EXISTS,
-					}
+				if _, exists := pipe.meters[meterId]; exists {
+					return ofp4.MakeErrorMsg(
+						ofp4.OFPET_METER_MOD_FAILED,
+						ofp4.OFPMMFC_METER_EXISTS,
+					)
 				} else {
-					pipe.meters[req.MeterId] = meter
+					pipe.meters[meterId] = newMeter
 				}
 				return nil
 			}(); err != nil {
-				if e, ok := err.(ofp4.Error); ok {
-					self.createError(e.Type, e.Code)
+				if e, ok := err.(ofp4.ErrorMsg); ok {
+					self.putError(e)
 				} else {
 					log.Print(err)
 				}
 			}
 		}
 	case ofp4.OFPMC_DELETE:
+		meterId := req.MeterId()
 		if err := func() error {
 			pipe.lock.Lock()
 			defer pipe.lock.Unlock()
 
-			if req.MeterId == ofp4.OFPM_ALL {
+			if meterId == ofp4.OFPM_ALL {
 				for meterId, _ := range pipe.meters {
 					pipe.deleteMeterInside(meterId)
 				}
 			} else {
-				return pipe.deleteMeterInside(req.MeterId)
+				return pipe.deleteMeterInside(meterId)
 			}
 			return nil
 		}(); err != nil {
-			if e, ok := err.(ofp4.Error); ok {
-				self.createError(e.Type, e.Code)
+			if e, ok := err.(ofp4.ErrorMsg); ok {
+				self.putError(e)
 			} else {
 				log.Print(err)
 			}

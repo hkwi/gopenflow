@@ -116,7 +116,7 @@ type frame struct {
 	tunnelId     uint64
 	queueId      uint32
 	actionSet    actionSet
-	experimenter map[uint64][]byte // experimenter may set frame associated oxm tlvs, which will be sent over by PacketIn
+	experimenter map[oxmExperimenterKey][]byte // experimenter may set frame associated oxm tlvs, which will be sent over by PacketIn
 }
 
 func (self frame) isInvalid() bool {
@@ -133,8 +133,8 @@ func (self *frame) useLayers() {
 	if len(self.layers) == 0 {
 		var rootLayer gopacket.Decoder = layers.LayerTypeEthernet
 		if oxms, ok := self.experimenter[StratosOxmBasicId]; ok {
-			for f := range ofp4.OxmBytes(oxms).Iter() {
-				gen := ofp4.OxmGenericBytes(f)
+			for _, f := range ofp4.Oxm(oxms).Iter() {
+				gen := ofp4.OxmGeneric(f)
 				if gen.Ok() && gen.ExpType() == STRATOS_BASIC_LINKTYPE {
 					if l, ok := hwmap[layers.LinkType(gen.Value()[0])]; ok {
 						rootLayer = l
@@ -194,7 +194,7 @@ func (self frame) clone() *frame {
 	aset := makeActionSet()
 	aset.Write(self.actionSet)
 
-	exp := make(map[uint64][]byte)
+	exp := make(map[oxmExperimenterKey][]byte)
 	for k, v := range self.experimenter {
 		value := make([]byte, len(v))
 		copy(value, v)
@@ -274,11 +274,29 @@ func (data frame) getValue(oxmType uint32) ([]byte, error) {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				return toMatchBytes(t.DstMAC)
 			}
+			if t, ok := layer.(*layers.Dot11); ok {
+				if t.Flags.ToDS() {
+					return toMatchBytes(t.Address3)
+				} else {
+					return toMatchBytes(t.Address1)
+				}
+			}
 		}
 	case ofp4.OXM_OF_ETH_SRC:
 		for _, layer := range data.layers {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				return toMatchBytes(t.SrcMAC)
+			}
+			if t, ok := layer.(*layers.Dot11); ok {
+				if t.Flags.FromDS() {
+					if t.Flags.ToDS() {
+						return toMatchBytes(t.Address4)
+					} else {
+						return toMatchBytes(t.Address3)
+					}
+				} else {
+					return toMatchBytes(t.Address2)
+				}
 			}
 		}
 	case ofp4.OXM_OF_ETH_TYPE:
@@ -1129,7 +1147,7 @@ func (self *flowTableWork) Map() Reducable {
 		}
 
 		for _, act := range entry.instApply {
-			if pout, gout, err := act.process(self.data); err != nil {
+			if pout, gout, err := act.Process(self.data); err != nil {
 				log.Print(err)
 			} else {
 				if pout != nil {
@@ -1183,7 +1201,7 @@ func (self *flowTableWork) Map() Reducable {
 		if entry.instGoto != 0 {
 			self.nextTable = entry.instGoto
 		} else {
-			pouts, gouts := actionSet(self.data.actionSet).process(self.data)
+			pouts, gouts := actionSet(self.data.actionSet).Process(self.data)
 			self.outputs = append(self.outputs, pouts...)
 			groups = append(groups, gouts...)
 		}

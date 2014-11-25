@@ -36,13 +36,13 @@ type OxmHandler interface {
 /*
 oxm_type without oxm_has_mask and oxm_length for OFPXMC_EXPERIMENTER.
 */
-var oxmHandlers map[uint64]OxmHandler = make(map[uint64]OxmHandler)
+var oxmHandlers map[oxmExperimenterKey]OxmHandler = make(map[oxmExperimenterKey]OxmHandler)
 
 func AddOxmHandler(oxmType uint32, experimenter uint32, handle OxmHandler) {
 	if ofp4.OxmHeader(oxmType).Class() != ofp4.OFPXMC_EXPERIMENTER {
 		panic("oxmType must have OFPXMC_EXPERIMENTER class")
 	}
-	key := uint64(oxmType&ofp4.OXM_TYPE_MASK)<<32 | uint64(experimenter)
+	key := [2]uint32{oxmType & ofp4.OXM_TYPE_MASK, experimenter}
 	oxmHandlers[key] = handle
 }
 
@@ -170,19 +170,6 @@ func oxmBasicPrereq(oxmType uint32) *oxmBasic {
 	return ext
 }
 
-func OxmSplit(msg []byte) (oxms [][]byte) {
-	for len(msg) > 4 {
-		mt := ofp4.OxmHeader(binary.BigEndian.Uint32(msg))
-		if mt == 0 { // this happens at OFPAT_SET_FIELD padding
-			break
-		}
-		length := mt.Length()
-		oxms = append(oxms, msg[:4+length])
-		msg = msg[4+length:]
-	}
-	return
-}
-
 // basicMatch represents OFPMT_OXM + OFPXMC_OPENFLOW_BASIC series.
 type oxmBasic struct {
 	Type  uint32 // mask and length must be masked-out
@@ -245,7 +232,7 @@ func (self oxmBasic) Equal(target oxmBasic) bool {
 
 type match struct {
 	basic []oxmBasic
-	exp   map[uint64][]byte // value may contain multiple oxmtlv.
+	exp   map[oxmExperimenterKey][]byte // value may contain multiple oxmtlv.
 }
 
 func (self match) Match(data frame) bool {
@@ -303,10 +290,10 @@ func (self match) Fit(target match) (bool, error) {
 					return false, err
 				}
 			} else {
-				return false, ofp4.Error{
-					Type: ofp4.OFPET_BAD_MATCH,
-					Code: ofp4.OFPBMC_BAD_TYPE,
-				}
+				return false, ofp4.MakeErrorMsg(
+					ofp4.OFPET_BAD_MATCH,
+					ofp4.OFPBMC_BAD_TYPE,
+				)
 			}
 		}
 	}
@@ -335,10 +322,10 @@ func (self match) Conflict(target match) (bool, error) {
 					return true, nil
 				}
 			} else {
-				return false, ofp4.Error{
-					Type: ofp4.OFPET_BAD_MATCH,
-					Code: ofp4.OFPBMC_BAD_TYPE,
-				}
+				return false, ofp4.MakeErrorMsg(
+					ofp4.OFPET_BAD_MATCH,
+					ofp4.OFPBMC_BAD_TYPE,
+				)
 			}
 		}
 	}
@@ -361,7 +348,7 @@ func (self match) MarshalBinary() ([]byte, error) {
 }
 
 func (self *match) UnmarshalBinary(msg []byte) error {
-	for oxm := range ofp4.OxmBytes(msg).Iter() {
+	for _, oxm := range ofp4.Oxm(msg).Iter() {
 		hdr := oxm.Header()
 		switch hdr.Class() {
 		case ofp4.OFPXMC_OPENFLOW_BASIC:
@@ -372,23 +359,23 @@ func (self *match) UnmarshalBinary(msg []byte) error {
 			}
 			self.basic = append(self.basic, m)
 		case ofp4.OFPXMC_EXPERIMENTER:
-			exp := ofp4.OxmExperimenterBytes(oxm)
+			exp := ofp4.OxmExperimenterHeader(oxm)
 			if !exp.Ok() {
-				return ofp4.Error{
-					Code: ofp4.OFPET_BAD_MATCH,
-					Type: ofp4.OFPBRC_BAD_LEN,
-				}
+				return ofp4.MakeErrorMsg(
+					ofp4.OFPET_BAD_MATCH,
+					ofp4.OFPBRC_BAD_LEN,
+				)
 			}
 			key := exp.Id()
 			if self.exp == nil {
-				self.exp = make(map[uint64][]byte)
+				self.exp = make(map[oxmExperimenterKey][]byte)
 			}
 			self.exp[key] = append(self.exp[key], []byte(oxm)...)
 		default:
-			return ofp4.Error{
-				Type: ofp4.OFPET_BAD_MATCH,
-				Code: ofp4.OFPBMC_BAD_TYPE,
-			}
+			return ofp4.MakeErrorMsg(
+				ofp4.OFPET_BAD_MATCH,
+				ofp4.OFPBMC_BAD_TYPE,
+			)
 		}
 	}
 	return nil
@@ -397,7 +384,7 @@ func (self *match) UnmarshalBinary(msg []byte) error {
 func (self match) Expand() (match, error) {
 	var ret match
 	basicMap := make(map[uint32]oxmBasic)
-	expMap := make(map[uint64]BytesSet)
+	expMap := make(map[oxmExperimenterKey]BytesSet)
 
 	addBasic := func(b oxmBasic) error {
 		k := b.Type
@@ -405,10 +392,10 @@ func (self match) Expand() (match, error) {
 			basicMap[k] = b
 		} else {
 			if !v.Equal(b) { // conflicts
-				return ofp4.Error{
-					Type: ofp4.OFPET_BAD_MATCH,
-					Code: ofp4.OFPBMC_BAD_VALUE,
-				}
+				return ofp4.MakeErrorMsg(
+					ofp4.OFPET_BAD_MATCH,
+					ofp4.OFPBMC_BAD_VALUE,
+				)
 			}
 		}
 		return nil
@@ -423,10 +410,10 @@ func (self match) Expand() (match, error) {
 	for key, tlvIn := range self.exp {
 		handler, ok := oxmHandlers[key]
 		if !ok {
-			return match{}, ofp4.Error{
-				Type: ofp4.OFPET_BAD_MATCH,
-				Code: ofp4.OFPBMC_BAD_TYPE,
-			}
+			return match{}, ofp4.MakeErrorMsg(
+				ofp4.OFPET_BAD_MATCH,
+				ofp4.OFPBMC_BAD_TYPE,
+			)
 		}
 
 		var full match
@@ -441,7 +428,7 @@ func (self match) Expand() (match, error) {
 				}
 			}
 			for k, tlvs := range full.exp {
-				for oxm := range ofp4.OxmBytes(tlvs).Iter() {
+				for _, oxm := range ofp4.Oxm(tlvs).Iter() {
 					c := expMap[k]
 					c.Add([]byte(oxm))
 					expMap[k] = c
@@ -461,7 +448,7 @@ func (self match) Expand() (match, error) {
 			buf = append(buf, v...)
 		}
 		if ret.exp == nil {
-			ret.exp = make(map[uint64][]byte)
+			ret.exp = make(map[oxmExperimenterKey][]byte)
 		}
 		ret.exp[k] = buf
 	}
