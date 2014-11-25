@@ -36,15 +36,11 @@ func (self Oxm) Body() []byte {
 
 func (self Oxm) Iter() []Oxm {
 	var seq []Oxm
-	for cur := 0; cur < len(self); {
+	for cur := 0; cur < len(self)-4; {
 		h := Oxm(self[cur:])
-		length := h.Header().Length()
-		if length > 0 {
-			seq = append(seq, h[:length])
-			cur += length
-		} else {
-			break
-		}
+		length := h.Header().Length() + 4
+		seq = append(seq, h[:length])
+		cur += length
 	}
 	return seq
 }

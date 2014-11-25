@@ -107,7 +107,7 @@ func (self Hello) Elements() HelloElemHeader {
 
 func MakeHello(elements HelloElemHeader) Header {
 	var length int = 8 + len(elements)
-	self := make([]byte, 8, length)
+	self := make([]byte, length)
 	self[0] = 4
 	self[1] = OFPT_HELLO
 	binary.BigEndian.PutUint16(self[2:], uint16(length))
@@ -551,7 +551,8 @@ func (self FlowMod) Match() Match {
 }
 
 func (self FlowMod) Instructions() Instruction {
-	return Instruction(self[48:Header(self).Length()])
+	m := Match(self[48:])
+	return Instruction(self[48+align8(m.Length()):Header(self).Length()])
 }
 
 type GroupMod []byte

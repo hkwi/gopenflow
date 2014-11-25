@@ -18,7 +18,7 @@ func (self Instruction) Iter() []Instruction {
 	var seq []Instruction
 	for cur := 0; cur < len(self); {
 		i := Instruction(self[cur:])
-		seq = append(seq, Instruction(i[:i.Len()]))
+		seq = append(seq, i[:i.Len()])
 		cur += i.Len()
 	}
 	return seq

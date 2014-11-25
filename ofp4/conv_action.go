@@ -14,14 +14,14 @@ func (self ActionHeader) Type() uint16 {
  * Length of action, including header and padding to make this 64-bit aligned.
  */
 func (self ActionHeader) Len() int {
-	return int(binary.BigEndian.Uint16(self[4:]))
+	return int(binary.BigEndian.Uint16(self[2:]))
 }
 
 func (self ActionHeader) Iter() []ActionHeader {
 	var seq []ActionHeader
 	for cur := 0; cur < len(self); {
 		a := ActionHeader(self[cur:])
-		seq = append(seq, ActionHeader(a[:a.Len()]))
+		seq = append(seq, a[:a.Len()])
 		cur += a.Len()
 	}
 	return seq

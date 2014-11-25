@@ -621,9 +621,8 @@ type actionList []action
 
 func (self *actionList) UnmarshalBinary(data []byte) error {
 	var actions []action
-	for cur := 0; cur < len(data); {
+	for _,msg := range ofp4.ActionHeader(data).Iter() {
 		var act action
-		msg := ofp4.ActionHeader(data[cur:])
 		switch msg.Type() {
 		default:
 			return errors.New("unknown ofp4.Action type")
@@ -689,7 +688,6 @@ func (self *actionList) UnmarshalBinary(data []byte) error {
 			}
 		}
 		actions = append(actions, act)
-		cur += msg.Len()
 	}
 	*self = actions
 	return nil
