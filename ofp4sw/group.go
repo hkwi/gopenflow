@@ -13,29 +13,54 @@ type bucket struct {
 	actionSet  actionSet
 }
 
-func (b *bucket) fromMessage(msg ofp4.Bucket) error {
-	b.weight = msg.Weight
-	b.watchPort = msg.WatchPort
-	b.watchGroup = msg.WatchGroup
-	b.actionSet = makeActionSet()
+func (self bucket) MarshalBinary() ([]byte, error) {
+	if actions, err := self.actionSet.MarshalBinary(); err != nil {
+		return nil, err
+	} else {
+		return ofp4.MakeBucket(self.weight, self.watchPort, self.watchGroup, actions), nil
+	}
+}
 
-	if err := b.actionSet.fromMessage(msg.Actions); err != nil {
+func (self *bucket) UnmarshalBinary(data []byte) error {
+	msg := ofp4.Bucket(data)
+	self.weight = msg.Weight()
+	self.watchPort = msg.WatchPort()
+	self.watchGroup = msg.WatchGroup()
+	self.actionSet = makeActionSet()
+
+	if err := self.actionSet.UnmarshalBinary(msg.Actions()); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (b bucket) toMessage() (ofp4.Bucket, error) {
-	var msg ofp4.Bucket
-	if actions, err := actionSet(b.actionSet).toMessage(); err != nil {
-		return msg, err
-	} else {
-		msg.Weight = b.weight
-		msg.WatchPort = b.watchPort
-		msg.WatchGroup = b.watchGroup
-		msg.Actions = actions
-		return msg, nil
+type bucketList []bucket
+
+func (self *bucketList) UnmarshalBinary(data []byte) error {
+	var buckets []bucket
+	for cur := 0; cur < len(data); {
+		msg := ofp4.Bucket(data[cur:])
+		var b bucket
+		if err := b.UnmarshalBinary(msg); err != nil {
+			return err
+		}
+		buckets = append(buckets, b)
+		cur += msg.Len()
 	}
+	*self = buckets
+	return nil
+}
+
+func (self bucketList) MarshalBinary() ([]byte, error) {
+	var buckets []byte
+	for _, b := range []bucket(self) {
+		if bin, err := b.MarshalBinary(); err != nil {
+			return nil, err
+		} else {
+			buckets = append(buckets, bin...)
+		}
+	}
+	return buckets, nil
 }
 
 type group struct {
@@ -55,7 +80,7 @@ func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gout
 	switch g.groupType {
 	case ofp4.OFPGT_ALL, ofp4.OFPGT_INDIRECT:
 		for _, b := range buckets {
-			p, g := actionSet(b.actionSet).process(data)
+			p, g := actionSet(b.actionSet).Process(data)
 			pouts = append(pouts, p...)
 			gouts = append(gouts, g...)
 		}
@@ -69,7 +94,7 @@ func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gout
 		for _, b := range buckets {
 			weightSum += float64(b.weight)
 			if step <= weightSum {
-				p, g := actionSet(b.actionSet).process(data)
+				p, g := actionSet(b.actionSet).Process(data)
 				pouts = append(pouts, p...)
 				gouts = append(gouts, g...)
 				break
@@ -102,7 +127,7 @@ func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gout
 			}
 			if live {
 				fdata := data.clone()
-				p, g := actionSet(b.actionSet).process(fdata)
+				p, g := actionSet(b.actionSet).Process(fdata)
 				pouts = append(pouts, p...)
 				gouts = append(gouts, g...)
 				break
@@ -113,20 +138,24 @@ func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gout
 }
 
 func (pipe *Pipeline) addGroup(req ofp4.GroupMod) error {
-	buckets := make([]bucket, len(req.Buckets))
-	for i, _ := range buckets {
-		buckets[i].fromMessage(req.Buckets[i])
+	var buckets []bucket
+	for _, msg := range req.Buckets().Iter() {
+		var b bucket
+		if err := b.UnmarshalBinary(msg); err != nil {
+			return err
+		}
+		buckets = append(buckets, b)
 	}
 
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
 
-	if _, exists := pipe.groups[req.GroupId]; exists {
-		return &ofp4.Error{ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_GROUP_EXISTS, nil}
+	if _, exists := pipe.groups[req.GroupId()]; exists {
+		return ofp4.MakeErrorMsg(ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_GROUP_EXISTS)
 	} else {
-		pipe.groups[req.GroupId] = &group{
+		pipe.groups[req.GroupId()] = &group{
 			lock:      &sync.RWMutex{},
-			groupType: req.Type,
+			groupType: req.Type(),
 			buckets:   buckets,
 		}
 	}
@@ -146,7 +175,7 @@ func (pipe *Pipeline) deleteGroupInside(groupId uint32) error {
 			})
 		}
 	} else {
-		return &ofp4.Error{ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_GROUP_EXISTS, nil}
+		return ofp4.MakeErrorMsg(ofp4.OFPET_GROUP_MOD_FAILED, ofp4.OFPGMFC_GROUP_EXISTS)
 	}
 	return nil
 }

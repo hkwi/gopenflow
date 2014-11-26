@@ -1,4 +1,4 @@
-package ofp4
+package ofp4obj
 
 import (
 	"encoding"

@@ -10,24 +10,25 @@ import (
 )
 
 func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
-	if req.TableId > ofp4.OFPTT_MAX {
-		return ofp4.Error{
-			Type: ofp4.OFPET_FLOW_MOD_FAILED,
-			Code: ofp4.OFPFMFC_BAD_TABLE_ID,
-		}
+	tableId := req.TableId()
+	if tableId > ofp4.OFPTT_MAX {
+		return ofp4.MakeErrorMsg(
+			ofp4.OFPET_FLOW_MOD_FAILED,
+			ofp4.OFPFMFC_BAD_TABLE_ID,
+		)
 	}
 	pipe.lock.Lock()
 	defer pipe.lock.Unlock()
 
 	var table *flowTable
-	if trial, ok := pipe.flows[req.TableId]; ok {
+	if trial, ok := pipe.flows[tableId]; ok {
 		table = trial
 	} else {
 		table = &flowTable{
 			lock:    &sync.RWMutex{},
 			feature: makeFlowTableFeature(),
 		}
-		pipe.flows[req.TableId] = table
+		pipe.flows[tableId] = table
 	}
 	return table.addFlowEntry(req)
 }
@@ -86,7 +87,7 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 	if e1 != nil {
 		return e1
 	}
-	if err := self.feature.accepts(flow, req.Priority); err != nil {
+	if err := self.feature.accepts(flow, req.Priority()); err != nil {
 		return err
 	}
 
@@ -95,12 +96,12 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 
 	var priority *flowPriority
 	i := sort.Search(len(self.priorities), func(k int) bool {
-		return self.priorities[k].priority <= req.Priority // descending order
+		return self.priorities[k].priority <= req.Priority() // descending order
 	})
-	if i == len(self.priorities) || self.priorities[i].priority != req.Priority {
+	if i == len(self.priorities) || self.priorities[i].priority != req.Priority() {
 		priority = &flowPriority{
 			lock:     &sync.RWMutex{},
-			priority: req.Priority,
+			priority: req.Priority(),
 			flows:    make(map[uint32][]*flowEntry),
 		}
 		self.priorities = append(self.priorities, nil)
@@ -121,15 +122,15 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 			for _, f := range fs {
 				if conflict, err := flow.fields.Conflict(f.fields); err != nil {
 					return err
-				} else if req.Flags&ofp4.OFPFF_CHECK_OVERLAP != 0 && !conflict {
-					return ofp4.Error{Type: ofp4.OFPET_FLOW_MOD_FAILED, Code: ofp4.OFPFMFC_OVERLAP}
+				} else if req.Flags()&ofp4.OFPFF_CHECK_OVERLAP != 0 && !conflict {
+					return ofp4.MakeErrorMsg(ofp4.OFPET_FLOW_MOD_FAILED, ofp4.OFPFMFC_OVERLAP)
 				}
 
 				if isEqual, err := flow.fields.Equal(f.fields); err != nil {
 					return err
 				} else if isEqual {
 					// old entry will be cleared
-					if req.Flags&ofp4.OFPFF_RESET_COUNTS == 0 {
+					if req.Flags()&ofp4.OFPFF_RESET_COUNTS == 0 {
 						// counters should be copied
 						flow.packetCount = f.packetCount
 						flow.byteCount = f.byteCount
@@ -207,20 +208,20 @@ type flowEntry struct {
 
 func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
 	var reqMatch match
-	if err := reqMatch.UnmarshalBinary(req.Match.Data); err != nil {
+	if err := reqMatch.UnmarshalBinary(req.Match().OxmFields()); err != nil {
 		return nil, err
 	}
 	entry := &flowEntry{
 		lock:        &sync.RWMutex{},
 		fields:      reqMatch,
-		cookie:      req.Cookie,
+		cookie:      req.Cookie(),
 		created:     time.Now(),
-		idleTimeout: req.IdleTimeout,
-		hardTimeout: req.HardTimeout,
+		idleTimeout: req.IdleTimeout(),
+		hardTimeout: req.HardTimeout(),
 		instWrite:   makeActionSet(),
 		instExp:     make(map[int][]instExperimenter),
 	}
-	if err := entry.importInstructions(req.Instructions); err != nil {
+	if err := entry.importInstructions(req.Instructions()); err != nil {
 		return nil, err
 	}
 	return entry, nil
@@ -236,95 +237,95 @@ func (self flowEntry) valid(now time.Time) int {
 	return -1
 }
 
-func (entry *flowEntry) importInstructions(instructions []ofp4.Instruction) error {
-	for _, binst := range instructions {
-		switch inst := binst.(type) {
+func (entry *flowEntry) importInstructions(instructions ofp4.Instruction) error {
+	for _, inst := range instructions.Iter() {
+		switch inst.Type() {
 		default:
-			return ofp4.Error{
-				Type: ofp4.OFPET_BAD_INSTRUCTION,
-				Code: ofp4.OFPBIC_UNKNOWN_INST,
-			}
-		case ofp4.InstructionGotoTable:
-			entry.instGoto = inst.TableId
-		case ofp4.InstructionWriteMetadata:
-			if inst.Metadata&^inst.MetadataMask != 0 {
+			return ofp4.MakeErrorMsg(
+				ofp4.OFPET_BAD_INSTRUCTION,
+				ofp4.OFPBIC_UNKNOWN_INST,
+			)
+		case ofp4.OFPIT_GOTO_TABLE:
+			entry.instGoto = ofp4.InstructionGotoTable(inst).TableId()
+		case ofp4.OFPIT_WRITE_METADATA:
+			i := ofp4.InstructionWriteMetadata(inst)
+			if i.Metadata()&^i.MetadataMask() != 0 {
 				return errors.New("invalid value/mask pair")
 			}
 			entry.instMetadata = &metadataInstruction{
-				inst.Metadata,
-				inst.MetadataMask,
+				i.Metadata(),
+				i.MetadataMask(),
 			}
-		case ofp4.InstructionActions:
-			switch inst.Type {
+		case ofp4.OFPIT_WRITE_ACTIONS, ofp4.OFPIT_APPLY_ACTIONS, ofp4.OFPIT_CLEAR_ACTIONS:
+			i := ofp4.InstructionActions(inst)
+			switch inst.Type() {
 			case ofp4.OFPIT_WRITE_ACTIONS:
 				var aset actionSet
-				aset.fromMessage(inst.Actions)
+				if err := aset.UnmarshalBinary(i.Actions()); err != nil {
+					return err
+				}
 				entry.instWrite = aset
 			case ofp4.OFPIT_APPLY_ACTIONS:
 				var alist actionList
-				alist.fromMessage(inst.Actions)
+				if err := alist.UnmarshalBinary(i.Actions()); err != nil {
+					return err
+				}
 				entry.instApply = alist
 			case ofp4.OFPIT_CLEAR_ACTIONS:
 				entry.instClear = true
 			}
-		case ofp4.InstructionMeter:
-			entry.instMeter = inst.MeterId
-		case ofp4.InstructionExperimenter:
-			instKey := experimenterKey{
-				Id:   inst.Experimenter,
-				Type: inst.ExpType,
-			}
-			if handler, ok := instructionHandlers[instKey]; ok {
-				pos := handler.Order()
+		case ofp4.OFPIT_METER:
+			entry.instMeter = ofp4.InstructionMeter(inst).MeterId()
+		case ofp4.OFPIT_EXPERIMENTER:
+			experimenter := ofp4.InstructionExperimenter(inst).Experimenter()
+			data := inst[8:]
+			if handler, ok := instructionHandlers[experimenter]; ok {
+				pos := handler.Order(data)
 				entry.instExp[pos] = append(entry.instExp[pos], instExperimenter{
-					experimenterKey: instKey,
-					Handler:         handler,
-					Data:            inst.Data,
+					Experimenter: experimenter,
+					Data:         data,
+					Handler:      handler,
 				})
 			} else {
-				return ofp4.Error{Type: ofp4.OFPET_BAD_INSTRUCTION, Code: ofp4.OFPBIC_UNSUP_INST}
+				return ofp4.MakeErrorMsg(ofp4.OFPET_BAD_INSTRUCTION, ofp4.OFPBIC_UNSUP_INST)
 			}
 		}
 	}
 	return nil
 }
 
-func (entry *flowEntry) exportInstructions() []ofp4.Instruction {
-	var insts []ofp4.Instruction
+func (entry flowEntry) exportInstructions() ofp4.Instruction {
+	var insts []byte
+
 	if entry.instMeter != 0 {
-		inst := ofp4.InstructionMeter{entry.instMeter}
-		insts = append(insts, inst)
+		insts = append(insts, ofp4.MakeInstructionMeter(entry.instMeter)...)
 	}
 	if len([]action(entry.instApply)) > 0 {
-		if actions, err := entry.instApply.toMessage(); err != nil {
+		if actions, err := entry.instApply.MarshalBinary(); err != nil {
 			panic(err)
 		} else {
-			inst := ofp4.InstructionActions{ofp4.OFPIT_APPLY_ACTIONS, actions}
-			insts = append(insts, inst)
+			insts = append(insts, ofp4.MakeInstructionActions(ofp4.OFPIT_APPLY_ACTIONS, actions)...)
 		}
 	}
 	if entry.instClear {
-		inst := ofp4.InstructionActions{ofp4.OFPIT_CLEAR_ACTIONS, nil}
-		insts = append(insts, inst)
+		insts = append(insts, ofp4.MakeInstructionActions(ofp4.OFPIT_CLEAR_ACTIONS, nil)...)
 	}
 	if entry.instWrite.Len() > 0 {
-		if actions, err := entry.instWrite.toMessage(); err != nil {
+		if actions, err := entry.instWrite.MarshalBinary(); err != nil {
 			panic(err)
 		} else {
-			inst := ofp4.InstructionActions{ofp4.OFPIT_WRITE_ACTIONS, actions}
-			insts = append(insts, inst)
+			insts = append(insts, ofp4.MakeInstructionActions(ofp4.OFPIT_WRITE_ACTIONS, actions)...)
 		}
 	}
 	if entry.instMetadata != nil {
-		inst := ofp4.InstructionWriteMetadata{
+		inst := ofp4.MakeInstructionWriteMetadata(
 			entry.instMetadata.metadata,
 			entry.instMetadata.mask,
-		}
-		insts = append(insts, inst)
+		)
+		insts = append(insts, inst...)
 	}
 	if entry.instGoto != 0 {
-		inst := ofp4.InstructionGotoTable{entry.instGoto}
-		insts = append(insts, inst)
+		insts = append(insts, ofp4.MakeInstructionGotoTable(entry.instGoto)...)
 	}
 	return insts
 }

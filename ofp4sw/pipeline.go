@@ -157,8 +157,8 @@ type PortStats struct {
 
 type portInternal interface {
 	Outlet(*outputToPort)
-	Stats() *PortStats
-	State() *PortState
+	Stats() PortStats
+	State() PortState
 	GetConfig() uint32
 	SetConfig(uint32)
 }
@@ -192,8 +192,8 @@ func (self *normalPort) Outlet(pout *outputToPort) {
 	}
 }
 
-func (self normalPort) Stats() *PortStats {
-	return &self.stats
+func (self normalPort) Stats() PortStats {
+	return self.stats
 }
 
 func (self normalPort) GetConfig() uint32 {
@@ -205,8 +205,8 @@ func (self *normalPort) SetConfig(config uint32) {
 	self.config = config
 }
 
-func (self normalPort) State() *PortState {
-	return &self.state
+func (self normalPort) State() PortState {
+	return self.state
 }
 
 func (pipe Pipeline) getController() *controller {
