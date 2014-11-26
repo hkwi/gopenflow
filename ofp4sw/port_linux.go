@@ -211,6 +211,8 @@ const (
 type pktSock struct {
 	ifindex int
 	fd      int
+	buf []byte
+	oob []byte
 }
 
 func newPktSock(ifindex int) (*pktSock, error) {
@@ -241,6 +243,8 @@ func newPktSock(ifindex int) (*pktSock, error) {
 	return &pktSock{
 		ifindex: ifindex,
 		fd:      fd,
+		buf: make([]byte, 32*1024), // enough for jumbo frame
+		oob: make([]byte, syscall.CmsgSpace(20)), // msg_control, 20 = sizeof(auxdata)
 	}, nil
 }
 
@@ -251,12 +255,14 @@ func (self pktSockIgnore) Error() string {
 }
 
 func (self pktSock) Get() ([]byte, uint16, error) {
-	p := make([]byte, 32*1024)                 // enough for jumbo frame
-	oob := make([]byte, syscall.CmsgSpace(20)) // msg_control, 20 = sizeof(auxdata)
-	n, _, flags, from, err := syscall.Recvmsg(self.fd, p, oob, syscall.MSG_TRUNC|syscall.MSG_DONTWAIT)
+	n, _, flags, from, err := syscall.Recvmsg(self.fd, self.buf, self.oob, syscall.MSG_TRUNC|syscall.MSG_DONTWAIT)
 	if err != nil {
 		return nil, 0, err
 	}
+	
+
+	p := make([]byte, n+4)
+	copy(p, self.buf)
 
 	sa_ll := from.(*syscall.SockaddrLinklayer)
 	if sa_ll.Ifindex != self.ifindex {
@@ -264,7 +270,7 @@ func (self pktSock) Get() ([]byte, uint16, error) {
 	}
 
 	if flags&syscall.MSG_CTRUNC == 0 {
-		if cmsgs, err := syscall.ParseSocketControlMessage(oob); err != nil {
+		if cmsgs, err := syscall.ParseSocketControlMessage(self.oob); err != nil {
 			return nil, 0, err
 		} else {
 			for _, cmsg := range cmsgs {
