@@ -145,15 +145,15 @@ func (self *NamedPort) handleNetdev(ev NetdevUpdate) {
 												}
 											}
 										}(); err != nil {
-											log.Print(err)
+											log.Print("epoll", err)
 											return
 										}
 									} else {
-										log.Print(e)
+										log.Print("Get errno", e)
 										return
 									}
 								default:
-									log.Print(e)
+									log.Print("Get error", e)
 									return
 								}
 							} else {
