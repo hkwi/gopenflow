@@ -134,7 +134,7 @@ func (self *NamedPort) handleNetdev(ev NetdevUpdate) {
 												if _, err := syscall.EpollWait(epfd, evs, 20); err != nil {
 													switch e := err.(type) {
 													case syscall.Errno:
-														if !e.Timeout() {
+														if !e.Temporary() && !e.Timeout() {
 															return e
 														}
 													default:
