@@ -188,6 +188,7 @@ func (self OxmHeader) HasMask() bool {
 	return (self & OXM_HASMASK_MASK) != 0
 }
 
+// Length of OXM payload
 func (self OxmHeader) Length() int {
 	return int(self & OXM_LENGTH_MASK)
 }

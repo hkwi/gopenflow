@@ -14,22 +14,18 @@ const (
 AddInstructionHandler registers this InstructionHandler.
 */
 type InstructionHandler interface {
-	Order() int
+	Order(payload []byte) int
 	Execute(frame Frame, instructionData []byte) (Frame, error)
 }
 
-var instructionHandlers map[experimenterKey]InstructionHandler = make(map[experimenterKey]InstructionHandler)
+var instructionHandlers map[uint32]InstructionHandler = make(map[uint32]InstructionHandler)
 
-func AddInstructionHandler(experimenter uint32, expType uint32, handle InstructionHandler) {
-	expKey := experimenterKey{
-		Id:   experimenter,
-		Type: expType,
-	}
-	actionHandlers[expKey] = handle
+func AddInstructionHandler(experimenter uint32, handle InstructionHandler) {
+	actionHandlers[experimenter] = handle
 }
 
 type instExperimenter struct {
-	experimenterKey
-	Handler InstructionHandler
-	Data    []byte
+	Experimenter uint32
+	Data         []byte
+	Handler      InstructionHandler
 }
