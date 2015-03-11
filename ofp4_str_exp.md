@@ -47,10 +47,6 @@ oxm_class is always OFPXMC_EXPERIMENTER (0xFFFF), as defined in openflow specifi
  	STROXM_BASIC_DOT11_BSSID,
  	STROXM_BASIC_DOT11_TAG,
  	STROXM_BASIC_DOT11_SSID,
- 	
- 	// match
- 	STROXM_BASIC_DOT11_MGMT_CAPTURE_PORT,
- 	STROXM_BASIC_DOT11_BEACON_CAPTURE_PORT,
  }
 
  enum stratos_radiotap_exp_type {
@@ -122,6 +118,13 @@ implies PUBLIC_ACTION=(10, 11, 12 or 13)
 
 ### STROXM_BASIC_ANQP
 implies GAS
+
+
+Special rules
+-------------
+Flow rules that have stratosphere experimenter match with `OXM_OF_IN_PORT` will try to hook 
+enable 802.11 management frame capture. In this case, the application have the responsibility 
+of handling those captured management frames, and sending response frames if required.
 
 
 STRATOS_OXM_FIELD_RADIOTAP
