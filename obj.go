@@ -16,12 +16,7 @@ func Parse(data []byte) (encoding.BinaryMarshaler, error) {
 		return nil, &Error{1, 0}
 	case 4: // Openflow 1.3
 		length := int(binary.BigEndian.Uint16(data[2:4]))
-		obj := new(ofp4.Message)
-		if err := obj.UnmarshalBinary(data[0:length]); err != nil {
-			return nil, err
-		} else {
-			return obj, nil
-		}
+		return ofp4.Header(data[0:length]), nil
 	}
 }
 

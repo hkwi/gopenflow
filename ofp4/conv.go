@@ -47,6 +47,10 @@ func (self Header) AppendData(data []byte) Header {
 	return append(self, data...)
 }
 
+func (self Header) MarshalBinary() ([]byte, error) {
+	return self, nil
+}
+
 func MakeHeader(ofpt uint8) Header {
 	self := make([]byte, 8)
 	self[0] = 4
