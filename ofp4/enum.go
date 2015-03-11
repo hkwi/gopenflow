@@ -209,10 +209,10 @@ func (self *OxmHeader) SetMask(mask bool) {
 OXM_OF_ constnts are defined as combinations of OFPXMC_OPENFLOW_BASIC and their field.
 Following constants does not have oxm_hasmask and length.
 
-Following constants are usually used as match key. 
-Experimenter oxm may have variable sized length or mask, and experimenter 
+Following constants are usually used as match key.
+Experimenter oxm may have variable sized length or mask, and experimenter
 match key would be mixed with basic oxm key.
-So match key would better not have length and mask. 
+So match key would better not have length and mask.
 This is because these constants does not have length and mask included.
 */
 const (
@@ -549,7 +549,7 @@ const (
 
 const (
 	OFPPR_ADD = iota
-	OFPPR_DLETE
+	OFPPR_DELETE
 	OFPPR_MODIFY
 )
 
