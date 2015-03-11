@@ -207,7 +207,13 @@ func (self *OxmHeader) SetMask(mask bool) {
 
 /*
 OXM_OF_ constnts are defined as combinations of OFPXMC_OPENFLOW_BASIC and their field.
-Following constants does not have oxm_hasmask and length
+Following constants does not have oxm_hasmask and length.
+
+Following constants are usually used as match key. 
+Experimenter oxm may have variable sized length or mask, and experimenter 
+match key would be mixed with basic oxm key.
+So match key would better not have length and mask. 
+This is because these constants does not have length and mask included.
 */
 const (
 	OXM_OF_IN_PORT        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IN_PORT<<OXM_FIELD_SHIFT
