@@ -70,15 +70,12 @@ func (self NamedPort) Egress(pkt Frame) error {
 	switch self.hatype {
 	case syscall.ARPHRD_ETHER:
 		dot11 := false
-		for _, o := range pkt.Oob {
-			switch oob := o.(type) {
-			case OxmExperimenter:
-				if oob.Experimenter == STRATOS_EXPERIMENTER_ID &&
-					oob.Field == STRATOS_OXM_FIELD_BASIC &&
-					oob.Type == STROXM_BASIC_DOT11 &&
-					oob.Value.([]byte)[0] > 0 {
-					dot11 = true
-				}
+		for _, oob := range fetchOxmExperimenter(pkt.Oob) {
+			if oob.Experimenter == STRATOS_EXPERIMENTER_ID &&
+				oob.Field == STRATOS_OXM_FIELD_BASIC &&
+				oob.Type == STROXM_BASIC_DOT11 &&
+				oob.Value[0] > 0 {
+				dot11 = true
 			}
 		}
 		if dot11 && self.wiphy != 0 {
@@ -154,7 +151,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 func (self NamedPort) GetConfig() []PortConfig {
 	self.lock.Lock()
 	defer self.lock.Unlock()
-	
+
 	return append([]PortConfig{
 		PortConfigPortDown(self.flags&syscall.IFF_UP == 0),
 	}, self.config...)
@@ -163,12 +160,12 @@ func (self NamedPort) GetConfig() []PortConfig {
 func (self NamedPort) SetConfig(mods []PortConfig) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
-	
+
 	var config []PortConfig
-	for _,mod:=range mods {
-		switch m:=mod.(type){
+	for _, mod := range mods {
+		switch m := mod.(type) {
 		case PortConfigPortDown:
-			if hub,err := nlgo.NewRtHub(); err!=nil {
+			if hub, err := nlgo.NewRtHub(); err != nil {
 				log.Print(err)
 			} else {
 				ifinfo := &syscall.IfInfomsg{
@@ -192,8 +189,8 @@ func (self NamedPort) SetConfig(mods []PortConfig) {
 func (self NamedPort) State() []PortState {
 	return []PortState{
 		PortStateLinkDown(self.flags&syscall2.IFF_LOWER_UP == 0),
-		PortStateBlocked(self.flags&syscall2.IFF_DORMANT!=0),
-		PortStateLive(self.flags&syscall.IFF_RUNNING!=0),
+		PortStateBlocked(self.flags&syscall2.IFF_DORMANT != 0),
+		PortStateLive(self.flags&syscall.IFF_RUNNING != 0),
 	}
 }
 
@@ -563,7 +560,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	case syscall.RTM_NEWLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
 			triggerUp := false
-			if ! tracking(port) && tracking(evPort) {
+			if !tracking(port) && tracking(evPort) {
 				triggerUp = true
 			}
 			port.flags = (port.flags &^ ifinfo.Change) | (ifinfo.Flags & ifinfo.Change)

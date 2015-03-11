@@ -47,23 +47,57 @@ func makeLwapp(dot11pkt []byte) ([]byte, error) {
 	return append(pkt, dot11pkt...), nil
 }
 
+type oxmExperimenter struct {
+	Experimenter uint32
+	Field        uint8
+	Type         uint16
+	Value        []byte
+}
+
+func (self oxmExperimenter) Bytes() []byte {
+	buf := make([]byte, 10+len(self.Value))
+	hdr := uint32(0xffff0000)
+	hdr |= uint32(self.Field) << 9
+	hdr |= uint32(6 + len(self.Value))
+	binary.BigEndian.PutUint32(buf[4:], self.Experimenter)
+	binary.BigEndian.PutUint16(buf[8:], self.Type)
+	copy(buf[10:], self.Value)
+	return buf
+}
+
+func fetchOxmExperimenter(buf []byte) []oxmExperimenter {
+	var ret []oxmExperimenter
+	for len(buf) > 10 {
+		hdr := binary.BigEndian.Uint32(buf)
+		length := int(hdr & 0x7F)
+		if (hdr >> 16) == 0xffff {
+			ret = append(ret, oxmExperimenter{
+				Experimenter: binary.BigEndian.Uint32(buf[4:]),
+				Field:        uint8(hdr >> 9),
+				Type:         binary.BigEndian.Uint16(buf[8:]),
+				Value:        buf[10 : 4+length],
+			})
+		}
+		buf = buf[4+length:]
+	}
+	return ret
+}
+
 func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 	// XXX: FCS
-	oob := []FrameOob{
-		OxmExperimenter{
-			Experimenter: STRATOS_EXPERIMENTER_ID,
-			Field:        STRATOS_OXM_FIELD_BASIC,
-			Type:         STROXM_BASIC_DOT11,
-			Value:        []byte{1},
-		},
-	}
-	radiotapAdd := func(expType uint16, value interface{}) {
-		oob = append(oob, OxmExperimenter{
+	oob := oxmExperimenter{
+		Experimenter: STRATOS_EXPERIMENTER_ID,
+		Field:        STRATOS_OXM_FIELD_BASIC,
+		Type:         STROXM_BASIC_DOT11,
+		Value:        []byte{1},
+	}.Bytes()
+	radiotapAdd := func(expType uint16, value []byte) {
+		oob = append(oob, oxmExperimenter{
 			Experimenter: STRATOS_EXPERIMENTER_ID,
 			Field:        STRATOS_OXM_FIELD_RADIOTAP,
 			Type:         expType,
 			Value:        value,
-		})
+		}.Bytes()...)
 	}
 	if rt.Present.TSFT() {
 		buf := make([]byte, 8)
@@ -104,7 +138,9 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 		radiotapAdd(STROXM_RADIOTAP_TX_ATTENUATION, buf)
 	}
 	if rt.Present.DBTxAttenuation() {
-		radiotapAdd(STROXM_RADIOTAP_DB_TX_ATTENUATION, rt.TSFT)
+		buf := make([]byte, 8)
+		binary.LittleEndian.PutUint64(buf, rt.TSFT)
+		radiotapAdd(STROXM_RADIOTAP_DB_TX_ATTENUATION, buf)
 	}
 	if rt.Present.DBMTxPower() {
 		radiotapAdd(STROXM_RADIOTAP_DBM_TX_POWER, []byte{uint8(rt.DBMTxPower)})
@@ -173,21 +209,19 @@ func FrameFromNlAttr(attrs nlgo.AttrList) (Frame, error) {
 	freqValue := make([]byte, 3)
 	binary.LittleEndian.PutUint16(freqValue, uint16(freq))
 
-	oob := []FrameOob{
-		OxmExperimenter{
-			Experimenter: STRATOS_EXPERIMENTER_ID,
-			Field:        STRATOS_OXM_FIELD_RADIOTAP,
-			Type:         STROXM_RADIOTAP_CHANNEL,
-			Value:        freqValue,
-		},
-	}
+	oob := oxmExperimenter{
+		Experimenter: STRATOS_EXPERIMENTER_ID,
+		Field:        STRATOS_OXM_FIELD_RADIOTAP,
+		Type:         STROXM_RADIOTAP_CHANNEL,
+		Value:        freqValue,
+	}.Bytes()
 	if t := attrs.Get(nlgo.NL80211_ATTR_RX_SIGNAL_DBM); t != nil {
-		oob = append(oob, OxmExperimenter{
+		oob = append(oob, oxmExperimenter{
 			Experimenter: STRATOS_EXPERIMENTER_ID,
 			Field:        STRATOS_OXM_FIELD_RADIOTAP,
 			Type:         STROXM_RADIOTAP_DBM_ANTSIGNAL,
 			Value:        []byte{uint8(t.(uint32))},
-		})
+		}.Bytes()...)
 	}
 	if data, err := makeLwapp(attrs.Get(nlgo.NL80211_ATTR_FRAME).([]byte)); err != nil {
 		return Frame{}, err

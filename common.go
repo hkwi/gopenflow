@@ -6,23 +6,7 @@ type Datapath interface {
 
 type Frame struct {
 	Data []byte
-	Oob  []FrameOob // out-of-band
-}
-
-type FrameOob interface{}
-
-type OxmBasic struct {
-	Field uint8
-	Value []byte
-	Mask  []byte
-}
-
-type OxmExperimenter struct {
-	Experimenter uint32
-	Field        uint8
-	Type         uint16
-	Value        interface{}
-	Mask         interface{}
+	Oob  []byte // out-of-band oxm
 }
 
 type Port interface {
