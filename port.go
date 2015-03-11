@@ -205,10 +205,12 @@ func (self NamedPort) Stats() (PortStats, error) {
 	if hub, err := nlgo.NewRtHub(); err != nil {
 		return PortStats{}, err
 	} else if res, err := hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, ifinfo, nil); err != nil {
+		return PortStats{}, err
+	} else {
 		for _, r := range res {
 			switch r.Message.Header.Type {
 			case syscall.RTM_NEWLINK:
-				if attrs, err := nlgo.RouteLinkPolicy.Parse(r.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfAddrmsg):]); err != nil {
+				if attrs, err := nlgo.RouteLinkPolicy.Parse(r.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
 					return PortStats{}, err
 				} else if blk := attrs.Get(nlgo.IFLA_STATS64); blk != nil {
 					s := (*nlgo.RtnlLinkStats64)(unsafe.Pointer(&blk.([]byte)[0]))
@@ -410,9 +412,10 @@ func (self *NamedPort) Down() {
 	self.fd = -1
 }
 
-func (self NamedPort) Close() {
+func (self NamedPort) Close() error {
 	close(self.ingress)
 	close(self.monitor)
+	return nil
 }
 
 func (self *NamedPort) Vendor(reqAny interface{}) interface{} {
@@ -435,9 +438,14 @@ func (self *NamedPort) Vendor(reqAny interface{}) interface{} {
 			if hres, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_REGISTER_FRAME, 0, nil, nlgo.AttrList{
 				nlgo.Attr{
 					Header: syscall.NlAttr{
-						Type: nlgo.NL80211_ATTR_FRAME_MATCH,
+						Type: nlgo.NL80211_ATTR_FRAME_MATCH | syscall.NLA_F_NESTED,
 					},
-					Value: []byte(fr),
+					Value: nlgo.Attr{
+						Header: syscall.NlAttr{
+							Type: uint16(nlgo.NLA_BINARY),
+						},
+						Value: []byte(fr),
+					},
 				},
 			}); err != nil {
 				return err
@@ -480,6 +488,7 @@ func (self *NamedPort) Vendor(reqAny interface{}) interface{} {
 }
 
 type NamedPortManager struct {
+	lock          *sync.Mutex
 	trackingNames []string
 	trackingWiphy []uint32
 	// all ports this manager handles. key is ifindex.
@@ -488,6 +497,74 @@ type NamedPortManager struct {
 	datapath Datapath
 	hub      *nlgo.RtHub
 	ghub     *nlgo.GenlHub
+}
+
+func NewNamedPortManager(datapath Datapath) (*NamedPortManager, error) {
+	self := &NamedPortManager{
+		datapath: datapath,
+		ports:    make(map[uint32]*NamedPort),
+		lock:     &sync.Mutex{},
+	}
+	if ghub, err := nlgo.NewGenlHub(); err != nil {
+		return nil, err
+	} else if hub, err := nlgo.NewRtHub(); err != nil {
+		ghub.Close()
+		return nil, err
+	} else if err := hub.Add(syscall.RTNLGRP_LINK, self); err != nil {
+		hub.Close()
+		ghub.Close()
+		return nil, err
+	} else {
+		self.hub = hub
+		self.ghub = ghub
+		return self, nil
+	}
+}
+
+func (self NamedPortManager) Close() error {
+	self.hub.Close()
+	self.ghub.Close()
+	return nil
+}
+
+func (self *NamedPortManager) AddName(name string) error {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	self.trackingNames = append(self.trackingNames, name)
+
+	if res, err := self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
+		nlgo.Attr{
+			Header: syscall.NlAttr{
+				Type: syscall.IFLA_IFNAME | syscall.NLA_F_NESTED,
+			},
+			Value: nlgo.Attr{
+				Header: syscall.NlAttr{
+					Type: uint16(nlgo.NLA_STRING),
+				},
+				Value: name,
+			},
+		},
+	}); err != nil {
+		return err
+	} else {
+		for _, r := range res {
+			self.RtListen(r)
+		}
+	}
+	return nil
+}
+
+func (self *NamedPortManager) RemoveName(name string) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	var active []string
+	for _, a := range self.trackingNames {
+		if a != name {
+			active = append(active, a)
+		}
+	}
+	self.trackingNames = active
 }
 
 func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
@@ -501,12 +578,13 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 		ifIndex: uint32(ifinfo.Index),
 		flags:   ifinfo.Flags,
 		fd:      -1,
+		lock:    &sync.Mutex{},
 	}
 	if attrs, err := nlgo.RouteLinkPolicy.Parse(ev.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
 		log.Print(err)
 	} else {
 		if t := attrs.Get(nlgo.IFLA_IFNAME); t != nil {
-			evPort.name = t.(string)
+			evPort.name = nlgo.NlaStringRemoveNul(t.(string))
 		}
 		if t := attrs.Get(nlgo.IFLA_MTU); t != nil {
 			evPort.mtu = t.(uint32)

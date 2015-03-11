@@ -83,8 +83,10 @@ STRATOS_OXM_FIELD_BASIC is used for usual frame matching.
 We don't use this value for normal use for now. 0 will be reserved.
 
 ### STROXM_BASIC_DOT11
-Bit 1 indicates that the frame is handled as 802.11 frame at the port.
+Bit 1 indicates that operations on that LWAPP L2 frame is done as 802.11 frame. 
 Packets with this field is always an LWAPP L2 frame.
+Switch port emits 802.11 raw frame in the LWAPP payload if this is 1.
+Switch will set this 1 when sending packet_in message with raw 802.11 frame.
 
 - mask : No
 - length : 1 byte

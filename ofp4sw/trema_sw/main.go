@@ -6,14 +6,33 @@ Package trema_sw implements trema-switch like command line interface.
 package main
 
 import (
-	"bufio"
 	"flag"
+	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4sw"
+	"io"
 	"log"
 	"net"
 	"strings"
 	"time"
 )
+
+type Wrapper struct {
+	con    io.ReadWriteCloser
+	Closed chan bool
+}
+
+func (self Wrapper) Close() error {
+	close(self.Closed)
+	return self.con.Close()
+}
+
+func (self Wrapper) Read(p []byte) (n int, err error) {
+	return self.con.Read(p)
+}
+
+func (self Wrapper) Write(p []byte) (n int, err error) {
+	return self.con.Write(p)
+}
 
 func main() {
 	var ports string
@@ -26,13 +45,17 @@ func main() {
 	flag.Int64Var(&datapathId, "i", 0, "datapath id")
 	flag.Parse()
 
-	ofp4sw.AddOxmHandler(0xffff<<16, 0xFF00E04D, ofp4sw.StratosOxm{})
+	//	ofp4sw.AddOxmHandler(0xffff<<16, 0xFF00E04D, ofp4sw.StratosOxm{})
 
 	pipe := ofp4sw.NewPipeline()
 	pipe.DatapathId = uint64(datapathId)
-	for i, e := range strings.Split(ports, ",") {
-		if err := pipe.AddPort(ofp4sw.NewNamedPort(e), uint32(i+1)); err != nil {
-			panic(err)
+
+	if pman, err := gopenflow.NewNamedPortManager(pipe); err != nil {
+		log.Print(err)
+		return
+	} else {
+		for _, e := range strings.Split(ports, ",") {
+			pman.AddName(e)
 		}
 	}
 	for {
@@ -41,16 +64,14 @@ func main() {
 		} else if con, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
 			log.Print(err)
 		} else {
-			channel := ofp4sw.NewIoControlChannel(bufio.NewReaderSize(con, 1<<20), con)
-			if err := pipe.AddControl(channel); err != nil {
+			ch := Wrapper{
+				con:    con,
+				Closed: make(chan bool),
+			}
+			if err := pipe.AddChannel(ch); err != nil {
 				log.Print(err)
-			} else {
-				log.Print(channel.Wait())
 			}
-			if err := pipe.RemoveControl(channel); err != nil {
-				panic(err)
-			}
-			con.Close()
+			_ = <-ch.Closed
 		}
 		time.Sleep(5 * time.Second)
 	}

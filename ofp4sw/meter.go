@@ -29,9 +29,9 @@ type meter struct {
 	rate      float64
 }
 
-func (m *meter) process(data *frame) error {
+func (m *meter) process(data *Frame) error {
 	var length int
-	if eth, err := data.data(); err != nil {
+	if eth, err := data.Serialized(); err != nil {
 		return err
 	} else {
 		length = len(eth)
@@ -203,7 +203,7 @@ func (self bandDscpRemark) MarshalBinary() ([]byte, error) {
 	return ofp4.MakeMeterBandDscpRemark(self.rate, self.burstSize, self.precLevel), nil
 }
 
-func (self bandDscpRemark) remark(data *frame) error {
+func (self bandDscpRemark) remark(data *Frame) error {
 	if v, err := data.getValue(ofp4.OXM_OF_IP_DSCP); err != nil {
 		return nil
 	} else {
@@ -214,8 +214,7 @@ func (self bandDscpRemark) remark(data *frame) error {
 			if prec > 0x03 {
 				prec = 0x03
 			}
-			if err := data.setValue(oxmBasic{
-				Type:  ofp4.OXM_OF_IP_DSCP,
+			if err := oxmBasicHandler.SetField(data, OxmKeyBasic(ofp4.OXM_OF_IP_DSCP), OxmValueMask{
 				Value: []byte{byte(phb<<3 | prec<<1)},
 				Mask:  []byte{0xff},
 			}); err != nil {

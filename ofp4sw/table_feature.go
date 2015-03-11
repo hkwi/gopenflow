@@ -4,16 +4,7 @@ import (
 	"github.com/hkwi/gopenflow/ofp4"
 )
 
-// Experimenter instructions and actions are identified by (experimenter-id, experimenter-type) pair.
-type experimenterKey struct {
-	Experimenter uint32
-	ExpType      uint32
-}
-
-type experimenterProp struct {
-	experimenterKey
-	Data []byte
-}
+type oxmId interface{}
 
 // Static types are
 // 1) uint16 for OFPIT_*
@@ -29,6 +20,17 @@ func (self instructionKeyList) Have(key instructionKey) bool {
 		}
 	}
 	return false
+}
+
+// Experimenter instructions and actions are identified by (experimenter-id, experimenter-type) pair.
+type experimenterKey struct {
+	Experimenter uint32
+	ExpType      uint32
+}
+
+type experimenterProp struct {
+	experimenterKey
+	Data []byte
 }
 
 // Static types are
@@ -47,46 +49,14 @@ func (self actionKeyList) Have(key actionKey) bool {
 	return false
 }
 
-type oxmExperimenterKey [2]uint32
-
-// Static types are
-// 1) uint32 for OFPXMC_OPENFLOW_BASIC oxm field
-// 2) oxmExperimenterKey for OFPXMC_EXPERIMENTER oxm field
-type oxmKey interface{}
-
-type oxmKeyList []oxmKey
-
-func (self oxmKeyList) Have(key oxmKey) bool {
-	for _, k := range []oxmKey(self) {
-		if k == key {
-			return true
-		}
-	}
-	return false
-}
-
-type TableHandler interface {
-	// XXX: TBD
-}
-
-var tableHandlers map[experimenterKey]TableHandler = make(map[experimenterKey]TableHandler)
-
-func AddTableHandler(experimenter uint32, expType uint32, handler TableHandler) {
-	key := experimenterKey{
-		Experimenter: experimenter,
-		ExpType:      expType,
-	}
-	tableHandlers[key] = handler
-}
-
 // special rule here. nil means "NOT SET"
 type flowTableFeatureProps struct {
 	inst          []instructionKey
 	next          []uint8
 	writeActions  []actionKey
 	applyActions  []actionKey
-	writeSetfield []oxmKey
-	applySetfield []oxmKey
+	writeSetfield []oxmId
+	applySetfield []oxmId
 	experimenter  []experimenterProp
 }
 
@@ -97,8 +67,8 @@ type flowTableFeature struct {
 	config        uint32
 	maxEntries    uint32
 	// properties
-	match     []oxmKey
-	wildcards []oxmKey
+	match     []oxmId
+	wildcards []oxmId
 	hit       flowTableFeatureProps
 	miss      flowTableFeatureProps
 }
@@ -134,7 +104,7 @@ func (self flowTableFeature) exportProps() []byte {
 	instExport(ofp4.OFPTFPT_INSTRUCTIONS, self.hit.inst)
 	instExport(ofp4.OFPTFPT_INSTRUCTIONS_MISS, self.miss.inst)
 
-	oxmExport := func(pType uint16, keys []oxmKey) {
+	oxmExport := func(pType uint16, keys []oxmId) {
 		if keys == nil {
 			return
 		}
@@ -143,7 +113,7 @@ func (self flowTableFeature) exportProps() []byte {
 			switch k := key.(type) {
 			case uint32:
 				ids = append(ids, ofp4.MakeOxm(k)...)
-			case oxmExperimenterKey:
+			case [2]uint32:
 				ids = append(ids, ofp4.MakeOxmExperimenterHeader(k)...)
 			default:
 				panic("unknown oxm key")
@@ -245,12 +215,14 @@ func (self *flowTableFeature) importProps(props ofp4.TableFeaturePropHeader) err
 		case ofp4.OFPTFPT_MATCH, ofp4.OFPTFPT_WILDCARDS,
 			ofp4.OFPTFPT_WRITE_SETFIELD, ofp4.OFPTFPT_WRITE_SETFIELD_MISS,
 			ofp4.OFPTFPT_APPLY_SETFIELD, ofp4.OFPTFPT_APPLY_SETFIELD_MISS:
-			var ids []oxmKey
+			var ids []oxmId
 			for _, oxm := range ofp4.TableFeaturePropOxm(prop).OxmIds().Iter() {
-				if oxm.Header().Class() == ofp4.OFPXMC_EXPERIMENTER {
-					ids = append(ids, ofp4.OxmExperimenterHeader(oxm).Experimenter())
+				hdr := oxm.Header()
+				if hdr.Class() == ofp4.OFPXMC_EXPERIMENTER {
+					exp := ofp4.OxmExperimenterHeader(oxm).Experimenter()
+					ids = append(ids, [...]uint32{oxmHandlers[exp].OxmId(uint32(oxm.Header())), exp})
 				} else {
-					ids = append(ids, oxm.Header().Type())
+					ids = append(ids, hdr.Type())
 				}
 			}
 			switch prop.Type() {
@@ -297,7 +269,7 @@ func (self *flowTableFeature) importProps(props ofp4.TableFeaturePropHeader) err
 // See openflow switch 1.3.4 spec "Flow Table Modification Messages" page 40
 func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 	isTableMiss := false
-	if entry.fields.isEmpty() && priority == 0 {
+	if len(entry.fields) == 0 && priority == 0 {
 		isTableMiss = true
 	}
 
@@ -360,40 +332,45 @@ func (self flowTableFeature) accepts(entry *flowEntry, priority uint16) error {
 	}
 
 	if !isTableMiss && self.match != nil {
-		specified := make(map[oxmKey]bool)
-		for _, k := range self.match {
-			specified[k] = false
-		}
-		for _, m := range entry.fields.basic {
-			if !oxmKeyList(self.match).Have(m.Type) {
-				return ofp4.MakeErrorMsg(
-					ofp4.OFPET_BAD_MATCH,
-					ofp4.OFPBMC_BAD_FIELD,
-				)
+		unavailable := func(id oxmId) bool {
+			for _, k := range self.match {
+				if k == id {
+					return false
+				}
 			}
-			if specified[m.Type] {
-				return ofp4.MakeErrorMsg(
-					ofp4.OFPET_BAD_MATCH,
-					ofp4.OFPBMC_DUP_FIELD,
-				)
-			} else {
-				specified[m.Type] = true
+			return true
+		}
+
+		for k, p := range entry.fields {
+			for _, oxm := range ofp4.Oxm(k.Bytes(p)).Iter() {
+				var id oxmId
+				hdr := oxm.Header()
+				switch hdr.Type() {
+				case ofp4.OFPXMC_OPENFLOW_BASIC:
+					id = oxmBasicHandler.OxmId(uint32(hdr))
+				case ofp4.OFPXMC_EXPERIMENTER:
+					exp := ofp4.OxmExperimenterHeader(oxm).Experimenter()
+					id = [...]uint32{
+						oxmHandlers[exp].OxmId(uint32(hdr)),
+						exp,
+					}
+				default:
+					return ofp4.MakeErrorMsg(
+						ofp4.OFPET_BAD_MATCH,
+						ofp4.OFPBMC_BAD_TYPE,
+					)
+				}
+				if unavailable(id) {
+					return ofp4.MakeErrorMsg(
+						ofp4.OFPET_BAD_MATCH,
+						ofp4.OFPBMC_BAD_FIELD,
+					)
+				}
 			}
 		}
-		for key, _ := range entry.fields.exp {
-			if !oxmKeyList(self.match).Have(key) {
-				return ofp4.MakeErrorMsg(
-					ofp4.OFPET_BAD_MATCH,
-					ofp4.OFPBMC_BAD_FIELD,
-				)
-			}
-			specified[key] = true
-		}
+
 		for _, k := range self.wildcards {
-			specified[k] = true
-		}
-		for _, v := range specified {
-			if !v {
+			if unavailable(k) {
 				return ofp4.MakeErrorMsg(
 					ofp4.OFPET_BAD_MATCH,
 					ofp4.OFPBMC_BAD_WILDCARDS,

@@ -5,6 +5,7 @@ import (
 	"code.google.com/p/gopacket/layers"
 	"errors"
 	"github.com/hkwi/gopenflow/ofp4"
+	layers2 "github.com/hkwi/suppl/gopacket/layers"
 	"log"
 )
 
@@ -23,14 +24,6 @@ const (
 	ACTION_ORDER_OUTPUT_TO_LAST
 )
 
-/*
-AddActionHandler registers this ActionHandler.
-*/
-type ActionHandler interface {
-	Order([]byte) int
-	Execute(frame Frame, actionData []byte) (Frame, error)
-}
-
 var actionHandlers map[uint32]ActionHandler = make(map[uint32]ActionHandler)
 
 func AddActionHandler(experimenter uint32, handle ActionHandler) {
@@ -38,7 +31,7 @@ func AddActionHandler(experimenter uint32, handle ActionHandler) {
 }
 
 type outputToPort struct {
-	data      *frame
+	Frame
 	outPort   uint32
 	maxLen    uint16
 	tableId   uint8
@@ -48,13 +41,13 @@ type outputToPort struct {
 }
 
 type outputToGroup struct {
-	data    *frame // there may be aditional process
+	Frame   // there may be aditional process
 	groupId uint32
 }
 
 type action interface {
 	Key() actionKey
-	Process(f *frame) (*outputToPort, *outputToGroup, error)
+	Process(data *Frame) (*outputToPort, *outputToGroup, error)
 	MarshalBinary() (data []byte, err error)
 }
 
@@ -67,9 +60,9 @@ func (self actionOutput) Key() actionKey {
 	return uint16(ofp4.OFPAT_OUTPUT)
 }
 
-func (self actionOutput) Process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionOutput) Process(f *Frame) (*outputToPort, *outputToGroup, error) {
 	return &outputToPort{
-		data:    data.clone(),
+		Frame:   f.clone(),
 		outPort: self.Port,
 		maxLen:  self.MaxLen,
 		reason:  ofp4.OFPR_ACTION,
@@ -88,9 +81,7 @@ func (self actionGeneric) Key() actionKey {
 	return self.Type
 }
 
-func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, error) {
-	data.useLayers()
-
+func (self actionGeneric) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	switch self.Type {
 	default:
 		return nil, nil, ofp4.MakeErrorMsg(
@@ -100,7 +91,7 @@ func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, e
 	case ofp4.OFPAT_COPY_TTL_OUT:
 		var ttl uint8
 		found := 0
-		for _, layer := range data.layers {
+		for _, layer := range data.Layers() {
 			switch clayer := layer.(type) {
 			case *layers.MPLS:
 				ttl = clayer.TTL
@@ -137,7 +128,7 @@ func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, e
 		var ttl uint8
 		found := 0
 		func() { // for direct exit from switch
-			for _, layer := range data.layers {
+			for _, layer := range data.Layers() {
 				switch clayer := layer.(type) {
 				case *layers.MPLS:
 					if found > 0 {
@@ -175,7 +166,7 @@ func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, e
 				}
 				if clayer.TTL == 0 {
 					pout := &outputToPort{
-						data:    data.clone(),
+						Frame:   data.clone(),
 						outPort: ofp4.OFPP_CONTROLLER,
 						reason:  ofp4.OFPR_INVALID_TTL,
 					}
@@ -189,7 +180,7 @@ func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, e
 	case ofp4.OFPAT_POP_VLAN:
 		var buf []gopacket.Layer
 		found := false
-		for i, layer := range data.layers {
+		for i, layer := range data.Layers() {
 			if found == false {
 				var ethertype layers.EthernetType
 				switch layer.LayerType() {
@@ -219,7 +210,7 @@ func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, e
 		}
 	case ofp4.OFPAT_DEC_NW_TTL:
 		func() { // for direct exit from switch
-			for _, layer := range data.layers {
+			for _, layer := range data.Layers() {
 				switch clayer := layer.(type) {
 				case *layers.IPv4:
 					if clayer.TTL > 1 {
@@ -241,10 +232,10 @@ func (self actionGeneric) Process(data *frame) (*outputToPort, *outputToGroup, e
 	case ofp4.OFPAT_POP_PBB:
 		var buf []gopacket.Layer
 		found := false
-		for i, layer := range data.layers {
+		for i, layer := range data.Layers() {
 			if found == false {
 				switch pbb := layer.(type) {
-				case *PBB:
+				case *layers2.PBB:
 					found = true
 					if i < 1 {
 						panic("bare pbb")
@@ -282,14 +273,12 @@ func (self actionPush) Key() actionKey {
 	return self.Type
 }
 
-func (self actionPush) Process(data *frame) (*outputToPort, *outputToGroup, error) {
-	data.useLayers()
-
+func (self actionPush) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	var buf []gopacket.Layer
 	found := false
 	switch self.Type {
 	case ofp4.OFPAT_PUSH_VLAN:
-		for i, layer := range data.layers {
+		for i, layer := range data.Layers() {
 			buf = append(buf, layer)
 
 			if found == false {
@@ -311,7 +300,7 @@ func (self actionPush) Process(data *frame) (*outputToPort, *outputToGroup, erro
 			}
 		}
 	case ofp4.OFPAT_PUSH_MPLS:
-		for i, layer := range data.layers {
+		for i, layer := range data.Layers() {
 			if found == false {
 				var ttl uint8
 				var base gopacket.Layer
@@ -358,7 +347,7 @@ func (self actionPush) Process(data *frame) (*outputToPort, *outputToGroup, erro
 			buf = append(buf, layer)
 		}
 	case ofp4.OFPAT_PUSH_PBB:
-		for _, layer := range data.layers {
+		for _, layer := range data.Layers() {
 			buf = append(buf, layer)
 			if found == false {
 				switch layer.LayerType() {
@@ -366,7 +355,7 @@ func (self actionPush) Process(data *frame) (*outputToPort, *outputToGroup, erro
 					eth := layer.(*layers.Ethernet)
 					ethertype := eth.EthernetType
 					eth.EthernetType = layers.EthernetType(self.Ethertype)
-					buf = append(buf, &PBB{
+					buf = append(buf, &layers2.PBB{
 						DstMAC: eth.DstMAC,
 						SrcMAC: eth.SrcMAC,
 						Type:   ethertype,
@@ -401,13 +390,11 @@ func (self actionPopMpls) Key() actionKey {
 	return uint16(ofp4.OFPAT_POP_MPLS)
 }
 
-func (self actionPopMpls) Process(data *frame) (*outputToPort, *outputToGroup, error) {
-	data.useLayers()
-
+func (self actionPopMpls) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	var buf []gopacket.Layer
 	found := false
 	reparse := false
-	for i, layer := range data.layers {
+	for i, layer := range data.Layers() {
 		if found == false {
 			if layer.LayerType() == layers.LayerTypeMPLS {
 				if i < 1 {
@@ -437,7 +424,7 @@ func (self actionPopMpls) Process(data *frame) (*outputToPort, *outputToGroup, e
 	if found {
 		data.layers = buf
 		if reparse {
-			if serialized, err := data.data(); err != nil {
+			if serialized, err := data.Serialized(); err != nil {
 				return nil, nil, err
 			} else {
 				data.serialized = serialized
@@ -462,7 +449,7 @@ func (self actionSetQueue) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_QUEUE)
 }
 
-func (self actionSetQueue) Process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionSetQueue) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	data.queueId = self.QueueId
 	return nil, nil, nil
 }
@@ -479,10 +466,8 @@ func (self actionMplsTtl) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_MPLS_TTL)
 }
 
-func (self actionMplsTtl) Process(data *frame) (*outputToPort, *outputToGroup, error) {
-	data.useLayers()
-
-	for _, layer := range data.layers {
+func (self actionMplsTtl) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
+	for _, layer := range data.Layers() {
 		if layer.LayerType() == layers.LayerTypeMPLS {
 			layer.(*layers.MPLS).TTL = self.MplsTtl
 			return nil, nil, nil
@@ -503,9 +488,9 @@ func (self actionGroup) Key() actionKey {
 	return uint16(ofp4.OFPAT_GROUP)
 }
 
-func (self actionGroup) Process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionGroup) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	return nil, &outputToGroup{
-		data:    data.clone(),
+		Frame:   data.clone(),
 		groupId: self.GroupId,
 	}, nil
 }
@@ -522,10 +507,8 @@ func (self actionNwTtl) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_NW_TTL)
 }
 
-func (self actionNwTtl) Process(data *frame) (*outputToPort, *outputToGroup, error) {
-	data.useLayers()
-
-	for _, layer := range data.layers {
+func (self actionNwTtl) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
+	for _, layer := range data.Layers() {
 		switch t := layer.(type) {
 		case *layers.IPv4:
 			t.TTL = self.NwTtl
@@ -550,32 +533,26 @@ func (self actionSetField) Key() actionKey {
 	return uint16(ofp4.OFPAT_SET_FIELD)
 }
 
-func (self actionSetField) Process(data *frame) (*outputToPort, *outputToGroup, error) {
+func (self actionSetField) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	var ms match
 	if err := ms.UnmarshalBinary(self.Field); err != nil {
 		return nil, nil, err
 	} else {
-		for _, m := range ms.basic {
-			if err := data.setValue(m); err != nil {
-				return nil, nil, err
+		for oxmKey, oxmPayload := range ms {
+			var handler OxmHandler
+			switch oxmKey.(type) {
+			case OxmKeyBasic:
+				handler = oxmBasicHandler
+			default:
+				handler = oxmHandlers[oxmKeys[oxmKey]]
 			}
-		}
-		for key, oxm := range ms.exp {
-			if handler, ok := oxmHandlers[key]; ok {
-				var pkt Frame
-				if err := pkt.pull(*data); err != nil {
-					return nil, nil, err
-				}
-				if newPkt, err := handler.SetField(pkt, oxm); err != nil {
-					return nil, nil, err
-				} else if err := newPkt.push(data); err != nil {
-					return nil, nil, err
-				}
-			} else {
+			if handler == nil {
 				return nil, nil, ofp4.MakeErrorMsg(
 					ofp4.OFPBAC_BAD_EXPERIMENTER,
 					ofp4.OFPBAC_BAD_TYPE,
 				)
+			} else if err := handler.SetField(data, oxmKey, oxmPayload); err != nil {
+				return nil, nil, err
 			}
 		}
 	}
@@ -596,15 +573,9 @@ func (self actionExperimenter) Key() actionKey {
 	return self.Experimenter
 }
 
-func (self actionExperimenter) Process(data *frame) (*outputToPort, *outputToGroup, error) {
-	var pkt Frame
-	if err := pkt.pull(*data); err != nil {
-		return nil, nil, err
-	}
+func (self actionExperimenter) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
 	if handler, ok := actionHandlers[self.Experimenter]; ok {
-		if newPkt, err := handler.Execute(pkt, self.Data); err != nil {
-			return nil, nil, err
-		} else if err := newPkt.push(data); err != nil {
+		if err := handler.Execute(data, self.Data); err != nil {
 			return nil, nil, err
 		}
 	} else {
@@ -784,7 +755,7 @@ func (self *actionSet) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-func (self actionSet) Process(data *frame) (pouts []*outputToPort, gouts []*outputToGroup) {
+func (self actionSet) Process(data *Frame) (pouts []outputToPort, gouts []outputToGroup) {
 	builtinExecute := func(key uint16) (stop bool) {
 		if act, ok := self.hash[key]; ok {
 			if pout, gout, err := act.Process(data); err != nil {
@@ -792,10 +763,10 @@ func (self actionSet) Process(data *frame) (pouts []*outputToPort, gouts []*outp
 				return true
 			} else {
 				if pout != nil {
-					pouts = append(pouts, pout)
+					pouts = append(pouts, *pout)
 				}
 				if gout != nil {
-					gouts = append(gouts, gout)
+					gouts = append(gouts, *gout)
 				}
 			}
 			if key == ofp4.OFPAT_GROUP {
@@ -814,10 +785,10 @@ func (self actionSet) Process(data *frame) (pouts []*outputToPort, gouts []*outp
 				return true
 			} else {
 				if pout != nil {
-					pouts = append(pouts, pout)
+					pouts = append(pouts, *pout)
 				}
 				if gout != nil {
-					gouts = append(gouts, gout)
+					gouts = append(gouts, *gout)
 				}
 			}
 		}

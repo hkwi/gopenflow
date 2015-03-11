@@ -1,7 +1,12 @@
 package gopenflow
 
+import (
+	"io"
+)
+
 type Datapath interface {
 	AddPort(Port) error
+	AddChannel(conn io.ReadWriteCloser) error
 }
 
 type Frame struct {

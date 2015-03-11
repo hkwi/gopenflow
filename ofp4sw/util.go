@@ -1,16 +1,121 @@
 package ofp4sw
 
 import (
-	"bytes"
 	"encoding/binary"
+	"github.com/hkwi/gopenflow"
+	"github.com/hkwi/gopenflow/ofp4"
 	"io"
+	"log"
 	"sort"
-	"sync"
+	"time"
 )
 
-func IntMin(x ...int) int {
-	sort.Ints(x)
-	return x[0]
+type watchTimer struct {
+	Active *time.Time
+	Past   time.Duration
+}
+
+func (self watchTimer) Total() time.Duration {
+	ret := self.Past
+	if self.Active != nil {
+		ret += time.Now().Sub(*self.Active)
+	}
+	return ret
+}
+
+func readOfpMessage(conn io.Reader, hint []byte) ([]byte, error) {
+	if len(hint) < 4 {
+		hint = make([]byte, 4)
+	}
+	for cur := 0; cur < 4; {
+		if num, err := conn.Read(hint[cur:]); err != nil {
+			return nil, err
+		} else {
+			cur += num
+		}
+	}
+	length := int(binary.BigEndian.Uint16(hint[2:4]))
+	body := make([]byte, length)
+	copy(body, hint)
+	for cur := 4; cur < length; {
+		if num, err := conn.Read(body[cur:]); err != nil {
+			return nil, err
+		} else {
+			cur += num
+		}
+	}
+	return body, nil
+}
+
+func makeOxmBasic(oxmType uint32) []byte {
+	length, mask := ofp4.OxmOfDefs(oxmType)
+	if mask {
+		length = length * 2
+	}
+	hdr := ofp4.OxmHeader(oxmType)
+	hdr.SetMask(mask)
+	hdr.SetLength(length)
+	buf := make([]byte, 4+length)
+	binary.BigEndian.PutUint32(buf, oxmType)
+	return buf
+}
+
+func makePort(portNo uint32, port gopenflow.Port) ofp4.Port {
+	var config uint32
+	for _, conf := range port.GetConfig() {
+		switch c := conf.(type) {
+		case gopenflow.PortConfigPortDown:
+			if bool(c) {
+				config |= ofp4.OFPPC_PORT_DOWN
+			}
+		case gopenflow.PortConfigNoRecv:
+			if bool(c) {
+				config |= ofp4.OFPPC_NO_RECV
+			}
+		case gopenflow.PortConfigNoFwd:
+			if bool(c) {
+				config |= ofp4.OFPPC_NO_FWD
+			}
+		case gopenflow.PortConfigNoPacketIn:
+			if bool(c) {
+				config |= ofp4.OFPPC_NO_PACKET_IN
+			}
+		}
+	}
+
+	var state uint32
+	for _, st := range port.State() {
+		switch s := st.(type) {
+		case gopenflow.PortStateLinkDown:
+			if bool(s) {
+				state |= ofp4.OFPPS_LINK_DOWN
+			}
+		case gopenflow.PortStateBlocked:
+			if bool(s) {
+				state |= ofp4.OFPPS_BLOCKED
+			}
+		case gopenflow.PortStateLive:
+			if bool(s) {
+				state |= ofp4.OFPPS_LIVE
+			}
+		}
+	}
+
+	eth, err := port.Ethernet()
+	if err != nil {
+		log.Print(err)
+	}
+	return ofp4.MakePort(portNo,
+		port.HwAddr(),
+		[]byte(port.Name()),
+		config,
+		state,
+		eth.Curr,
+		eth.Advertised,
+		eth.Supported,
+		eth.Peer,
+		eth.CurrSpeed,
+		eth.MaxSpeed)
 }
 
 func IntMax(x ...int) int {
@@ -66,199 +171,3 @@ func MapReduce(works chan MapReducable, workers int) {
 		r.Reduce()
 	}
 }
-
-/*
-BytesSet is useful to remove duplicate byte sequence.
-
-Usage:
-       vat bset BytesSet
-       bset.Add([]byte("test"))
-       bset.Add([]byte("test"))
-       log.Print([][]byte(bset))
-*/
-type BytesSet [][]byte
-
-func (self *BytesSet) Add(seq []byte) {
-	base := [][]byte(*self)
-	for _, v := range base {
-		if bytes.Equal(v, seq) {
-			return
-		}
-	}
-	base = append(base, seq)
-	*self = base
-}
-
-type IoControlChannel struct {
-	hint   [4]byte
-	reader io.Reader
-	writer io.Writer
-	lock   *sync.Cond
-	closed error
-}
-
-func (self IoControlChannel) Close() {
-	self.lock.Broadcast()
-}
-
-func (self IoControlChannel) Ingress() ([]byte, error) {
-	head := self.hint[:]
-	for cur := 0; cur < 4; {
-		if num, err := self.reader.Read(head[cur:]); err != nil {
-			self.closed = err
-			self.Close()
-			return nil, err
-		} else {
-			cur += num
-		}
-	}
-	length := int(binary.BigEndian.Uint16(head[2:4]))
-	body := make([]byte, length)
-	copy(body, head)
-	for cur := 4; cur < length; {
-		if num, err := self.reader.Read(body[cur:]); err != nil {
-			self.closed = err
-			self.Close()
-			return nil, err
-		} else {
-			cur += num
-		}
-	}
-	return body, nil
-}
-
-func (self IoControlChannel) Egress(msg []byte) error {
-	for cur := 0; cur < len(msg); {
-		if nn, err := self.writer.Write(msg); err != nil {
-			self.closed = err
-			self.Close()
-			return err
-		} else {
-			cur += nn
-		}
-	}
-	return nil
-}
-
-func (self IoControlChannel) Wait() error {
-	self.lock.L.Lock()
-	defer self.lock.L.Unlock()
-
-	self.lock.Wait()
-	return self.closed
-}
-
-func NewIoControlChannel(reader io.Reader, writer io.Writer) *IoControlChannel {
-	self := &IoControlChannel{
-		reader: reader,
-		writer: writer,
-		lock:   sync.NewCond(&sync.Mutex{}),
-	}
-	return self
-}
-
-/*
-type controlChannelCommon struct {
-	ingress chan []byte
-	egress  chan []byte
-}
-
-func (p controlChannelCommon) Ingress() <-chan []byte {
-	return p.ingress
-}
-
-func (p controlChannelCommon) Egress() chan<- []byte {
-	return p.egress
-}
-
-type ControlSource struct {
-	listener net.Listener
-	source   chan ControlChannel
-}
-
-type connControlChannel struct {
-	controlChannelCommon
-	conn     net.Conn
-	callback func()
-}
-
-func NewListenControlSource(nets, laddr string) (channels <-chan ControlChannel, err error) {
-	var ln net.Listener
-	if ln, err = net.Listen(nets, laddr); err == nil {
-		ch := make(chan ControlChannel)
-		channels = (<-chan ControlChannel)(ch)
-
-		go func() {
-			ch2 := chan<- ControlChannel(ch)
-			defer ln.Close()
-			for {
-				if con, err := ln.Accept(); err != nil {
-					break
-				} else {
-					ch2 <- NewConnControlChannel(con, nil)
-				}
-			}
-			close(ch2)
-		}()
-	}
-	return
-}
-
-func NewConnControlChannel(con net.Conn, cb func()) ControlChannel {
-	port := connControlChannel{
-		controlChannelCommon: controlChannelCommon{
-			ingress: make(chan []byte),
-			egress:  make(chan []byte),
-		},
-		conn:     con,
-		callback: cb,
-	}
-	go func() {
-		for m := range port.egress {
-			if _, err := con.Write(m); err != nil {
-				log.Println(err)
-				port.ingress <- nil
-			}
-		}
-	}()
-	go func() {
-		con2 := bufio.NewReader(con)
-		head := make([]byte, 4)
-		for {
-			err := func() error {
-				for cur := 0; cur < 4; {
-					if num, err := con2.Read(head[cur:]); err != nil {
-						return err
-					} else {
-						cur += num
-					}
-				}
-				length := int(binary.BigEndian.Uint16(head[2:4]))
-				body := make([]byte, length)
-				copy(body, head)
-				for cur := 4; cur < length; {
-					if num, err := con2.Read(body[cur:]); err != nil {
-						return err
-					} else {
-						cur += num
-					}
-				}
-				port.ingress <- body
-				return nil
-			}()
-			if err != nil {
-				log.Print(err)
-				break
-			}
-		}
-		port.ingress <- nil
-	}()
-	return &port
-}
-
-func (channel connControlChannel) Close() {
-	channel.conn.Close()
-	channel.callback()
-	panic("Close called")
-}
-*/

@@ -114,7 +114,7 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 	priority.lock.Lock()
 	defer priority.lock.Unlock()
 
-	key := oxmBasicUnionKey(priority.hash, flow.fields.basic)
+	key := priority.hash.Key(matchHash(flow.fields))
 
 	flows := []*flowEntry{flow} // prepare for rebuild
 	for k, fs := range priority.flows {
@@ -152,24 +152,20 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 type flowPriority struct {
 	lock     *sync.RWMutex // for collections
 	priority uint16
-	hash     []oxmBasic              // mask common to all flows in this priority
+	hash     matchHash               // mask common to all flows in this priority
 	flows    map[uint32][]*flowEntry // entries in the same priority
 }
 
 /* invoke this method inside a mutex guard. */
 func (self *flowPriority) rebuildIndex(flows []*flowEntry) {
-	var hash []oxmBasic
-	hashed := make(map[uint32][]*flowEntry)
-
-	for i, flow := range flows {
-		if i == 0 {
-			hash = flow.fields.basic
-		} else {
-			hash = oxmBasicUnion(hash, flow.fields.basic)
-		}
-	}
+	hash := matchHash(make(map[OxmKey]OxmPayload))
 	for _, flow := range flows {
-		key := oxmBasicUnionKey(hash, flow.fields.basic)
+		hash.Merge(matchHash(flow.fields))
+	}
+
+	hashed := make(map[uint32][]*flowEntry)
+	for _, flow := range flows {
+		key := hash.Key(matchHash(flow.fields))
 		if ent, ok := hashed[key]; ok {
 			hashed[key] = append(ent, flow)
 		} else {
@@ -330,7 +326,7 @@ func (entry flowEntry) exportInstructions() ofp4.Instruction {
 	return insts
 }
 
-// sort.Interface
+// sort.Interface for longest match
 type flowEntryList []*flowEntry
 
 func (self flowEntryList) Len() int {
@@ -349,7 +345,7 @@ func (self flowEntryList) Less(i, j int) bool {
 			return result
 		}
 	}
-	return len(l[i].fields.basic) > len(l[j].fields.basic)
+	return len(l[i].fields) > len(l[j].fields)
 }
 
 func (self flowEntryList) Swap(i, j int) {

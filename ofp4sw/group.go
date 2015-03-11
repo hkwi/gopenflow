@@ -69,7 +69,7 @@ type group struct {
 	buckets   []bucket
 }
 
-func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gouts []*outputToGroup) {
+func (g *group) process(data *Frame, pipe Pipeline) (pouts []outputToPort, gouts []outputToGroup) {
 	buckets := make([]bucket, 0, len(g.buckets))
 	func() {
 		g.lock.RLock()
@@ -127,7 +127,7 @@ func (g *group) process(data *frame, pipe Pipeline) (pouts []*outputToPort, gout
 			}
 			if live {
 				fdata := data.clone()
-				p, g := actionSet(b.actionSet).Process(fdata)
+				p, g := actionSet(b.actionSet).Process(&fdata)
 				pouts = append(pouts, p...)
 				gouts = append(gouts, g...)
 				break

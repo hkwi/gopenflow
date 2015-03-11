@@ -10,14 +10,6 @@ const (
 	INST_ORDER_GOTO_TO_LAST
 )
 
-/*
-AddInstructionHandler registers this InstructionHandler.
-*/
-type InstructionHandler interface {
-	Order(payload []byte) int
-	Execute(frame Frame, instructionData []byte) (Frame, error)
-}
-
 var instructionHandlers map[uint32]InstructionHandler = make(map[uint32]InstructionHandler)
 
 func AddInstructionHandler(experimenter uint32, handle InstructionHandler) {
