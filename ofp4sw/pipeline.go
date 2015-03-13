@@ -280,6 +280,14 @@ func (self *Pipeline) AddChannel(conn io.ReadWriteCloser) error {
 					}
 				}
 			case ofp4.OFPT_BARRIER_REQUEST:
+				for xid,_ := range multipartCollect{
+					buf := ofp4.Header(make([]byte, 8))
+					buf.SetXid(xid)
+					rep := ofmReply{pipe: self, channel: ch, req: buf}
+					rep.createError(ofp4.OFPET_BAD_REQUEST, ofp4.OFPBRC_BAD_MULTIPART)
+					worker <- &rep
+					delete(multipartCollect, xid)
+				}
 				worker <- &ofmBarrierRequest{reply}
 			case ofp4.OFPT_QUEUE_GET_CONFIG_REQUEST:
 				worker <- &ofmQueueGetConfigRequest{reply}
