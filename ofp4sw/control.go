@@ -54,6 +54,11 @@ func (self ofmReply) Reduce() {
 	}
 }
 
+// dummy Map to create ofp_error
+func (self *ofmReply) Map() Reducable {
+	return self
+}
+
 type ofmEcho struct {
 	ofmReply
 }

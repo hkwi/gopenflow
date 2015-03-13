@@ -44,9 +44,14 @@ oxm_class is always OFPXMC_EXPERIMENTER (0xFFFF), as defined in openflow specifi
  	
  	// match, set
  	STROXM_BASIC_DOT11_FRAME_CTRL,
- 	STROXM_BASIC_DOT11_BSSID,
+ 	STROXM_BASIC_DOT11_ADDR1,
+ 	STROXM_BASIC_DOT11_ADDR2,
+ 	STROXM_BASIC_DOT11_ADDR3,
+ 	STROXM_BASIC_DOT11_ADDR4,
  	STROXM_BASIC_DOT11_TAG,
  	STROXM_BASIC_DOT11_SSID,
+ 	STROXM_BASIC_DOT11_ACTION_CATEGORY
+ 	STROXM_BASIC_DOT11_PUBLIC_ACTION
  }
 
  enum stratos_radiotap_exp_type {
@@ -98,28 +103,48 @@ Use this field to filter management,control,data type or each subtypes.
 - mask : maskable
 - length : 2 bytes (+ 2 bytes)
 
-### STROXM_BASIC_DOT11_BSSID
-The value is 48bit 802.11 wireless BSSID. Non-WDS frames will match.
+### STROXM_BASIC_DOT11_ADDR1
+The value is 48bit 802.11 mac.
 - mask : maskable
 - length : 6 bytes (+ 6 bytes)
 
-### STROXM_BASIC_SSID
+### STROXM_BASIC_DOT11_ADDR2
+The value is 48bit 802.11 mac.
+- mask : maskable
+- length : 6 bytes (+ 6 bytes)
+
+### STROXM_BASIC_DOT11_ADDR3
+The value is 48bit 802.11 mac.
+- mask : maskable
+- length : 6 bytes (+ 6 bytes)
+
+### STROXM_BASIC_DOT11_ADDR4
+The value is 48bit 802.11 mac.
+- mask : maskable
+- length : 6 bytes (+ 6 bytes)
+
+### STROXM_BASIC_DOT11_TAG
+Management frame information element ID
+- mask : no
+- length : 1 byte
+
+### STROXM_BASIC_DOT11_SSID
 Management frame that contains SSID information element will match.
 - mask : maskable
 - length : 32 bytes (+ 32 bytes)
 - prerequisite : STRATOS_BASIC_DOT11_TAG=0
 
-### STROXM_BASIC_ACTION_CATEGORY
-implies STRATOS_BASIC_DOT11_FRAME_CTRL=\xC0\x00/\xFC\x00
+### STROXM_BASIC_DOT11_ACTION_CATEGORY
+Represents "Action field" in Action frame.
+- mask : no
+- length : 1
+- prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\xC0\x00/\xFC\x00
 
-### STROXM_BASIC_PUBLIC_ACTION
-implies ACTION_CATEGORY=4
-
-### STROXM_BASIC_GAS
-implies PUBLIC_ACTION=(10, 11, 12 or 13)
-
-### STROXM_BASIC_ANQP
-implies GAS
+### STROXM_BASIC_DOT11_PUBLIC_ACTION
+Represents "Public Action field value" in the Pulic Action frame.
+- mask : no
+- length : 1
+- prerequisite : STROXM_BASIC_ACTION_CATEGORY=4
 
 
 Special rules
