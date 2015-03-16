@@ -110,38 +110,49 @@ The value is 48bit 802.11 mac.
 
 ### STROXM_BASIC_DOT11_ADDR2
 The value is 48bit 802.11 mac.
+
 - mask : maskable
 - length : 6 bytes (+ 6 bytes)
 
 ### STROXM_BASIC_DOT11_ADDR3
 The value is 48bit 802.11 mac.
+
 - mask : maskable
 - length : 6 bytes (+ 6 bytes)
 
 ### STROXM_BASIC_DOT11_ADDR4
 The value is 48bit 802.11 mac.
+
 - mask : maskable
 - length : 6 bytes (+ 6 bytes)
 
 ### STROXM_BASIC_DOT11_TAG
-Management frame information element ID
+Matches with management frame information element ID and OUI (ID=221).
+Set-field is not supported.
+
 - mask : no
-- length : 1 byte
+- length : 1 or 5 bytes
 
 ### STROXM_BASIC_DOT11_SSID
 Management frame that contains SSID information element will match.
+
 - mask : maskable
 - length : 32 bytes (+ 32 bytes)
 - prerequisite : STRATOS_BASIC_DOT11_TAG=0
 
 ### STROXM_BASIC_DOT11_ACTION_CATEGORY
 Represents "Action field" in Action frame.
+Set-field is not supported.
+Only non-ROBUST frames are supported for now.
+
 - mask : no
 - length : 1
 - prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\xC0\x00/\xFC\x00
 
 ### STROXM_BASIC_DOT11_PUBLIC_ACTION
 Represents "Public Action field value" in the Pulic Action frame.
+Set-field is not supported.
+
 - mask : no
 - length : 1
 - prerequisite : STROXM_BASIC_ACTION_CATEGORY=4

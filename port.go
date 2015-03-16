@@ -268,7 +268,9 @@ func (self *NamedPort) Up() error {
 			default:
 				panic("unsupported ARPHRD")
 			case syscall.ARPHRD_IEEE80211_RADIOTAP:
+				// ok
 			case syscall.ARPHRD_ETHER:
+				// ok
 			}
 		}
 		return nil
