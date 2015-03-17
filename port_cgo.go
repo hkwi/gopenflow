@@ -49,8 +49,9 @@ void* get_hwaddr(int fd, char *name, int *hwaddr_len){
 */
 import "C"
 import (
-	"errors"
+	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	"syscall"
 	"unsafe"
 )
 
@@ -124,6 +125,10 @@ var advertisedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
 }
 
 func (self NamedPort) Ethernet() (PortEthernetProperty, error) {
+	if self.hatype != syscall.ARPHRD_ETHER {
+		return PortEthernetProperty{}, fmt.Errorf("not an ether")
+	}
+
 	cname := C.CString(self.name)
 	defer C.free(unsafe.Pointer(cname))
 
@@ -136,7 +141,7 @@ func (self NamedPort) Ethernet() (PortEthernetProperty, error) {
 	if r, err := C.ethtool_cmd_call(fd, cname, &ecmd); err != nil {
 		return state, err
 	} else if r != 0 {
-		return state, errors.New("ethtool_cmd_call error")
+		return state, fmt.Errorf("ethtool_cmd_call error")
 	} else {
 		for k, v := range supportedSpeed {
 			if ecmd.supported&k != 0 && v > state.MaxSpeed {

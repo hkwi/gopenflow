@@ -280,7 +280,7 @@ func (self *Pipeline) AddChannel(conn io.ReadWriteCloser) error {
 					}
 				}
 			case ofp4.OFPT_BARRIER_REQUEST:
-				for xid,_ := range multipartCollect{
+				for xid, _ := range multipartCollect {
 					buf := ofp4.Header(make([]byte, 8))
 					buf.SetXid(xid)
 					rep := ofmReply{pipe: self, channel: ch, req: buf}
@@ -493,7 +493,7 @@ func (self *Pipeline) sendFlowRem(tableId uint8, priority uint16, flow *flowEntr
 }
 
 func (pipe *Pipeline) sendOutput(output outputToPort) error {
-	if output.isInvalid(){
+	if output.isInvalid() {
 		return fmt.Errorf("invalid packet")
 	}
 	switch output.outPort {

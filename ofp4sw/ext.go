@@ -1,8 +1,8 @@
 package ofp4sw
 
 import (
-	"encoding/binary"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	bytes2 "github.com/hkwi/suppl/bytes"
@@ -64,8 +64,8 @@ func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
 	vm := payload.(OxmValueMask)
 	copy(buf[4:], vm.Value)
 	if mask {
-		for i:=0; i<length; i++ {
-			buf[4+length+i] = 0xFF;
+		for i := 0; i < length; i++ {
+			buf[4+length+i] = 0xFF
 		}
 		copy(buf[4+length:], vm.Mask)
 	}
