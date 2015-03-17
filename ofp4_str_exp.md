@@ -127,14 +127,17 @@ The value is 48bit 802.11 mac.
 - length : 6 bytes (+ 6 bytes)
 
 ### STROXM_BASIC_DOT11_TAG
-Matches with management frame information element ID and OUI (ID=221).
+Matches with management frame information element.
+Note that the first byte is the very elementID.
+This is variable length because of vendor information element.
 Set-field is not supported.
 
 - mask : no
-- length : 1 or 5 bytes
+- length : variable
 
 ### STROXM_BASIC_DOT11_SSID
 Management frame that contains SSID information element will match.
+To match prefix, use mask. Without mask, exact match will be performed.
 
 - mask : maskable
 - length : 32 bytes (+ 32 bytes)
@@ -143,7 +146,7 @@ Management frame that contains SSID information element will match.
 ### STROXM_BASIC_DOT11_ACTION_CATEGORY
 Represents "Action field" in Action frame.
 Set-field is not supported.
-Only non-ROBUST frames are supported for now.
+Only non-ROBUST frames are supported for now (depends on the implementation).
 
 - mask : no
 - length : 1

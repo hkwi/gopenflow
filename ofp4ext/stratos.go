@@ -2,7 +2,6 @@ package ofp4ext
 
 import (
 	"bytes"
-	"code.google.com/p/gopacket"
 	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"fmt"
@@ -66,17 +65,16 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				return nil
 			}
 			
-			fetchIeS := func() (ret []*layers.Dot11InformationElement) {
+			fetchIeS := func() (ret []Dot11InformationElement) {
 				if m := fetch11(); m != nil && m.Type.MainType()==layers.Dot11TypeMgmt {
-					pkt := gopacket.NewPacket(m.Contents, layers.LayerTypeDot11InformationElement, gopacket.NoCopy)
-					for _, l := range pkt.Layers() {
-						switch ie:=l.(type){
-						case *layers.Dot11InformationElement:
-							ret = append(ret, ie)
-						}
+					ret := Dot11InformationElementList{}
+					if err:=ret.UnmarshalBinary(m.Contents); err!=nil {
+						return nil
+					} else {
+						return []Dot11InformationElement(ret)
 					}
 				}
-				return
+				return nil
 			}
 			
 			switch k.Type {
@@ -146,18 +144,16 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				}
 			case gopenflow.STROXM_BASIC_DOT11_TAG:
 				for _,l := range fetchIeS() {
-					ideq := uint8(l.ID) == p.Value[0]
-					if len(p.Value) == 1 {
-						return ideq, nil
-					} else {
-						oui := p.Value[1:]
-						return ideq && bytes.Equal(l.Info[:len(oui)], oui), nil
+					if buf,err:=l.MarshalBinary(); err!=nil {
+						continue
+					} else if bytes.HasPrefix(buf, p.Value) {
+						return true, nil
 					}
 				}
 				return false, nil
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
 				for _,l := range fetchIeS() {
-					if uint8(l.ID) == 0 {
+					if l.Id == 0 {
 						if len(p.Mask) > 0 {
 							return bytes.Equal(p.Value, bytes2.And(l.Info, p.Mask)), nil
 						} else {
@@ -230,17 +226,16 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 				return nil
 			}
 			
-			fetchIeS := func() (ret []*layers.Dot11InformationElement) {
+			fetchIeS := func() (ret []Dot11InformationElement) {
 				if m := fetch11(); m != nil && m.Type.MainType()==layers.Dot11TypeMgmt {
-					pkt := gopacket.NewPacket(m.Contents, layers.LayerTypeDot11InformationElement, gopacket.NoCopy)
-					for _, l := range pkt.Layers() {
-						switch ie:=l.(type){
-						case *layers.Dot11InformationElement:
-							ret = append(ret, ie)
-						}
+					ret := Dot11InformationElementList{}
+					if err:=ret.UnmarshalBinary(m.Contents); err!=nil {
+						return nil
+					} else {
+						return []Dot11InformationElement(ret)
 					}
 				}
-				return
+				return nil
 			}
 			
 			switch k.Type {
@@ -302,10 +297,9 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
-				var ret []gopacket.SerializableLayer
-				ies := fetchIeS()
-				for _,l := range ies {
-					if uint8(l.ID) == 0 {
+				var ret []Dot11InformationElement
+				for _,l := range fetchIeS() {
+					if l.Id == 0 {
 						if len(p.Mask) > 0 {
 							l.Info = bytes2.Or(p.Value, bytes2.And(l.Info, p.Mask))
 						} else {
@@ -314,14 +308,12 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 					ret = append(ret, l)
 				}
-				ser := gopacket.NewSerializeBuffer()
-				if err := gopacket.SerializeLayers(ser, gopacket.SerializeOptions{}, ret...); err!=nil {
+				if buf, err:=Dot11InformationElementList(ret).MarshalBinary(); err!=nil {
 					return err
-				}
-				if m := fetch11(); m == nil {
+				} else if m := fetch11(); m == nil {
 					return fmt.Errorf("dot11 missing")
 				} else {
-					m.Contents = ser.Bytes()
+					m.Contents = buf
 				}
 			default:
 				return fmt.Errorf("unsupported oxm experimenter type")
