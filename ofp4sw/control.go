@@ -293,7 +293,9 @@ func (self *ofmPacketOut) Map() Reducable {
 		data := &Frame{
 			serialized: eth,
 			inPort:     msg.InPort(),
-			inPhyPort:  self.pipe.getPort(msg.InPort()).PhysicalPort(),
+		}
+		if data.inPort > 0 && data.inPort <= ofp4.OFPP_MAX {
+			data.inPhyPort = self.pipe.getPort(msg.InPort()).PhysicalPort()
 		}
 		var actions actionList
 		actions.UnmarshalBinary(msg.Actions())

@@ -168,6 +168,7 @@ func (self NamedPort) SetConfig(mods []PortConfig) {
 			if hub, err := nlgo.NewRtHub(); err != nil {
 				log.Print(err)
 			} else {
+				defer hub.Close()
 				ifinfo := &syscall.IfInfomsg{
 					Index: int32(self.ifIndex),
 				}
@@ -204,35 +205,38 @@ func (self NamedPort) Stats() (PortStats, error) {
 	}))[:]
 	if hub, err := nlgo.NewRtHub(); err != nil {
 		return PortStats{}, err
-	} else if res, err := hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, ifinfo, nil); err != nil {
-		return PortStats{}, err
 	} else {
-		for _, r := range res {
-			switch r.Message.Header.Type {
-			case syscall.RTM_NEWLINK:
-				if attrs, err := nlgo.RouteLinkPolicy.Parse(r.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
-					return PortStats{}, err
-				} else if blk := attrs.Get(nlgo.IFLA_STATS64); blk != nil {
-					s := (*nlgo.RtnlLinkStats64)(unsafe.Pointer(&blk.([]byte)[0]))
-					ret := PortStats{
-						RxPackets: s.RxPackets,
-						TxPackets: s.TxPackets,
-						RxBytes:   s.RxBytes,
-						TxBytes:   s.TxBytes,
-						RxDropped: s.RxDropped,
-						TxDropped: s.TxDropped,
-						RxErrors:  s.RxErrors,
-						TxErrors:  s.TxErrors,
-					}
-					if self.hatype == syscall.ARPHRD_ETHER {
-						ret.Ethernet = &PortStatsEthernet{
-							RxFrameErr: s.RxFrameErrors,
-							RxOverErr:  s.RxOverErrors,
-							RxCrcErr:   s.RxCrcErrors,
-							Collisions: s.Collisions,
+		defer hub.Close()
+		if res, err := hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, ifinfo, nil); err != nil {
+			return PortStats{}, err
+		} else {
+			for _, r := range res {
+				switch r.Message.Header.Type {
+				case syscall.RTM_NEWLINK:
+					if attrs, err := nlgo.RouteLinkPolicy.Parse(r.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
+						return PortStats{}, err
+					} else if blk := attrs.Get(nlgo.IFLA_STATS64); blk != nil {
+						s := (*nlgo.RtnlLinkStats64)(unsafe.Pointer(&blk.([]byte)[0]))
+						ret := PortStats{
+							RxPackets: s.RxPackets,
+							TxPackets: s.TxPackets,
+							RxBytes:   s.RxBytes,
+							TxBytes:   s.TxBytes,
+							RxDropped: s.RxDropped,
+							TxDropped: s.TxDropped,
+							RxErrors:  s.RxErrors,
+							TxErrors:  s.TxErrors,
 						}
+						if self.hatype == syscall.ARPHRD_ETHER {
+							ret.Ethernet = &PortStatsEthernet{
+								RxFrameErr: s.RxFrameErrors,
+								RxOverErr:  s.RxOverErrors,
+								RxCrcErr:   s.RxCrcErrors,
+								Collisions: s.Collisions,
+							}
+						}
+						return ret, nil
 					}
-					return ret, nil
 				}
 			}
 		}

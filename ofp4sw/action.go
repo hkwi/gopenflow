@@ -534,7 +534,7 @@ func (self actionSetField) Key() actionKey {
 }
 
 func (self actionSetField) Process(data *Frame) (*outputToPort, *outputToGroup, error) {
-	var ms match
+	ms := match{}
 	if err := ms.UnmarshalBinary(self.Field); err != nil {
 		return nil, nil, err
 	} else {

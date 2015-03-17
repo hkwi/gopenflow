@@ -467,7 +467,7 @@ func (self oxmBasic) Expand(info map[OxmKey]OxmPayload) error {
 	}
 	for k, v := range req {
 		if e, ok := info[k]; ok {
-			if e != v {
+			if !e.(OxmValueMask).Equal(v.(OxmValueMask)) {
 				return fmt.Errorf("prerequisite error")
 			}
 		} else {

@@ -67,7 +67,7 @@ func NewPipeline() *Pipeline {
 }
 
 // SetPort sets a port in a specified portNo. To unset the port, pass nil as port argument.
-func (self Pipeline) AddPort(port gopenflow.Port) error {
+func (self *Pipeline) AddPort(port gopenflow.Port) error {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
@@ -134,7 +134,7 @@ func (self Pipeline) AddPort(port gopenflow.Port) error {
 							inPhyPort:  port.PhysicalPort(),
 							Oob:        oob,
 						},
-						pipe: &self,
+						pipe: self,
 					}
 				}
 			}
@@ -303,7 +303,7 @@ func (self *Pipeline) AddChannel(conn io.ReadWriteCloser) error {
 				panic("unknown ofp_header.type")
 			}
 			// xxx:
-			log.Print(msg)
+			// log.Print(msg)
 		}
 	}()
 	return nil
@@ -493,6 +493,9 @@ func (self *Pipeline) sendFlowRem(tableId uint8, priority uint16, flow *flowEntr
 }
 
 func (pipe *Pipeline) sendOutput(output outputToPort) error {
+	if output.isInvalid(){
+		return fmt.Errorf("invalid packet")
+	}
 	switch output.outPort {
 	default:
 		portNo := output.outPort

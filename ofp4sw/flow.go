@@ -203,7 +203,7 @@ type flowEntry struct {
 }
 
 func newFlowEntry(req ofp4.FlowMod) (*flowEntry, error) {
-	var reqMatch match
+	reqMatch := match{}
 	if err := reqMatch.UnmarshalBinary(req.Match().OxmFields()); err != nil {
 		return nil, err
 	}
