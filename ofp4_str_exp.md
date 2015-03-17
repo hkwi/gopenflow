@@ -48,7 +48,6 @@ oxm_class is always OFPXMC_EXPERIMENTER (0xFFFF), as defined in openflow specifi
  	STROXM_BASIC_DOT11_ADDR2,
  	STROXM_BASIC_DOT11_ADDR3,
  	STROXM_BASIC_DOT11_ADDR4,
- 	STROXM_BASIC_DOT11_TAG,
  	STROXM_BASIC_DOT11_SSID,
  	STROXM_BASIC_DOT11_ACTION_CATEGORY
  	STROXM_BASIC_DOT11_PUBLIC_ACTION
@@ -126,22 +125,13 @@ The value is 48bit 802.11 mac.
 - mask : maskable
 - length : 6 bytes (+ 6 bytes)
 
-### STROXM_BASIC_DOT11_TAG
-Matches with management frame information element.
-Note that the first byte is the very elementID.
-This is variable length because of vendor information element.
-Set-field is not supported.
-
-- mask : no
-- length : variable
-
 ### STROXM_BASIC_DOT11_SSID
 Management frame that contains SSID information element will match.
 To match prefix, use mask. Without mask, exact match will be performed.
 
 - mask : maskable
 - length : 32 bytes (+ 32 bytes)
-- prerequisite : STRATOS_BASIC_DOT11_TAG=0
+- prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\x00\x00/\x0C\x00
 
 ### STROXM_BASIC_DOT11_ACTION_CATEGORY
 Represents "Action field" in Action frame.
@@ -150,7 +140,7 @@ Only non-ROBUST frames are supported for now (depends on the implementation).
 
 - mask : no
 - length : 1
-- prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\xC0\x00/\xFC\x00
+- prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\xD0\x00/\xFC\x00 or \xE0\x00/\xFC\x00
 
 ### STROXM_BASIC_DOT11_PUBLIC_ACTION
 Represents "Public Action field value" in the Pulic Action frame.

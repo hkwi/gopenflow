@@ -2,7 +2,10 @@ package ofp4sw
 
 import (
 	"encoding/binary"
+	"bytes"
+	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	bytes2 "github.com/hkwi/suppl/bytes"
 )
 
 /*
@@ -62,6 +65,24 @@ func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
 	copy(buf[4:], vm.Value)
 	copy(buf[4+length:], vm.Mask)
 	return buf
+}
+
+func (self *OxmValueMask) Merge(vm OxmValueMask) error {
+	mask := bytes2.And(self.Mask, vm.Mask)
+	if bytes.Equal(bytes2.And(self.Value, mask), bytes2.And(vm.Value, mask)) {
+		value := func(o OxmValueMask) []byte {
+			if len(o.Mask) > 0 {
+				return bytes2.And(o.Value, o.Mask)
+			} else {
+				return o.Value
+			}
+		}
+		self.Value = bytes2.Or(value(*self), value(vm))
+		self.Mask = bytes2.Or(self.Mask, vm.Mask)
+		return nil
+	} else {
+		return fmt.Errorf("conflict")
+	}
 }
 
 // oxm types for OFPXMC_EXPERIMENTER

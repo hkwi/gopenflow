@@ -142,15 +142,6 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						return bytes.Equal(p.Value, []byte(m.Address4)), nil
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_TAG:
-				for _,l := range fetchIeS() {
-					if buf,err:=l.MarshalBinary(); err!=nil {
-						continue
-					} else if bytes.HasPrefix(buf, p.Value) {
-						return true, nil
-					}
-				}
-				return false, nil
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
 				for _,l := range fetchIeS() {
 					if l.Id == 0 {
@@ -354,7 +345,67 @@ func (self StratosOxm) Conflict(key ofp4sw.OxmKey, a, b ofp4sw.OxmPayload) (bool
 }
 
 func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error {
-	// XXX:
+	for key,_ := range fields {
+		switch k:=key.(type){
+		case OxmKeyStratos:
+			switch k.Field {
+			case gopenflow.STRATOS_OXM_FIELD_BASIC:
+				eth := ofp4sw.OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)
+				v := fields[eth].(ofp4sw.OxmValueMask)
+				if err := v.Merge(ofp4sw.OxmValueMask {
+					Value: []byte{ 0x88, 0xbb },
+					Mask: []byte{ 0xff, 0xff },
+				}); err!= nil {
+					return err
+				} else {
+					fields[eth] = v
+				}
+				
+				keyFrameCtrl := OxmKeyStratos{
+					Type: gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL,
+					Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
+				}
+				switch k.Type {
+				case gopenflow.STROXM_BASIC_DOT11_SSID:
+					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
+					if err := v.Merge(ofp4sw.OxmValueMask { // Management frame type
+						Value: []byte{ 0x00, 0x00 },
+						Mask: []byte{ 0x0F, 0x00 },
+					}); err!= nil {
+						return err
+					} else {
+						fields[keyFrameCtrl] = v
+					}
+				case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
+					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
+					if err := v.Merge(ofp4sw.OxmValueMask { // Action, ActionNAK common
+						Value: []byte{ 0xC0, 0x00 },
+						Mask: []byte{ 0xCF, 0x00 },
+					}); err!= nil {
+						return err
+					} else {
+						fields[keyFrameCtrl] = v
+					}
+				case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
+					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
+					if err := v.Merge(ofp4sw.OxmValueMask { // Action, ActionNAK common
+						Value: []byte{ 0xC0, 0x00 },
+						Mask: []byte{ 0xCF, 0x00 },
+					}); err!= nil {
+						return err
+					} else {
+						fields[keyFrameCtrl] = v
+					}
+					fields[OxmKeyStratos{
+						Type: gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY,
+						Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
+					}] = ofp4sw.OxmValueMask {
+						Value: []byte{ 4 },
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 
