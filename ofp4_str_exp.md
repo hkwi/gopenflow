@@ -138,12 +138,13 @@ To match prefix, use mask. Without mask, exact match will be performed.
 - prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\x00\x00/\x0C\x00
 
 ### STROXM_BASIC_DOT11_ACTION_CATEGORY
-Represents "Action field" in Action frame.
+Represents "Action field" in Action frame. Vendor specific action will want ^M
+additional bytes for match, so length is defined as variable, prefix match.
 Set-field is not supported.
 Only non-ROBUST frames are supported for now (depends on the implementation).
 
 - mask : no
-- length : 1
+- length : variable
 - prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\xD0\x00/\xFC\x00 or \xE0\x00/\xFC\x00
 
 ### STROXM_BASIC_DOT11_PUBLIC_ACTION
@@ -173,9 +174,10 @@ Set-field is not supported.
 
 Special rules
 -------------
-Flow rules that have stratosphere experimenter match with `OXM_OF_IN_PORT` will try to hook 
-enable 802.11 management frame capture. In this case, the application have the responsibility 
-of handling those captured management frames, and sending response frames if required.
+Flow rules that have both `STROXM_BASIC_DOT11_ACTION_CATEGORY` and `OXM_OF_IN_PORT` will try to 
+enable 802.11 management frame capture. In this case, depending on the port type, the application 
+might be responsibile for handling those captured management frames, and sending response frames 
+if required.
 
 
 STRATOS_OXM_FIELD_RADIOTAP

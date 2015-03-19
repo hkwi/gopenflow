@@ -186,11 +186,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					return false, fmt.Errorf("non-management frame")
 				} else {
 					p := payload.(ofp4sw.OxmValueMask)
-					v := m.Payload[0]
-					if len(p.Mask) > 0 {
-						v &= p.Mask[0]
-					}
-					return v == p.Value[0], nil
+					return bytes.HasPrefix(m.Payload, p.Value), nil
 				}
 			case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
 				if m := fetch11(); m == nil {
