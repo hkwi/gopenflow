@@ -392,6 +392,15 @@ func (self *ofmFlowMod) Map() Reducable {
 				filter.opStrict = true
 			}
 			for _, stat := range self.pipe.filterFlows(filter) {
+				if oxm, err := stat.flow.fields.MarshalBinary(); err != nil {
+					log.Print(err)
+				} else if portNo, act := hookDot11Action(ofp4.Oxm(oxm)); portNo != 0 && len(act) != 0 {
+					if port := self.pipe.getPort(portNo); port != nil {
+						if err := port.Vendor(gopenflow.MgmtFrameRemove(act)).(error); err != nil {
+							log.Print(err)
+						}
+					}
+				}
 				if stat.flow.flags&ofp4.OFPFF_SEND_FLOW_REM != 0 {
 					self.pipe.sendFlowRem(stat.tableId, stat.priority, stat.flow, ofp4.OFPRR_DELETE)
 				}

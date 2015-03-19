@@ -1,7 +1,9 @@
 package ofp4sw
 
 import (
+	"encoding/binary"
 	"errors"
+	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	"log"
 	"sort"
@@ -30,7 +32,7 @@ func (pipe Pipeline) addFlowEntry(req ofp4.FlowMod) error {
 		}
 		pipe.flows[tableId] = table
 	}
-	return table.addFlowEntry(req)
+	return table.addFlowEntry(req, pipe)
 }
 
 func (self Pipeline) validate(now time.Time) {
@@ -82,7 +84,7 @@ type flowTable struct {
 	feature     flowTableFeature
 }
 
-func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
+func (self *flowTable) addFlowEntry(req ofp4.FlowMod, pipe Pipeline) error {
 	flow, e1 := newFlowEntry(req)
 	if e1 != nil {
 		return e1
@@ -144,6 +146,13 @@ func (self *flowTable) addFlowEntry(req ofp4.FlowMod) error {
 		}
 	}
 
+	if portNo, act := hookDot11Action(req.Match().OxmFields()); portNo != 0 && len(act) != 0 {
+		if port := pipe.getPort(portNo); port != nil {
+			if err := port.Vendor(gopenflow.MgmtFrameAdd(act)).(error); err != nil {
+				return err
+			}
+		}
+	}
 	priority.rebuildIndex(flows)
 	self.activeCount = uint32(len(flows))
 	return nil
@@ -556,4 +565,38 @@ func (prio *flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats
 		prio.rebuildIndex(miss)
 	}
 	return hits
+}
+
+func hookDot11Action(oxm ofp4.Oxm) (uint32, []byte) {
+	var inPort uint32
+	for _, o := range oxm.Iter() {
+		if o.Header().Type() == ofp4.OXM_OF_IN_PORT {
+			inPort = binary.BigEndian.Uint32(o[4:])
+		}
+	}
+	var action []byte
+	for _, o := range oxm.Iter() {
+		if o.Header().Class() != ofp4.OFPXMC_EXPERIMENTER {
+			continue
+		}
+		if ofp4.OxmExperimenterHeader(o).Experimenter() != gopenflow.STRATOS_EXPERIMENTER_ID {
+			continue
+		}
+		if o.Header().Field() != gopenflow.STRATOS_OXM_FIELD_BASIC {
+			continue
+		}
+		switch binary.BigEndian.Uint16(o[8:]) {
+		case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
+			buf := o[10:]
+			if len(action) < len(buf) {
+				action = buf
+			}
+		case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
+			buf := append([]byte{4}, o[10:]...)
+			if len(action) < len(buf) {
+				action = buf
+			}
+		}
+	}
+	return inPort, action
 }
