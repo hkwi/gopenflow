@@ -59,6 +59,7 @@ func (self oxmExperimenter) Bytes() []byte {
 	hdr := uint32(0xffff0000)
 	hdr |= uint32(self.Field) << 9
 	hdr |= uint32(6 + len(self.Value))
+	binary.BigEndian.PutUint32(buf, hdr)
 	binary.BigEndian.PutUint32(buf[4:], self.Experimenter)
 	binary.BigEndian.PutUint16(buf[8:], self.Type)
 	copy(buf[10:], self.Value)
@@ -167,7 +168,12 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 		// gopacket no-impl
 	}
 
-	if data, err := makeLwapp(rt.Payload); err != nil {
+	dot11 := rt.Payload
+	if !rt.Flags.FCS() {
+		dot11 = append(dot11, 0, 0, 0, 0) // append dummy FCS - because dot11 parser requires this
+	}
+
+	if data, err := makeLwapp(dot11); err != nil {
 		return Frame{}, err
 	} else {
 		return Frame{
