@@ -11,6 +11,7 @@ import (
 	"github.com/hkwi/nlgo"
 	syscall2 "github.com/hkwi/suppl/syscall"
 	"log"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -131,6 +132,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 		} else {
 			buf := pkt.Data
 			if n, err := syscall.Write(self.fd, buf); err != nil {
+				err := SysError{err, debug.Stack()}
 				return err
 			} else if n != len(buf) {
 				return fmt.Errorf("write not complete")
@@ -140,6 +142,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 		if buf, err := pkt.Radiotap(); err != nil {
 			return err
 		} else if n, err := syscall.Write(self.fd, buf); err != nil {
+			err := SysError{err, debug.Stack()}
 			return err
 		} else if n != len(buf) {
 			return fmt.Errorf("write not complete")
@@ -250,7 +253,7 @@ func (self *NamedPort) Up() error {
 		return nil
 	}
 	if fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, 0); err != nil {
-		return err
+		return SysError{err, debug.Stack()}
 	} else {
 		self.fd = fd
 	}
@@ -262,10 +265,10 @@ func (self *NamedPort) Up() error {
 			Protocol: syscall2.ETH_P_ALL,
 			Ifindex:  int(self.ifIndex),
 		}); err != nil {
-			return err
+			return SysError{err, debug.Stack()}
 		}
 		if sa, err := syscall.Getsockname(self.fd); err != nil {
-			return err
+			return SysError{err, debug.Stack()}
 		} else {
 			self.hatype = sa.(*syscall.SockaddrLinklayer).Hatype
 			switch self.hatype {
@@ -290,6 +293,7 @@ func (self *NamedPort) Up() error {
 			var frame Frame
 
 			if bufN, oobN, flags, _, err := syscall.Recvmsg(self.fd, buf, oob, syscall.MSG_TRUNC); err != nil {
+				err := SysError{err, debug.Stack()}
 				log.Print(err)
 			} else if bufN > len(buf) {
 				log.Print("MSG_TRUNC")
@@ -662,7 +666,9 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			}
 			port.monitor <- true
 			if triggerUp {
-				port.Up()
+				if err := port.Up(); err != nil {
+					log.Print(err)
+				}
 			}
 		} else if tracking(evPort) {
 			port = evPort
@@ -681,7 +687,9 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			}
 			self.datapath.AddPort(port)
 			port.monitor <- true
-			port.Up()
+			if err := port.Up(); err != nil {
+				log.Print(err)
+			}
 		}
 	case syscall.RTM_DELLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
