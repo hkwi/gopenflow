@@ -125,7 +125,12 @@ var advertisedConvert map[C.__u32]uint32 = map[C.__u32]uint32{
 }
 
 func (self NamedPort) Ethernet() (PortEthernetProperty, error) {
-	if self.hatype != syscall.ARPHRD_ETHER {
+	switch self.hatype {
+	case 0:
+		return PortEthernetProperty{}, nil
+	case syscall.ARPHRD_ETHER:
+		// pass
+	default:
 		return PortEthernetProperty{}, fmt.Errorf("not an ether")
 	}
 
