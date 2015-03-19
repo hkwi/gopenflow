@@ -22,6 +22,9 @@ const (
 	STROXM_BASIC_DOT11_SSID
 	STROXM_BASIC_DOT11_ACTION_CATEGORY
 	STROXM_BASIC_DOT11_PUBLIC_ACTION
+	// match
+	STROXM_BASIC_DOT11_TAG
+	STROXM_BASIC_DOT11_TAG_VENDOR
 )
 
 const (
@@ -50,6 +53,6 @@ const (
 
 type MgmtFramePrefix []byte
 
-// NL80211_ATTR_FRAME_MATCH
+// NL80211_ATTR_FRAME_MATCH - contents are "Frame Body", right after HT Control
 type MgmtFrameAdd MgmtFramePrefix
 type MgmtFrameRemove MgmtFramePrefix

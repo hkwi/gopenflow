@@ -51,6 +51,10 @@ oxm_class is always OFPXMC_EXPERIMENTER (0xFFFF), as defined in openflow specifi
  	STROXM_BASIC_DOT11_SSID,
  	STROXM_BASIC_DOT11_ACTION_CATEGORY
  	STROXM_BASIC_DOT11_PUBLIC_ACTION
+ 	
+ 	// match
+ 	STROXM_BASIC_DOT11_TAG
+ 	STROXM_BASIC_DOT11_TAG_VENDOR
  }
 
  enum stratos_radiotap_exp_type {
@@ -149,6 +153,22 @@ Set-field is not supported.
 - mask : no
 - length : 1
 - prerequisite : STROXM_BASIC_ACTION_CATEGORY=4
+
+### STROXM_BASIC_DOT11_TAG
+Matches to information element ID. 
+Multiple oxm may present in flow match condition(AND).
+Set-field is not supported.
+
+- mask : no
+- length : 1 or more
+
+### STROXM_BASIC_DOT11_TAG_VENDOR
+Matches to vendor information element Origanization indentifier.
+Set-field is not supported.
+
+- mask : no
+- length : 3 to 257
+- prerequisite : STROXM_BASIC_DOT11_TAG=221
 
 
 Special rules

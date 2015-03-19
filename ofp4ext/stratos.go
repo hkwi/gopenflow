@@ -15,26 +15,46 @@ type StratosOxm struct{}
 
 var _ = ofp4sw.OxmHandler(StratosOxm{})
 
+func useOxmMultiValue(key ofp4sw.OxmKey) bool {
+	if k, ok := key.(OxmKeyStratos); ok {
+		switch k.Field {
+		case gopenflow.STRATOS_OXM_FIELD_BASIC:
+			switch k.Type {
+			case gopenflow.STROXM_BASIC_DOT11_TAG,
+				gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 	ret := make(map[ofp4sw.OxmKey]ofp4sw.OxmPayload)
-	for _,oxm := range ofp4.Oxm(buf).Iter() {
+	for _, oxm := range ofp4.Oxm(buf).Iter() {
 		hdr := oxm.Header()
 		if hdr.Class() == ofp4.OFPXMC_EXPERIMENTER {
 			exp := ofp4.OxmExperimenterHeader(oxm)
 			if exp.Experimenter() == gopenflow.STRATOS_EXPERIMENTER_ID {
 				key := OxmKeyStratos{
-					Type: binary.BigEndian.Uint16(exp[8:]),
+					Type:  binary.BigEndian.Uint16(exp[8:]),
 					Field: hdr.Field(),
 				}
 				length := hdr.Length() - 6
-				if hdr.HasMask() {
-					ret[key] = ofp4sw.OxmValueMask {
-						Value: oxm[6:6+length/2],
-						Mask: oxm[6+length/2:],
-					}
+				if useOxmMultiValue(key) {
+					payload := ret[key].(OxmMultiValue)
+					payload.Values = append(payload.Values, oxm[6:length])
+					ret[key] = payload
 				} else {
-					ret[key] = ofp4sw.OxmValueMask {
-						Value: oxm[6:6+length],
+					if hdr.HasMask() {
+						ret[key] = ofp4sw.OxmValueMask{
+							Value: oxm[6 : 6+length/2],
+							Mask:  oxm[6+length/2:],
+						}
+					} else {
+						ret[key] = ofp4sw.OxmValueMask{
+							Value: oxm[6 : 6+length],
+						}
 					}
 				}
 			}
@@ -49,26 +69,24 @@ func (self StratosOxm) OxmId(field uint32) uint32 {
 }
 
 func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4sw.OxmPayload) (bool, error) {
-	switch k:=key.(type){
+	switch k := key.(type) {
 	case OxmKeyStratos:
 		switch k.Field {
 		case gopenflow.STRATOS_OXM_FIELD_BASIC:
-			p := payload.(ofp4sw.OxmValueMask)
-			
 			fetch11 := func() *layers.Dot11 {
-				for _,layer := range data.Layers() {
-					switch l:=layer.(type) {
+				for _, layer := range data.Layers() {
+					switch l := layer.(type) {
 					case *layers.Dot11:
 						return l
 					}
 				}
 				return nil
 			}
-			
-			fetchIeS := func() (ret []Dot11InformationElement) {
-				if m := fetch11(); m != nil && m.Type.MainType()==layers.Dot11TypeMgmt {
+
+			fetchIeList := func() (ret []Dot11InformationElement) {
+				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt {
 					ret := Dot11InformationElementList{}
-					if err:=ret.UnmarshalBinary(m.Contents); err!=nil {
+					if err := ret.UnmarshalBinary(m.Contents); err != nil {
 						return nil
 					} else {
 						return []Dot11InformationElement(ret)
@@ -76,9 +94,10 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				}
 				return nil
 			}
-			
+
 			switch k.Type {
 			case gopenflow.STROXM_BASIC_DOT11:
+				p := payload.(ofp4sw.OxmValueMask)
 				var want uint8
 				if len(p.Value) > 0 {
 					want = p.Value[0]
@@ -92,8 +111,9 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				if m := fetch11(); m == nil {
 					return false, fmt.Errorf("dot11 missing")
 				} else {
+					p := payload.(ofp4sw.OxmValueMask)
 					v := []byte{
-						uint8(m.Type << 2) | m.Proto,
+						uint8(m.Type<<2) | m.Proto,
 						uint8(m.Flags),
 					}
 					if len(p.Mask) > 0 {
@@ -106,6 +126,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				if m := fetch11(); m == nil {
 					return false, fmt.Errorf("dot11 missing")
 				} else {
+					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address1), p.Mask)), nil
 					} else {
@@ -116,6 +137,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				if m := fetch11(); m == nil {
 					return false, fmt.Errorf("dot11 missing")
 				} else {
+					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address2), p.Mask)), nil
 					} else {
@@ -126,6 +148,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				if m := fetch11(); m == nil {
 					return false, fmt.Errorf("dot11 missing")
 				} else {
+					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address3), p.Mask)), nil
 					} else {
@@ -136,6 +159,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				if m := fetch11(); m == nil {
 					return false, fmt.Errorf("dot11 missing")
 				} else {
+					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address4), p.Mask)), nil
 					} else {
@@ -143,8 +167,9 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
-				for _,l := range fetchIeS() {
+				for _, l := range fetchIeList() {
 					if l.Id == 0 {
+						p := payload.(ofp4sw.OxmValueMask)
 						if len(p.Mask) > 0 {
 							return bytes.Equal(p.Value, bytes2.And(l.Info, p.Mask)), nil
 						} else {
@@ -160,6 +185,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				} else if m.Type.MainType() != layers.Dot11TypeMgmt {
 					return false, fmt.Errorf("non-management frame")
 				} else {
+					p := payload.(ofp4sw.OxmValueMask)
 					v := m.Payload[0]
 					if len(p.Mask) > 0 {
 						v &= p.Mask[0]
@@ -172,18 +198,39 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				} else if m.Type.MainType() != layers.Dot11TypeMgmt {
 					return false, fmt.Errorf("non-management frame")
 				} else if m.Payload[0] == 4 { // Public Action
+					p := payload.(ofp4sw.OxmValueMask)
 					v := m.Payload[1] // Public Action field value
 					if len(p.Mask) > 0 {
 						v &= p.Mask[0]
 					}
 					return v == p.Value[0], nil
 				}
+			case gopenflow.STROXM_BASIC_DOT11_TAG:
+				ies := fetchIeList()
+				for _, v := range payload.(OxmMultiValue).Values {
+					for _, ie := range ies {
+						if v[0] == ie.Id {
+							return true, nil
+						}
+					}
+				}
+				return false, nil
+			case gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
+				ies := fetchIeList()
+				for _, v := range payload.(OxmMultiValue).Values {
+					for _, ie := range ies {
+						if ie.Id == 221 && bytes.HasPrefix(ie.Info, v) {
+							return true, nil
+						}
+					}
+				}
+				return false, nil
 			default:
 				return false, fmt.Errorf("unsupported oxm experimenter type")
 			}
 		case gopenflow.STRATOS_OXM_FIELD_RADIOTAP:
 			p := payload.(ofp4sw.OxmValueMask)
-			
+
 			if v := data.Oob[key].(ofp4sw.OxmValueMask); len(v.Value) > 0 {
 				if len(p.Mask) > 0 {
 					return bytes.Equal(p.Value, bytes2.And(v.Value, p.Mask)), nil
@@ -201,26 +248,26 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 }
 
 func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4sw.OxmPayload) error {
-	switch k:=key.(type){
+	switch k := key.(type) {
 	case OxmKeyStratos:
 		switch k.Field {
 		case gopenflow.STRATOS_OXM_FIELD_BASIC:
 			p := payload.(ofp4sw.OxmValueMask)
-			
+
 			fetch11 := func() *layers.Dot11 {
-				for _,layer := range data.Layers() {
-					switch l:=layer.(type) {
+				for _, layer := range data.Layers() {
+					switch l := layer.(type) {
 					case *layers.Dot11:
 						return l
 					}
 				}
 				return nil
 			}
-			
-			fetchIeS := func() (ret []Dot11InformationElement) {
-				if m := fetch11(); m != nil && m.Type.MainType()==layers.Dot11TypeMgmt {
+
+			fetchIeList := func() (ret []Dot11InformationElement) {
+				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt {
 					ret := Dot11InformationElementList{}
-					if err:=ret.UnmarshalBinary(m.Contents); err!=nil {
+					if err := ret.UnmarshalBinary(m.Contents); err != nil {
 						return nil
 					} else {
 						return []Dot11InformationElement(ret)
@@ -228,7 +275,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 				}
 				return nil
 			}
-			
+
 			switch k.Type {
 			case gopenflow.STROXM_BASIC_DOT11:
 				data.Oob[key] = ofp4sw.OxmValueMask{
@@ -239,12 +286,12 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					return fmt.Errorf("dot11 missing")
 				} else {
 					v := []byte{
-						uint8(m.Type << 2) | m.Proto,
+						uint8(m.Type<<2) | m.Proto,
 						uint8(m.Flags),
 					}
 					v = bytes2.Or(p.Value, bytes2.And(v, p.Mask))
 					m.Proto = v[0] & 0x03
-					m.Type = layers.Dot11Type(v[0]>>2)
+					m.Type = layers.Dot11Type(v[0] >> 2)
 					m.Flags = layers.Dot11Flags(v[1])
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR1:
@@ -289,7 +336,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 				}
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
 				var ret []Dot11InformationElement
-				for _,l := range fetchIeS() {
+				for _, l := range fetchIeList() {
 					if l.Id == 0 {
 						if len(p.Mask) > 0 {
 							l.Info = bytes2.Or(p.Value, bytes2.And(l.Info, p.Mask))
@@ -299,7 +346,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 					ret = append(ret, l)
 				}
-				if buf, err:=Dot11InformationElementList(ret).MarshalBinary(); err!=nil {
+				if buf, err := Dot11InformationElementList(ret).MarshalBinary(); err != nil {
 					return err
 				} else if m := fetch11(); m == nil {
 					return fmt.Errorf("dot11 missing")
@@ -311,10 +358,10 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 			}
 		case gopenflow.STRATOS_OXM_FIELD_RADIOTAP:
 			p := payload.(ofp4sw.OxmValueMask)
-			
-			if v,ok := data.Oob[key].(ofp4sw.OxmValueMask); !ok {
+
+			if v, ok := data.Oob[key].(ofp4sw.OxmValueMask); !ok {
 				data.Oob[key] = payload
-			} else if len(p.Mask) > 0{
+			} else if len(p.Mask) > 0 {
 				v.Value = bytes2.Or(p.Value, bytes2.And(v.Value, p.Mask))
 				data.Oob[key] = v
 			} else {
@@ -332,75 +379,115 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 }
 
 func (self StratosOxm) Fit(key ofp4sw.OxmKey, narrow, wide ofp4sw.OxmPayload) (bool, error) {
-	n := narrow.(ofp4sw.OxmValueMask)
-	w := wide.(ofp4sw.OxmValueMask)
-	return bytes.Equal(bytes2.And(n.Value, w.Mask), w.Value), nil
+	if useOxmMultiValue(key) {
+		n := narrow.(OxmMultiValue)
+		w := wide.(OxmMultiValue)
+		for _, wv := range w.Values {
+			if missing := func() bool {
+				for _, nv := range n.Values {
+					if bytes.HasPrefix(nv, wv) {
+						return false
+					}
+				}
+				return true
+			}(); missing {
+				return false, nil
+			}
+		}
+		return true, nil
+	} else {
+		n := narrow.(ofp4sw.OxmValueMask)
+		w := wide.(ofp4sw.OxmValueMask)
+		return bytes.Equal(bytes2.And(n.Value, w.Mask), w.Value), nil
+	}
 }
 
 func (self StratosOxm) Conflict(key ofp4sw.OxmKey, a, b ofp4sw.OxmPayload) (bool, error) {
-	x := a.(ofp4sw.OxmValueMask)
-	y := b.(ofp4sw.OxmValueMask)
-	mask := bytes2.And(x.Mask, y.Mask)
-	return bytes.Equal(bytes2.And(x.Value, mask), bytes2.And(y.Value, mask)), nil
+	if useOxmMultiValue(key) {
+		// does not conflict by syntax
+		return false, nil
+	} else {
+		x := a.(ofp4sw.OxmValueMask)
+		y := b.(ofp4sw.OxmValueMask)
+		mask := bytes2.And(x.Mask, y.Mask)
+		return bytes.Equal(bytes2.And(x.Value, mask), bytes2.And(y.Value, mask)), nil
+	}
 }
 
 func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error {
-	for key,_ := range fields {
-		switch k:=key.(type){
+	for key, _ := range fields {
+		switch k := key.(type) {
 		case OxmKeyStratos:
 			switch k.Field {
 			case gopenflow.STRATOS_OXM_FIELD_BASIC:
 				eth := ofp4sw.OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)
 				v := fields[eth].(ofp4sw.OxmValueMask)
-				if err := v.Merge(ofp4sw.OxmValueMask {
-					Value: []byte{ 0x88, 0xbb },
-					Mask: []byte{ 0xff, 0xff },
-				}); err!= nil {
+				if err := v.Merge(ofp4sw.OxmValueMask{
+					Value: []byte{0x88, 0xbb},
+					Mask:  []byte{0xff, 0xff},
+				}); err != nil {
 					return err
 				} else {
 					fields[eth] = v
 				}
-				
+
 				keyFrameCtrl := OxmKeyStratos{
-					Type: gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL,
+					Type:  gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL,
+					Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
+				}
+				keyTag := OxmKeyStratos{
+					Type:  gopenflow.STROXM_BASIC_DOT11_TAG,
 					Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
 				}
 				switch k.Type {
 				case gopenflow.STROXM_BASIC_DOT11_SSID:
 					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
-					if err := v.Merge(ofp4sw.OxmValueMask { // Management frame type
-						Value: []byte{ 0x00, 0x00 },
-						Mask: []byte{ 0x0F, 0x00 },
-					}); err!= nil {
+					if err := v.Merge(ofp4sw.OxmValueMask{ // Management frame type
+						Value: []byte{0x00, 0x00},
+						Mask:  []byte{0x0F, 0x00},
+					}); err != nil {
 						return err
 					} else {
 						fields[keyFrameCtrl] = v
 					}
 				case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
 					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
-					if err := v.Merge(ofp4sw.OxmValueMask { // Action, ActionNAK common
-						Value: []byte{ 0xC0, 0x00 },
-						Mask: []byte{ 0xCF, 0x00 },
-					}); err!= nil {
+					if err := v.Merge(ofp4sw.OxmValueMask{ // Action, ActionNAK common
+						Value: []byte{0xC0, 0x00},
+						Mask:  []byte{0xCF, 0x00},
+					}); err != nil {
 						return err
 					} else {
 						fields[keyFrameCtrl] = v
 					}
 				case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
 					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
-					if err := v.Merge(ofp4sw.OxmValueMask { // Action, ActionNAK common
-						Value: []byte{ 0xC0, 0x00 },
-						Mask: []byte{ 0xCF, 0x00 },
-					}); err!= nil {
+					if err := v.Merge(ofp4sw.OxmValueMask{ // Action, ActionNAK common
+						Value: []byte{0xC0, 0x00},
+						Mask:  []byte{0xCF, 0x00},
+					}); err != nil {
 						return err
 					} else {
 						fields[keyFrameCtrl] = v
 					}
 					fields[OxmKeyStratos{
-						Type: gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY,
+						Type:  gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY,
 						Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
-					}] = ofp4sw.OxmValueMask {
-						Value: []byte{ 4 },
+					}] = ofp4sw.OxmValueMask{
+						Value: []byte{4},
+					}
+				case gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
+					vs := fields[keyTag].(OxmMultiValue)
+					if missing := func() bool {
+						for _, v := range vs.Values {
+							if v[0] == 221 {
+								return false
+							}
+						}
+						return true
+					}(); missing {
+						vs.Values = append(vs.Values, []byte{221})
+						fields[keyTag] = vs
 					}
 				}
 			}
@@ -410,25 +497,38 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 }
 
 type OxmKeyStratos struct {
-	Type         uint16 // exp_type
-	Field        uint8
+	Type  uint16 // exp_type
+	Field uint8
+}
+
+type OxmMultiValue struct {
+	Values [][]byte
 }
 
 func (self OxmKeyStratos) Bytes(payload ofp4sw.OxmPayload) []byte {
 	hdr := ofp4.OxmHeader(ofp4.OFPXMC_EXPERIMENTER<<ofp4.OXM_CLASS_SHIFT | uint32(self.Field)<<ofp4.OXM_FIELD_SHIFT)
-	var buf []byte
-	setCommon := func(payloadLength int) {
-		buf = make([]byte, 10+payloadLength)
-		hdr.SetLength(6+payloadLength)
+	makeCommon := func(payloadLength int) []byte {
+		buf := make([]byte, 10+payloadLength)
+		hdr.SetLength(6 + payloadLength)
 		binary.BigEndian.PutUint32(buf, uint32(hdr))
 		binary.BigEndian.PutUint32(buf[4:], uint32(gopenflow.STRATOS_EXPERIMENTER_ID))
 		binary.BigEndian.PutUint16(buf[8:], self.Type)
+		return buf
 	}
-	switch p:=payload.(type){
+	switch p := payload.(type) {
 	case ofp4sw.OxmValueMask:
-		setCommon(len(p.Value) + len(p.Mask))
+		buf := makeCommon(len(p.Value) + len(p.Mask))
 		copy(buf[10:], p.Value)
-		copy(buf[10 + len(p.Value):], p.Mask)
+		copy(buf[10+len(p.Value):], p.Mask)
+		return buf
+	case OxmMultiValue:
+		var ret []byte
+		for _, v := range p.Values {
+			buf := makeCommon(len(v))
+			copy(buf[10:], v)
+			ret = append(ret, buf...)
+		}
+		return ret
 	}
-	return buf
+	return nil
 }
