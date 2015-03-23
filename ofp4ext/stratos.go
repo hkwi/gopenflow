@@ -42,18 +42,21 @@ func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 				}
 				length := hdr.Length() - 6
 				if useOxmMultiValue(key) {
-					payload := ret[key].(OxmMultiValue)
-					payload.Values = append(payload.Values, oxm[6:length])
+					payload := OxmMultiValue{}
+					if p,ok := ret[key]; ok {
+						payload = p.(OxmMultiValue)
+					}
+					payload.Values = append(payload.Values, oxm[10:length])
 					ret[key] = payload
 				} else {
 					if hdr.HasMask() {
 						ret[key] = ofp4sw.OxmValueMask{
-							Value: oxm[6 : 6+length/2],
-							Mask:  oxm[6+length/2:],
+							Value: oxm[10 : 10+length/2],
+							Mask:  oxm[10+length/2:],
 						}
 					} else {
 						ret[key] = ofp4sw.OxmValueMask{
-							Value: oxm[6 : 6+length],
+							Value: oxm[10 : 10+length],
 						}
 					}
 				}
@@ -417,15 +420,16 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 			switch k.Field {
 			case gopenflow.STRATOS_OXM_FIELD_BASIC:
 				eth := ofp4sw.OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)
-				v := fields[eth].(ofp4sw.OxmValueMask)
-				if err := v.Merge(ofp4sw.OxmValueMask{
+				ethtype := ofp4sw.OxmValueMask{
 					Value: []byte{0x88, 0xbb},
 					Mask:  []byte{0xff, 0xff},
-				}); err != nil {
-					return err
-				} else {
-					fields[eth] = v
 				}
+				if v,ok := fields[eth]; ok {
+					if err := ethtype.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
+						return err
+					}
+				}
+				fields[eth] = ethtype
 
 				keyFrameCtrl := OxmKeyStratos{
 					Type:  gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL,
@@ -437,35 +441,39 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 				}
 				switch k.Type {
 				case gopenflow.STROXM_BASIC_DOT11_SSID:
-					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
-					if err := v.Merge(ofp4sw.OxmValueMask{ // Management frame type
+					payload := ofp4sw.OxmValueMask{ // Management frame type
 						Value: []byte{0x00, 0x00},
 						Mask:  []byte{0x0F, 0x00},
-					}); err != nil {
-						return err
-					} else {
-						fields[keyFrameCtrl] = v
 					}
+					if v,ok := fields[keyFrameCtrl]; ok {
+						if err := payload.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
+							return err
+						}
+					}
+					fields[keyFrameCtrl] = payload
 				case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
-					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
-					if err := v.Merge(ofp4sw.OxmValueMask{ // Action, ActionNAK common
+					payload := ofp4sw.OxmValueMask{ // Action, ActionNAK common
 						Value: []byte{0xC0, 0x00},
 						Mask:  []byte{0xCF, 0x00},
-					}); err != nil {
-						return err
-					} else {
-						fields[keyFrameCtrl] = v
 					}
+					if v,ok := fields[keyFrameCtrl]; ok {
+						if err := payload.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
+							return err
+						}
+					}
+					fields[keyFrameCtrl] = payload
 				case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
-					v := fields[keyFrameCtrl].(ofp4sw.OxmValueMask)
-					if err := v.Merge(ofp4sw.OxmValueMask{ // Action, ActionNAK common
+					payload := ofp4sw.OxmValueMask{ // Action, ActionNAK common
 						Value: []byte{0xC0, 0x00},
 						Mask:  []byte{0xCF, 0x00},
-					}); err != nil {
-						return err
-					} else {
-						fields[keyFrameCtrl] = v
 					}
+					if v,ok := fields[keyFrameCtrl]; ok {
+						if err := payload.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
+							return err
+						}
+					}
+					fields[keyFrameCtrl] = payload
+					
 					fields[OxmKeyStratos{
 						Type:  gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY,
 						Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
@@ -473,17 +481,19 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 						Value: []byte{4},
 					}
 				case gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
-					vs := fields[keyTag].(OxmMultiValue)
 					if missing := func() bool {
-						for _, v := range vs.Values {
-							if v[0] == 221 {
-								return false
+						if v,ok := fields[keyTag];ok {
+							for _, v := range v.(OxmMultiValue).Values {
+								if v[0] == 221 {
+									return false
+								}
 							}
 						}
 						return true
 					}(); missing {
-						vs.Values = append(vs.Values, []byte{221})
-						fields[keyTag] = vs
+						v := OxmMultiValue{}
+						v.Values = append(v.Values, []byte{221})
+						fields[keyTag] = v
 					}
 				}
 			}
@@ -513,6 +523,9 @@ func (self OxmKeyStratos) Bytes(payload ofp4sw.OxmPayload) []byte {
 	}
 	switch p := payload.(type) {
 	case ofp4sw.OxmValueMask:
+		if len(p.Mask) > 0 {
+			hdr.SetMask(true)
+		}
 		buf := makeCommon(len(p.Value) + len(p.Mask))
 		copy(buf[10:], p.Value)
 		copy(buf[10+len(p.Value):], p.Mask)
