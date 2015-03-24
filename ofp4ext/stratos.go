@@ -111,9 +111,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				}
 				return want == have, nil
 			case gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL:
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					v := []byte{
 						uint8(m.Type<<2) | m.Proto,
@@ -126,9 +124,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR1:
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address1), p.Mask)), nil
@@ -137,9 +133,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR2:
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address2), p.Mask)), nil
@@ -148,9 +142,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR3:
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address3), p.Mask)), nil
@@ -159,9 +151,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR4:
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
 						return bytes.Equal(p.Value, bytes2.And([]byte(m.Address4), p.Mask)), nil
@@ -183,20 +173,12 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				return false, nil
 			case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
 				// XXX: HT field handling is missing in gopacket
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else if m.Type.MainType() != layers.Dot11TypeMgmt {
-					return false, fmt.Errorf("non-management frame")
-				} else {
+				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt {
 					p := payload.(ofp4sw.OxmValueMask)
 					return bytes.HasPrefix(m.Payload, p.Value), nil
 				}
 			case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
-				if m := fetch11(); m == nil {
-					return false, fmt.Errorf("dot11 missing")
-				} else if m.Type.MainType() != layers.Dot11TypeMgmt {
-					return false, fmt.Errorf("non-management frame")
-				} else if m.Payload[0] == 4 { // Public Action
+				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt && m.Payload[0] == 4 { // Public Action
 					p := payload.(ofp4sw.OxmValueMask)
 					v := m.Payload[1] // Public Action field value
 					if len(p.Mask) > 0 {
@@ -281,9 +263,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					Value: p.Value,
 				}
 			case gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL:
-				if m := fetch11(); m == nil {
-					return fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					v := []byte{
 						uint8(m.Type<<2) | m.Proto,
 						uint8(m.Flags),
@@ -294,9 +274,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					m.Flags = layers.Dot11Flags(v[1])
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR1:
-				if m := fetch11(); m == nil {
-					return fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address1 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address1), p.Mask))
 					} else {
@@ -304,9 +282,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR2:
-				if m := fetch11(); m == nil {
-					return fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address2 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address2), p.Mask))
 					} else {
@@ -314,9 +290,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR3:
-				if m := fetch11(); m == nil {
-					return fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address3 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address3), p.Mask))
 					} else {
@@ -324,9 +298,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_ADDR4:
-				if m := fetch11(); m == nil {
-					return fmt.Errorf("dot11 missing")
-				} else {
+				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address4 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address4), p.Mask))
 					} else {
@@ -347,9 +319,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 				}
 				if buf, err := Dot11InformationElementList(ret).MarshalBinary(); err != nil {
 					return err
-				} else if m := fetch11(); m == nil {
-					return fmt.Errorf("dot11 missing")
-				} else {
+				} else if m := fetch11(); m != nil {
 					m.Contents = buf
 				}
 			default:
