@@ -56,7 +56,7 @@ import (
 )
 
 const (
-	SUPPORTED_10baseT_Half = 1<<iota
+	SUPPORTED_10baseT_Half = 1 << iota
 	SUPPORTED_10baseT_Full
 	SUPPORTED_100baseT_Half
 	SUPPORTED_100baseT_Full
@@ -86,7 +86,7 @@ const (
 )
 
 const (
-	ADVERTISED_10baseT_Half = 1<<iota
+	ADVERTISED_10baseT_Half = 1 << iota
 	ADVERTISED_10baseT_Full
 	ADVERTISED_100baseT_Half
 	ADVERTISED_100baseT_Full

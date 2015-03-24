@@ -17,13 +17,14 @@ import (
 )
 
 type NamedPort struct {
-	ifIndex uint32
-	flags   uint32
-	name    string
-	wiphy   uint32
-	mac     []byte
-	mtu     uint32
-	config  []PortConfig
+	ifIndex  uint32
+	flags    uint32
+	name     string
+	hasWiphy bool
+	wiphy    uint32
+	mac      []byte
+	mtu      uint32
+	config   []PortConfig
 
 	port         uint32
 	physicalPort uint32
@@ -616,6 +617,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			if attrs, err := nlgo.Nl80211Policy.Parse(r.Payload); err != nil {
 				log.Print(err)
 			} else {
+				evPort.hasWiphy = true
 				evPort.wiphy = attrs.Get(nlgo.NL80211_ATTR_WIPHY).(uint32)
 			}
 		}
@@ -651,7 +653,8 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			if len(evPort.name) > 0 {
 				port.name = evPort.name
 			}
-			if evPort.wiphy != 0 {
+			if evPort.hasWiphy {
+				port.hasWiphy = true
 				port.wiphy = evPort.wiphy
 			}
 			if evPort.mtu != 0 {
@@ -671,7 +674,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			port.ingress = make(chan Frame)
 			port.monitor = make(chan bool)
 			self.ports[uint32(ifinfo.Index)] = port
-			if port.wiphy != 0 {
+			if port.hasWiphy {
 				func() {
 					for _, wiphy := range self.trackingWiphy {
 						if wiphy == port.wiphy {
