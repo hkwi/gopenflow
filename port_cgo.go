@@ -191,7 +191,7 @@ func (self NamedPort) Ethernet() (PortEthernetProperty, error) {
 	case syscall.ARPHRD_ETHER:
 		// pass
 	default:
-		return PortEthernetProperty{}, fmt.Errorf("not an ether")
+		return PortEthernetProperty{}, fmt.Errorf("%s not an ether", self.name)
 	}
 
 	cname := C.CString(self.name)
@@ -204,7 +204,7 @@ func (self NamedPort) Ethernet() (PortEthernetProperty, error) {
 
 	ecmd := C.struct_ethtool_cmd{cmd: C.ETHTOOL_GSET}
 	if r, err := C.ethtool_cmd_call(fd, cname, &ecmd); err != nil {
-		return state, err
+		return state, fmt.Errorf("ethtool for %s: %s", self.name, err.Error())
 	} else if r != 0 {
 		return state, fmt.Errorf("ethtool_cmd_call error")
 	} else {
