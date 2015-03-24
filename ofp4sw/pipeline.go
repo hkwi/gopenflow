@@ -561,7 +561,7 @@ func (pipe *Pipeline) sendOutput(output outputToPort) error {
 				pipe.lock.Lock()
 				defer pipe.lock.Unlock()
 
-				for len(pipe.buffer) <= math.MaxUint32 { // may limit by ofp_switch_features.n_buffers
+				for len(pipe.buffer) <= math.MaxInt32 { // may limit by ofp_switch_features.n_buffers
 					buffer_id = pipe.nextBufferId
 					pipe.nextBufferId++
 					if _, ok := pipe.buffer[buffer_id]; !ok {
