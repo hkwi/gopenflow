@@ -11,6 +11,7 @@ import (
 	"hash/fnv"
 	"log"
 	"net"
+	"sort"
 )
 
 // frame for cloning in multiple output, which trigger different processing.
@@ -611,8 +612,13 @@ func (self *Frame) getFrozen() (gopenflow.Frame, error) {
 			Mask:  mask,
 		})...)
 	}
+	var sorter []string
 	for k, v := range self.Oob {
-		oob = append(oob, k.Bytes(v)...)
+		sorter = append(sorter, string(k.Bytes(v)))
+	}
+	sort.Strings(sorter)
+	for _,s := range sorter {
+		oob = append(oob, []byte(s)...)
 	}
 	return gopenflow.Frame{
 		Data: self.serialized,

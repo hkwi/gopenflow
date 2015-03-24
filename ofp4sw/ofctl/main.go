@@ -176,6 +176,16 @@ func main() {
 											ext = fmt.Sprintf("addr1=%s",
 												mac2str(oxm[10:]))
 										}
+									case STROXM_BASIC_DOT11_ADDR2:
+										if oxm.Header().HasMask() {
+											h := len(oxm[10:])/2
+											ext = fmt.Sprintf("addr2=%s/%s",
+												mac2str(oxm[10:10+h]),
+												mac2str(oxm[10+h:]))
+										} else {
+											ext = fmt.Sprintf("addr2=%s",
+												mac2str(oxm[10:]))
+										}
 									}
 								}
 							}
