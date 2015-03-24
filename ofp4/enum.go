@@ -331,7 +331,7 @@ func OxmOfDefs(oxm uint32) (length int, mayMask bool) {
 	case OXM_OF_IPV6_ND_TLL:
 		return 6, false
 	case OXM_OF_MPLS_LABEL:
-		return 4, false
+		return 4, true
 	case OXM_OF_MPLS_TC:
 		return 1, false
 	case OXM_OF_MPLS_BOS:
