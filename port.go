@@ -646,9 +646,11 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	case syscall.RTM_NEWLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
 			triggerUp := false
-			if !tracking(port) && tracking(evPort) {
+			if tracking(evPort) && evPort.flags&syscall.IFF_UP != 0 &&
+				(!tracking(port) || port.flags&syscall.IFF_UP == 0) {
 				triggerUp = true
 			}
+
 			port.flags = (port.flags &^ ifinfo.Change) | (ifinfo.Flags & ifinfo.Change)
 			if len(evPort.name) > 0 {
 				port.name = evPort.name
