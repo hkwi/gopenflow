@@ -246,6 +246,8 @@ func (self NamedPort) Stats() (PortStats, error) {
 }
 
 func (self *NamedPort) Up() error {
+	self.lock.Lock()
+	defer self.lock.Unlock()
 	if self.fd != -1 {
 		return nil // already up
 	}
@@ -256,10 +258,6 @@ func (self *NamedPort) Up() error {
 		panic(err)
 	} else {
 		self.fd = fd
-	}
-	loopEnd := func() {
-		syscall.Close(self.fd)
-		self.fd = -1
 	}
 	if err := func() error {
 		if err := syscall.SetsockoptInt(self.fd, syscall.SOL_PACKET, syscall2.PACKET_AUXDATA, 1); err != nil {
@@ -286,11 +284,11 @@ func (self *NamedPort) Up() error {
 		}
 		return nil
 	}(); err != nil {
-		loopEnd()
+		self.Down()
 		return err
 	}
 	go func() {
-		defer loopEnd()
+		defer self.Down()
 		buf := make([]byte, 32*1024)               // enough for jumbo frame
 		oob := make([]byte, syscall.CmsgSpace(20)) // msg_control, 20 = sizeof(auxdata)
 		for {
@@ -420,16 +418,16 @@ func (self NamedPort) GenlListen(ev nlgo.GenlMessage) {
 }
 
 func (self *NamedPort) Down() {
+	self.lock.Lock()
+	defer self.lock.Unlock()
 	if self.ghub != nil {
 		self.ghub.Close()
 		self.ghub = nil
 	}
-	if self.fd == -1 {
-		log.Print("programming error")
-		return
+	if self.fd != -1 {
+		syscall.Close(self.fd)
+		self.fd = -1
 	}
-	syscall.Close(self.fd)
-	self.fd = -1
 }
 
 func (self NamedPort) Close() error {
@@ -635,7 +633,6 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			return
 		}
 		// query wiphy
-		self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_INTERFACE, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
 			nlgo.Attr{
 				Header: syscall.NlAttr{
@@ -663,7 +660,6 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 				}
 			}
 		}
-
 		tracking := func(port *NamedPort) bool {
 			for _, name := range self.trackingNames {
 				if port.name == name {
@@ -687,14 +683,16 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			port.ingress = make(chan Frame)
 			port.monitor = make(chan bool)
 			self.ports[uint32(ifinfo.Index)] = port
-			if port.hasWiphy {
-				for _, wiphy := range self.trackingWiphy {
-					if wiphy == port.wiphy {
-						return
+			func() {
+				if port.hasWiphy {
+					for _, wiphy := range self.trackingWiphy {
+						if wiphy == port.wiphy {
+							return
+						}
 					}
+					self.trackingWiphy = append(self.trackingWiphy, port.wiphy)
 				}
-				self.trackingWiphy = append(self.trackingWiphy, port.wiphy)
-			}
+			}()
 			self.datapath.AddPort(port)
 			port.monitor <- true
 			if err := port.Up(); err != nil { // maybe ready for up
@@ -707,7 +705,6 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			port.monitor <- false
 		}
 		// for wiphy unplug
-		self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_WIPHY, syscall.NLM_F_DUMP, nil, nil); err != nil {
 			log.Print(err)
 		} else {
