@@ -635,7 +635,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			return
 		}
 		// query wiphy
-		self.hub.Request(syscall.RTM_GETLINK, 0, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
+		self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_INTERFACE, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
 			nlgo.Attr{
 				Header: syscall.NlAttr{
@@ -647,6 +647,9 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			log.Print(err)
 		} else {
 			for _, r := range res {
+				if r.Error != nil {
+					log.Print(r.Error)
+				}
 				if r.Family != "nl80211" {
 					continue
 				}
@@ -704,7 +707,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			port.monitor <- false
 		}
 		// for wiphy unplug
-		self.hub.Request(syscall.RTM_GETLINK, 0, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
+		self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_WIPHY, syscall.NLM_F_DUMP, nil, nil); err != nil {
 			log.Print(err)
 		} else {
