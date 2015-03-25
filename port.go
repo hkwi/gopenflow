@@ -247,13 +247,19 @@ func (self NamedPort) Stats() (PortStats, error) {
 
 func (self *NamedPort) Up() error {
 	if self.fd != -1 {
-		log.Print("programming error")
-		return nil
+		return nil // already up
+	}
+	if self.flags&syscall.IFF_UP == 0 {
+		return nil // not ready for up
 	}
 	if fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, 0); err != nil {
 		panic(err)
 	} else {
 		self.fd = fd
+	}
+	loopEnd := func() {
+		syscall.Close(self.fd)
+		self.fd = -1
 	}
 	if err := func() error {
 		if err := syscall.SetsockoptInt(self.fd, syscall.SOL_PACKET, syscall2.PACKET_AUXDATA, 1); err != nil {
@@ -280,18 +286,25 @@ func (self *NamedPort) Up() error {
 		}
 		return nil
 	}(); err != nil {
-		syscall.Close(self.fd)
-		self.fd = -1
+		loopEnd()
 		return err
 	}
 	go func() {
+		defer loopEnd()
 		buf := make([]byte, 32*1024)               // enough for jumbo frame
 		oob := make([]byte, syscall.CmsgSpace(20)) // msg_control, 20 = sizeof(auxdata)
 		for {
 			var frame Frame
 
 			if bufN, oobN, flags, _, err := syscall.Recvmsg(self.fd, buf, oob, syscall.MSG_TRUNC); err != nil {
-				log.Print(err)
+				if e, ok := err.(syscall.Errno); ok && e.Temporary() {
+					continue
+				} else {
+					log.Print(err)
+					break
+				}
+			} else if bufN == 0 {
+				break
 			} else if bufN > len(buf) {
 				log.Print("MSG_TRUNC")
 			} else if flags&syscall.MSG_CTRUNC != 0 {
@@ -517,15 +530,16 @@ func NewNamedPortManager(datapath Datapath) (*NamedPortManager, error) {
 	} else if hub, err := nlgo.NewRtHub(); err != nil {
 		ghub.Close()
 		return nil, err
-	} else if err := hub.Add(syscall.RTNLGRP_LINK, self); err != nil {
-		hub.Close()
-		ghub.Close()
-		return nil, err
 	} else {
 		self.hub = hub
 		self.ghub = ghub
-		return self, nil
+		if err := hub.Add(syscall.RTNLGRP_LINK, self); err != nil {
+			hub.Close()
+			ghub.Close()
+			return nil, err
+		}
 	}
+	return self, nil
 }
 
 func (self NamedPortManager) Close() error {
@@ -577,7 +591,7 @@ func (self *NamedPortManager) RemoveName(name string) {
 func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	mtype := ev.Message.Header.Type
 	if mtype != syscall.RTM_NEWLINK && mtype != syscall.RTM_DELLINK {
-		return
+		return // no concern
 	}
 
 	ifinfo := (*syscall.IfInfomsg)(unsafe.Pointer(&ev.Message.Data[0]))
@@ -600,64 +614,13 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			evPort.mac = t.([]byte)
 		}
 	}
-	if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_INTERFACE, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
-		nlgo.Attr{
-			Header: syscall.NlAttr{
-				Type: nlgo.NL80211_ATTR_IFINDEX,
-			},
-			Value: uint32(ifinfo.Index),
-		},
-	}); err != nil {
-		log.Print(err)
-	} else {
-		for _, r := range res {
-			if r.Family != "nl80211" {
-				continue
-			}
-			if attrs, err := nlgo.Nl80211Policy.Parse(r.Payload); err != nil {
-				log.Print(err)
-			} else {
-				evPort.hasWiphy = true
-				evPort.wiphy = attrs.Get(nlgo.NL80211_ATTR_WIPHY).(uint32)
-			}
-		}
-	}
-
-	tracking := func(port *NamedPort) bool {
-		for _, name := range self.trackingNames {
-			if port.name == name {
-				return true
-			}
-		}
-		for _, wiphy := range self.trackingWiphy {
-			if port.wiphy == wiphy {
-				return true
-			}
-		}
-		for idx, _ := range self.ports {
-			if idx == port.ifIndex {
-				return true
-			}
-		}
-		return false
-	}
 
 	switch mtype {
 	case syscall.RTM_NEWLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
-			triggerUp := false
-			if tracking(evPort) && evPort.flags&syscall.IFF_UP != 0 &&
-				(!tracking(port) || port.flags&syscall.IFF_UP == 0) {
-				triggerUp = true
-			}
-
 			port.flags = (port.flags &^ ifinfo.Change) | (ifinfo.Flags & ifinfo.Change)
 			if len(evPort.name) > 0 {
 				port.name = evPort.name
-			}
-			if evPort.hasWiphy {
-				port.hasWiphy = true
-				port.wiphy = evPort.wiphy
 			}
 			if evPort.mtu != 0 {
 				port.mtu = evPort.mtu
@@ -666,29 +629,72 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 				port.mac = evPort.mac
 			}
 			port.monitor <- true
-			if triggerUp {
-				if err := port.Up(); err != nil {
+			if err := port.Up(); err != nil { // maybe ready for up
+				log.Print(err)
+			}
+			return
+		}
+		// query wiphy
+		self.hub.Request(syscall.RTM_GETLINK, 0, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
+		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_INTERFACE, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
+			nlgo.Attr{
+				Header: syscall.NlAttr{
+					Type: nlgo.NL80211_ATTR_IFINDEX,
+				},
+				Value: uint32(ifinfo.Index),
+			},
+		}); err != nil {
+			log.Print(err)
+		} else {
+			for _, r := range res {
+				if r.Family != "nl80211" {
+					continue
+				}
+				if attrs, err := nlgo.Nl80211Policy.Parse(r.Payload); err != nil {
 					log.Print(err)
+				} else {
+					if evPort.ifIndex == attrs.Get(nlgo.NL80211_ATTR_IFINDEX).(uint32) {
+						evPort.hasWiphy = true
+						evPort.wiphy = attrs.Get(nlgo.NL80211_ATTR_WIPHY).(uint32)
+					}
 				}
 			}
-		} else if tracking(evPort) {
-			port = evPort
+		}
+
+		tracking := func(port *NamedPort) bool {
+			for _, name := range self.trackingNames {
+				if port.name == name {
+					return true
+				}
+			}
+			for _, wiphy := range self.trackingWiphy {
+				if port.wiphy == wiphy {
+					return true
+				}
+			}
+			for idx, _ := range self.ports {
+				if idx == port.ifIndex {
+					return true
+				}
+			}
+			return false
+		}
+		if tracking(evPort) {
+			port := evPort
 			port.ingress = make(chan Frame)
 			port.monitor = make(chan bool)
 			self.ports[uint32(ifinfo.Index)] = port
 			if port.hasWiphy {
-				func() {
-					for _, wiphy := range self.trackingWiphy {
-						if wiphy == port.wiphy {
-							return
-						}
+				for _, wiphy := range self.trackingWiphy {
+					if wiphy == port.wiphy {
+						return
 					}
-					self.trackingWiphy = append(self.trackingWiphy, port.wiphy)
-				}()
+				}
+				self.trackingWiphy = append(self.trackingWiphy, port.wiphy)
 			}
 			self.datapath.AddPort(port)
 			port.monitor <- true
-			if err := port.Up(); err != nil {
+			if err := port.Up(); err != nil { // maybe ready for up
 				log.Print(err)
 			}
 		}
@@ -697,6 +703,8 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			port.Down()
 			port.monitor <- false
 		}
+		// for wiphy unplug
+		self.hub.Request(syscall.RTM_GETLINK, 0, nil, nil) // to wait for nl80211 setup invoked by netdev_notifier.
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_WIPHY, syscall.NLM_F_DUMP, nil, nil); err != nil {
 			log.Print(err)
 		} else {
