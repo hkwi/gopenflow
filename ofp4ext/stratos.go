@@ -46,7 +46,7 @@ func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 					if p,ok := ret[key]; ok {
 						payload = p.(OxmMultiValue)
 					}
-					payload.Values = append(payload.Values, oxm[10:length])
+					payload.Values = append(payload.Values, oxm[10:10+length])
 					ret[key] = payload
 				} else {
 					if hdr.HasMask() {
@@ -86,16 +86,14 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				return nil
 			}
 
-			fetchIeList := func() (ret []Dot11InformationElement) {
-				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt {
-					ret := Dot11InformationElementList{}
-					if err := ret.UnmarshalBinary(m.Contents); err != nil {
-						return nil
-					} else {
-						return []Dot11InformationElement(ret)
+			fetchIeList := func() (ret []*layers.Dot11InformationElement) {
+				for _, layer := range data.Layers() {
+					switch l := layer.(type) {
+					case *layers.Dot11InformationElement:
+						ret = append(ret, l)
 					}
 				}
-				return nil
+				return
 			}
 
 			switch k.Type {
@@ -161,7 +159,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				}
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
 				for _, l := range fetchIeList() {
-					if l.Id == 0 {
+					if l.ID == 0 {
 						p := payload.(ofp4sw.OxmValueMask)
 						if len(p.Mask) > 0 {
 							return bytes.Equal(p.Value, bytes2.And(l.Info, p.Mask)), nil
@@ -190,7 +188,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				ies := fetchIeList()
 				for _, v := range payload.(OxmMultiValue).Values {
 					for _, ie := range ies {
-						if v[0] == ie.Id {
+						if v[0] == uint8(ie.ID) {
 							return true, nil
 						}
 					}
@@ -200,7 +198,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 				ies := fetchIeList()
 				for _, v := range payload.(OxmMultiValue).Values {
 					for _, ie := range ies {
-						if ie.Id == 221 && bytes.HasPrefix(ie.Info, v) {
+						if ie.ID == 221 && bytes.HasPrefix(ie.OUI, v) {
 							return true, nil
 						}
 					}
@@ -245,16 +243,14 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 				return nil
 			}
 
-			fetchIeList := func() (ret []Dot11InformationElement) {
-				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt {
-					ret := Dot11InformationElementList{}
-					if err := ret.UnmarshalBinary(m.Contents); err != nil {
-						return nil
-					} else {
-						return []Dot11InformationElement(ret)
+			fetchIeList := func() (ret []*layers.Dot11InformationElement) {
+				for _, layer := range data.Layers() {
+					switch l := layer.(type) {
+					case *layers.Dot11InformationElement:
+						ret = append(ret, l)
 					}
 				}
-				return nil
+				return
 			}
 
 			switch k.Type {
@@ -306,21 +302,14 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					}
 				}
 			case gopenflow.STROXM_BASIC_DOT11_SSID:
-				var ret []Dot11InformationElement
 				for _, l := range fetchIeList() {
-					if l.Id == 0 {
+					if l.ID == 0 {
 						if len(p.Mask) > 0 {
 							l.Info = bytes2.Or(p.Value, bytes2.And(l.Info, p.Mask))
 						} else {
 							l.Info = p.Value
 						}
 					}
-					ret = append(ret, l)
-				}
-				if buf, err := Dot11InformationElementList(ret).MarshalBinary(); err != nil {
-					return err
-				} else if m := fetch11(); m != nil {
-					m.Contents = buf
 				}
 			default:
 				return fmt.Errorf("unsupported oxm experimenter type")
