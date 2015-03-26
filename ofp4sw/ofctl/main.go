@@ -4,19 +4,19 @@ import (
 	"bufio"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	"io"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
-	"fmt"
-	"net"
-	"io"
 )
 
-var hello = string([]byte{ 4, ofp4.OFPT_HELLO, 0, 8, 255,0,0,1 })
-var barrier = string([]byte{ 4, ofp4.OFPT_BARRIER_REQUEST, 0, 8, 255,0,0,2 })
+var hello = string([]byte{4, ofp4.OFPT_HELLO, 0, 8, 255, 0, 0, 1})
+var barrier = string([]byte{4, ofp4.OFPT_BARRIER_REQUEST, 0, 8, 255, 0, 0, 2})
 
 func main() {
 	flag.Parse()
@@ -26,33 +26,33 @@ func main() {
 		p := strings.SplitN(args[0], ":", 2)
 		if c, err := net.Dial(p[0], p[1]); err != nil {
 			panic(err)
-		} else if n,err:=c.Write([]byte(hello)); n!=8 || err!=nil {
+		} else if n, err := c.Write([]byte(hello)); n != 8 || err != nil {
 			panic("hello send error")
-		} else if res:=readMsg(c); res.Type()!=ofp4.OFPT_HELLO {
+		} else if res := readMsg(c); res.Type() != ofp4.OFPT_HELLO {
 			panic("hello recv error")
 		} else {
 			return c
 		}
 	}
-	
+
 	switch args[1] {
 	case "dump-flows":
 		con := getConn()
-		
+
 		flowStatsReq := make([]byte, 32)
 		flowStatsReq[0] = ofp4.OFPTT_ALL
 		binary.BigEndian.PutUint32(flowStatsReq[4:], ofp4.OFPP_ANY)
 		binary.BigEndian.PutUint32(flowStatsReq[8:], ofp4.OFPG_ANY)
-		
+
 		mphdr := make([]byte, 16)
 		mphdr[0] = 4
 		mphdr[1] = ofp4.OFPT_MULTIPART_REQUEST
 		binary.BigEndian.PutUint16(mphdr[8:], ofp4.OFPMP_FLOW)
-		
+
 		msg := append(mphdr, append(flowStatsReq, ofp4.MakeMatch(nil)...)...)
 		binary.BigEndian.PutUint16(msg[2:], uint16(len(msg)))
 		con.Write(msg)
-		
+
 		for {
 			mp := readMsg(con)
 			if mp.Type() != ofp4.OFPT_MULTIPART_REPLY {
@@ -66,8 +66,8 @@ func main() {
 					seq.IdleTimeout(),
 					seq.HardTimeout(),
 					seq.Cookie(),
-					)
-				for _,oxm := range seq.Match().OxmFields().Iter() {
+				)
+				for _, oxm := range seq.Match().OxmFields().Iter() {
 					var ext string
 					p := oxm.Body()
 					switch oxm.Header().Type() {
@@ -89,7 +89,7 @@ func main() {
 					case ofp4.OXM_OF_ETH_DST:
 						if oxm.Header().HasMask() {
 							ext = fmt.Sprintf("eth_dst=%d.%d.%d.%d/%d.%d.%d.%d",
-								p[0], p[1], p[2], p[3], 
+								p[0], p[1], p[2], p[3],
 								p[4], p[5], p[6], p[7])
 						} else {
 							ext = fmt.Sprintf("eth_dst=%d.%d.%d.%d",
@@ -98,7 +98,7 @@ func main() {
 					case ofp4.OXM_OF_ETH_SRC:
 						if oxm.Header().HasMask() {
 							ext = fmt.Sprintf("eth_src=%x:%x:%x:%x:%x:%x/%x:%x:%x:%x:%x:%x",
-								p[0], p[1], p[2], p[3], p[4], p[5], 
+								p[0], p[1], p[2], p[3], p[4], p[5],
 								p[6], p[7], p[8], p[9], p[10], p[11])
 						} else {
 							ext = fmt.Sprintf("eth_src=%x:%x:%x:%x:%x:%x",
@@ -163,12 +163,12 @@ func main() {
 							case STRATOS_EXPERIMENTER_ID:
 								switch oxm.Header().Field() {
 								case STRATOS_OXM_FIELD_BASIC:
-									switch binary.BigEndian.Uint16(oxm[8:]){
+									switch binary.BigEndian.Uint16(oxm[8:]) {
 									case STROXM_BASIC_DOT11:
 										ext = fmt.Sprintf("dot11=%d", oxm[10])
 									case STROXM_BASIC_DOT11_ADDR1:
 										if oxm.Header().HasMask() {
-											h := len(oxm[10:])/2
+											h := len(oxm[10:]) / 2
 											ext = fmt.Sprintf("addr1=%s/%s",
 												mac2str(oxm[10:10+h]),
 												mac2str(oxm[10+h:]))
@@ -178,7 +178,7 @@ func main() {
 										}
 									case STROXM_BASIC_DOT11_ADDR2:
 										if oxm.Header().HasMask() {
-											h := len(oxm[10:])/2
+											h := len(oxm[10:]) / 2
 											ext = fmt.Sprintf("addr2=%s/%s",
 												mac2str(oxm[10:10+h]),
 												mac2str(oxm[10+h:]))
@@ -186,6 +186,28 @@ func main() {
 											ext = fmt.Sprintf("addr2=%s",
 												mac2str(oxm[10:]))
 										}
+									case STROXM_BASIC_DOT11_ADDR3:
+										if oxm.Header().HasMask() {
+											h := len(oxm[10:]) / 2
+											ext = fmt.Sprintf("addr3=%s/%s",
+												mac2str(oxm[10:10+h]),
+												mac2str(oxm[10+h:]))
+										} else {
+											ext = fmt.Sprintf("addr3=%s",
+												mac2str(oxm[10:]))
+										}
+									case STROXM_BASIC_DOT11_ADDR4:
+										if oxm.Header().HasMask() {
+											h := len(oxm[10:]) / 2
+											ext = fmt.Sprintf("addr4=%s/%s",
+												mac2str(oxm[10:10+h]),
+												mac2str(oxm[10+h:]))
+										} else {
+											ext = fmt.Sprintf("addr4=%s",
+												mac2str(oxm[10:]))
+										}
+									case STROXM_BASIC_DOT11_TAG:
+										ext = fmt.Sprintf("dot11_tag=%d", oxm[10])
 									}
 								}
 							}
@@ -195,7 +217,7 @@ func main() {
 						base += "," + ext
 					}
 				}
-				for _,ins := range seq.Instructions() {
+				for _, ins := range seq.Instructions() {
 					switch ins.Type() {
 					case ofp4.OFPIT_GOTO_TABLE:
 						base += fmt.Sprintf(",@goto=%d",
@@ -206,14 +228,14 @@ func main() {
 							ins.Metadata(), ins.MetadataMask())
 					case ofp4.OFPIT_WRITE_ACTIONS:
 						base += fmt.Sprintf(",@write")
-						if ext,err := actionB2W(ofp4.InstructionActions(ins).Actions()); err!= nil {
+						if ext, err := actionB2W(ofp4.InstructionActions(ins).Actions()); err != nil {
 							panic(err)
-						}else if len(ext) > 0 {
+						} else if len(ext) > 0 {
 							base += "," + ext
 						}
 					case ofp4.OFPIT_APPLY_ACTIONS:
 						base += fmt.Sprintf(",@apply")
-						if ext,err := actionB2W(ofp4.InstructionActions(ins).Actions()); err!=nil {
+						if ext, err := actionB2W(ofp4.InstructionActions(ins).Actions()); err != nil {
 							panic(err)
 						} else if len(ext) > 0 {
 							base += "," + ext
@@ -224,12 +246,12 @@ func main() {
 						base += fmt.Sprintf(",@meter")
 					}
 				}
-				
+
 				log.Print(base)
 				seq = seq[seq.Length():]
 			}
-			
-			if binary.BigEndian.Uint16(mphdr[10:]) & ofp4.OFPMPF_REPLY_MORE == 0 {
+
+			if binary.BigEndian.Uint16(mphdr[10:])&ofp4.OFPMPF_REPLY_MORE == 0 {
 				break
 			}
 		}
@@ -238,9 +260,9 @@ func main() {
 			panic(err)
 		} else {
 			con := getConn()
-			
+
 			con.Write(msg)
-			
+
 			con.Write([]byte(barrier))
 			if readMsg(con).Type() == ofp4.OFPT_ERROR {
 				log.Print("error")
@@ -255,11 +277,11 @@ func main() {
 			panic(err)
 		} else {
 			con := getConn()
-			
+
 			con.Write(msg)
-			
+
 			con.Write([]byte(barrier))
-			
+
 			readMsg(con)
 		}
 	}
@@ -267,7 +289,7 @@ func main() {
 
 func readMsg(con io.Reader) ofp4.Header {
 	buf := make([]byte, 8)
-	if n,err:=con.Read(buf); err!=nil || n!=8 {
+	if n, err := con.Read(buf); err != nil || n != 8 {
 		panic("ofp header read error")
 	}
 	hdr := ofp4.Header(buf)
@@ -321,12 +343,12 @@ const (
 )
 
 type FlowMod struct {
-	Table uint8
-	OutPort uint32
+	Table    uint8
+	OutPort  uint32
 	OutGroup uint32
 }
 
-func flow_mod(arg string, cmd uint8) ([]byte,error) {
+func flow_mod(arg string, cmd uint8) ([]byte, error) {
 	var table uint8
 	var outPort, outGroup uint32
 	if cmd != ofp4.OFPFC_ADD {
@@ -434,13 +456,13 @@ func flow_mod(arg string, cmd uint8) ([]byte,error) {
 					}
 				default:
 					if f := BasicW2M[a[0]]; f != nil {
-						if buf,err := f(a[1]); err != nil {
+						if buf, err := f(a[1]); err != nil {
 							return nil, err
 						} else {
 							match = append(match, buf...)
 						}
-					}else if f:= StratosW2M[a[0]]; f!= nil {
-						if buf,err := f(a[1]); err != nil {
+					} else if f := StratosW2M[a[0]]; f != nil {
+						if buf, err := f(a[1]); err != nil {
 							return nil, err
 						} else {
 							match = append(match, buf...)
@@ -484,7 +506,7 @@ func flow_mod(arg string, cmd uint8) ([]byte,error) {
 	}
 	m := ofp4.MakeMatch(match)
 	var ins []byte
-	for _,v := range instructions {
+	for _, v := range instructions {
 		ins = append(ins, v...)
 	}
 	buf := make([]byte, 48+len(m)+len(ins))

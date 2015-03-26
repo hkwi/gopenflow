@@ -1,20 +1,20 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"github.com/hkwi/gopenflow/ofp4"
 	"strconv"
 	"strings"
-	"encoding/binary"
-	"github.com/hkwi/gopenflow/ofp4"
 )
 
 func buildStratos(field uint8, eType uint16, vm ValueMask) []byte {
-	length := len(vm.Value)+len(vm.Mask)
+	length := len(vm.Value) + len(vm.Mask)
 	buf := make([]byte, 10+length)
-	
+
 	hdr := ofp4.OxmHeader(ofp4.OFPXMC_EXPERIMENTER<<ofp4.OXM_CLASS_SHIFT | uint32(field)<<ofp4.OXM_FIELD_SHIFT)
-	hdr.SetLength(6+length)
+	hdr.SetLength(6 + length)
 	if len(vm.Mask) > 0 {
 		hdr.SetMask(true)
 	}
@@ -60,14 +60,22 @@ var StratosW2M = map[string]func(string) ([]byte, error){
 	"ssid":            strUnsupported,
 	"action_category": strUnsupported,
 	"public_action":   strUnsupported,
-	"dot11_tag":       strUnsupported,
+	"dot11_tag": func(arg string) ([]byte, error) {
+		if n, err := strconv.ParseUint(arg, 0, 8); err != nil {
+			return nil, err
+		} else {
+			return buildStratos(STRATOS_OXM_FIELD_BASIC, STROXM_BASIC_DOT11_TAG, ValueMask{
+				Value: []byte{uint8(n)},
+			}), nil
+		}
+	},
 }
 
 func strUnsupported(arg string) ([]byte, error) {
 	return nil, fmt.Errorf("unspported")
 }
 
-func decodeMac(eType uint16) func(string)([]byte, error) {
+func decodeMac(eType uint16) func(string) ([]byte, error) {
 	mac2bytes := func(arg string) ([]byte, error) {
 		buf := make([]byte, 6)
 		mac := strings.SplitN(arg, ":", 6)
@@ -83,9 +91,9 @@ func decodeMac(eType uint16) func(string)([]byte, error) {
 		}
 		return buf, nil
 	}
-	return func(arg string)([]byte, error) {
+	return func(arg string) ([]byte, error) {
 		pair := strings.SplitN(arg, "/", 2)
-		
+
 		vm := ValueMask{}
 		if v, err := mac2bytes(pair[0]); err != nil {
 			return nil, err
@@ -102,8 +110,6 @@ func decodeMac(eType uint16) func(string)([]byte, error) {
 		return buildStratos(STRATOS_OXM_FIELD_BASIC, eType, vm), nil
 	}
 }
-
-
 
 //////////////////////////////////
 

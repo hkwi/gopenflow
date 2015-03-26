@@ -1,17 +1,17 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"strconv"
 	"strings"
-	"encoding/binary"
 )
 
 func buildBasic(field uint32, vm ValueMask) []byte {
-	length := len(vm.Value)+len(vm.Mask)
-	
-	hdr:=ofp4.OxmHeader(field)
+	length := len(vm.Value) + len(vm.Mask)
+
+	hdr := ofp4.OxmHeader(field)
 	hdr.SetLength(length)
 	if len(vm.Mask) > 0 {
 		hdr.SetMask(true)
@@ -23,7 +23,7 @@ func buildBasic(field uint32, vm ValueMask) []byte {
 	return buf
 }
 
-var BasicW2M = map[string]func(string) ([]byte,error) {
+var BasicW2M = map[string]func(string) ([]byte, error){
 	"in_port": func(arg string) ([]byte, error) {
 		vm := ValueMask{}
 		if v, ok := portNames[strings.ToUpper(arg)]; ok {
@@ -35,16 +35,16 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 		}
 		return buildBasic(ofp4.OXM_OF_IN_PORT, vm), nil
 	},
-	"in_phy_port": func(arg string) ([]byte,error) {
+	"in_phy_port": func(arg string) ([]byte, error) {
 		if v, err := strconv.ParseUint(arg, 0, 32); err != nil {
-			return nil,err
+			return nil, err
 		} else {
 			return buildBasic(ofp4.OXM_OF_IN_PHY_PORT, ValueMask{
 				Value: intBytes(uint32(v)),
 			}), nil
 		}
 	},
-	"metadata": func(arg string) ([]byte,error) {
+	"metadata": func(arg string) ([]byte, error) {
 		vm := ValueMask{}
 		pair := strings.SplitN(arg, "/", 2)
 		if v, err := strconv.ParseUint(pair[0], 0, 64); err != nil {
@@ -64,7 +64,7 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 	},
 	"eth_dst": gen_mac_oxm(ofp4.OXM_OF_ETH_DST),
 	"eth_src": gen_mac_oxm(ofp4.OXM_OF_ETH_SRC),
-	"eth_type": func(arg string) ([]byte,error) {
+	"eth_type": func(arg string) ([]byte, error) {
 		if v, err := strconv.ParseUint(arg, 0, 16); err != nil {
 			return nil, err
 		} else {
@@ -73,7 +73,7 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 			}), nil
 		}
 	},
-	"vlan_vid": func(arg string) ([]byte,error) {
+	"vlan_vid": func(arg string) ([]byte, error) {
 		pair := strings.SplitN(arg, "/", 2)
 		vm := ValueMask{}
 		if v, err := strconv.ParseUint(pair[0], 0, 16); err != nil {
@@ -83,14 +83,14 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 		}
 		if len(pair) == 2 {
 			if v, err := strconv.ParseUint(pair[1], 0, 16); err != nil {
-				return nil,err
+				return nil, err
 			} else {
 				vm.Mask = intBytes(uint16(v))
 			}
 		}
 		return buildBasic(ofp4.OXM_OF_VLAN_VID, vm), nil
 	},
-	"vlan_pcp": func(arg string) ([]byte,error) {
+	"vlan_pcp": func(arg string) ([]byte, error) {
 		if v, err := strconv.ParseUint(arg, 0, 8); err != nil {
 			return nil, err
 		} else {
@@ -110,7 +110,7 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 			return nil, fmt.Errorf("ip_dscp 0-63")
 		}
 	},
-	"ip_ecn": func(arg string) ([]byte,error) {
+	"ip_ecn": func(arg string) ([]byte, error) {
 		if v, err := strconv.ParseUint(arg, 0, 8); err != nil {
 			return nil, err
 		} else if v < 4 {
@@ -121,9 +121,9 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 			return nil, fmt.Errorf("nw_ecn(ip_ecn) 0-3")
 		}
 	},
-	"ip_proto": func(arg string) ([]byte,error) {
+	"ip_proto": func(arg string) ([]byte, error) {
 		if v, err := strconv.ParseUint(arg, 0, 8); err != nil {
-			return nil,err
+			return nil, err
 		} else {
 			return buildBasic(ofp4.OXM_OF_IP_PROTO, ValueMask{
 				Value: intBytes(uint8(v)),
@@ -160,11 +160,11 @@ var BasicW2M = map[string]func(string) ([]byte,error) {
 	"ipv6_exthdr":    unsupported,
 }
 
-func unsupported(arg string) ([]byte,error) {
-	return nil,fmt.Errorf("unsupported")
+func unsupported(arg string) ([]byte, error) {
+	return nil, fmt.Errorf("unsupported")
 }
 
-func gen_mac_oxm(field uint32) func(string) ([]byte,error) {
+func gen_mac_oxm(field uint32) func(string) ([]byte, error) {
 	mac2bytes := func(arg string) ([]byte, error) {
 		buf := make([]byte, 6)
 		for i, c := range strings.SplitN(arg, ":", 6) {
@@ -176,18 +176,18 @@ func gen_mac_oxm(field uint32) func(string) ([]byte,error) {
 		}
 		return buf, nil
 	}
-	return func(arg string) ([]byte,error) {
+	return func(arg string) ([]byte, error) {
 		pair := strings.SplitN(arg, "/", 2)
 
 		vm := ValueMask{}
 		if v, err := mac2bytes(pair[0]); err != nil {
-			return nil,err
+			return nil, err
 		} else {
 			vm.Value = v
 		}
 		if len(pair) == 2 {
 			if v, err := mac2bytes(pair[1]); err != nil {
-				return nil,err
+				return nil, err
 			} else {
 				vm.Mask = v
 			}
@@ -196,7 +196,7 @@ func gen_mac_oxm(field uint32) func(string) ([]byte,error) {
 	}
 }
 
-func gen_v4_oxm(field uint32) func(string) ([]byte,error) {
+func gen_v4_oxm(field uint32) func(string) ([]byte, error) {
 	dot2bytes := func(arg string) ([]byte, error) {
 		buf := make([]byte, 4)
 		comp := strings.SplitN(arg, ".", 4)
@@ -212,12 +212,12 @@ func gen_v4_oxm(field uint32) func(string) ([]byte,error) {
 		}
 		return buf, nil
 	}
-	return func(arg string) ([]byte,error) {
+	return func(arg string) ([]byte, error) {
 		pair := strings.SplitN(arg, "/", 2)
 		vm := ValueMask{}
 
 		if v, err := dot2bytes(pair[0]); err != nil {
-			return nil,err
+			return nil, err
 		} else {
 			vm.Value = v
 		}
@@ -225,19 +225,19 @@ func gen_v4_oxm(field uint32) func(string) ([]byte,error) {
 			if v, err := dot2bytes(pair[1]); err == nil {
 				vm.Mask = v
 			} else if n, err := strconv.ParseUint(pair[1], 10, 8); err != nil {
-				return nil,err
+				return nil, err
 			} else if n <= 32 {
 				vm.Mask = intBytes(uint32(0xffffffff << uint8(32-n)))
 			} else {
-				return nil,fmt.Errorf("invalid mask %s", arg)
+				return nil, fmt.Errorf("invalid mask %s", arg)
 			}
 		}
 		return buildBasic(field, vm), nil
 	}
 }
 
-func portFunc(field uint32) func(string) ([]byte,error) {
-	return func(arg string) ([]byte,error) {
+func portFunc(field uint32) func(string) ([]byte, error) {
+	return func(arg string) ([]byte, error) {
 		vm := ValueMask{}
 		pair := strings.SplitN(arg, "/", 2)
 		if v, err := strconv.ParseUint(pair[0], 0, 16); err != nil {
@@ -248,7 +248,7 @@ func portFunc(field uint32) func(string) ([]byte,error) {
 
 		if len(pair) == 2 {
 			if v, err := strconv.ParseUint(pair[0], 0, 16); err != nil {
-				return nil,err
+				return nil, err
 			} else {
 				vm.Mask = intBytes(uint16(v))
 			}
@@ -259,5 +259,5 @@ func portFunc(field uint32) func(string) ([]byte,error) {
 
 func mac2str(mac []byte) string {
 	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
-		mac[0],mac[1],mac[2],mac[3],mac[4],mac[5])
+		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
 }

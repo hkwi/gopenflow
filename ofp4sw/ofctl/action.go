@@ -9,11 +9,11 @@ import (
 
 func actionB2W(action ofp4.ActionHeader) (string, error) {
 	var ret []string
-	for _,act := range action.Iter() {
+	for _, act := range action.Iter() {
 		var ext string
 		switch act.Type() {
 		case ofp4.OFPAT_OUTPUT:
-			a:=ofp4.ActionOutput(act)
+			a := ofp4.ActionOutput(act)
 			switch a.Port() {
 			case ofp4.OFPP_CONTROLLER:
 				ext = "output=CONTROLLER"
