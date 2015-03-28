@@ -1,10 +1,10 @@
 package ofp4sw
 
 import (
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"fmt"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
@@ -617,7 +617,7 @@ func (self *Frame) getFrozen() (gopenflow.Frame, error) {
 		sorter = append(sorter, string(k.Bytes(v)))
 	}
 	sort.Strings(sorter)
-	for _,s := range sorter {
+	for _, s := range sorter {
 		oob = append(oob, []byte(s)...)
 	}
 	return gopenflow.Frame{

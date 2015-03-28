@@ -2,10 +2,10 @@ package ofp4sw
 
 import (
 	"bytes"
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"fmt"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow/ofp4"
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
 	"net"

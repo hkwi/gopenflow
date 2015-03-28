@@ -1,9 +1,9 @@
 package ofp4sw
 
 import (
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
 	"errors"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow/ofp4"
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
 	"log"

@@ -3,18 +3,18 @@ package main
 import (
 	"encoding/binary"
 	"flag"
-	"github.com/hkwi/gopenflow/ofp4"
-	"log"
-	"strings"
 	"fmt"
-	"net"
-	"io"
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/hkwi/gopenflow/ofp4"
 	_ "github.com/hkwi/suppl/gopacket/layers"
+	"io"
+	"log"
+	"net"
+	"strings"
 )
 
-var hello = string([]byte{ 4, ofp4.OFPT_HELLO, 0, 8, 255,0,0,1 })
+var hello = string([]byte{4, ofp4.OFPT_HELLO, 0, 8, 255, 0, 0, 1})
 
 func main() {
 	flag.Parse()
@@ -24,27 +24,27 @@ func main() {
 		p := strings.SplitN(args[0], ":", 2)
 		if c, err := net.Dial(p[0], p[1]); err != nil {
 			panic(err)
-		} else if n,err:=c.Write([]byte(hello)); n!=8 || err!=nil {
+		} else if n, err := c.Write([]byte(hello)); n != 8 || err != nil {
 			panic("hello send error")
-		} else if res:=readMsg(c); res.Type()!=ofp4.OFPT_HELLO {
+		} else if res := readMsg(c); res.Type() != ofp4.OFPT_HELLO {
 			panic("hello recv error")
 		} else {
 			return c
 		}
 	}
-	
+
 	con := getConn()
 	for {
 		msg := readMsg(con)
-		switch msg.Type(){
+		switch msg.Type() {
 		case ofp4.OFPT_PACKET_IN:
 			pin := ofp4.PacketIn(msg)
-			
+
 			base := fmt.Sprintf("table=%d,cookie=%d",
 				pin.TableId(),
 				pin.Cookie(),
-				)
-			for _,oxm := range pin.Match().OxmFields().Iter() {
+			)
+			for _, oxm := range pin.Match().OxmFields().Iter() {
 				var ext string
 				p := oxm.Body()
 				switch oxm.Header().Type() {
@@ -66,7 +66,7 @@ func main() {
 				case ofp4.OXM_OF_ETH_DST:
 					if oxm.Header().HasMask() {
 						ext = fmt.Sprintf("eth_dst=%d.%d.%d.%d/%d.%d.%d.%d",
-							p[0], p[1], p[2], p[3], 
+							p[0], p[1], p[2], p[3],
 							p[4], p[5], p[6], p[7])
 					} else {
 						ext = fmt.Sprintf("eth_dst=%d.%d.%d.%d",
@@ -75,7 +75,7 @@ func main() {
 				case ofp4.OXM_OF_ETH_SRC:
 					if oxm.Header().HasMask() {
 						ext = fmt.Sprintf("eth_src=%x:%x:%x:%x:%x:%x/%x:%x:%x:%x:%x:%x",
-							p[0], p[1], p[2], p[3], p[4], p[5], 
+							p[0], p[1], p[2], p[3], p[4], p[5],
 							p[6], p[7], p[8], p[9], p[10], p[11])
 					} else {
 						ext = fmt.Sprintf("eth_src=%x:%x:%x:%x:%x:%x",
@@ -140,12 +140,12 @@ func main() {
 						case STRATOS_EXPERIMENTER_ID:
 							switch oxm.Header().Field() {
 							case STRATOS_OXM_FIELD_BASIC:
-								switch binary.BigEndian.Uint16(oxm[8:]){
+								switch binary.BigEndian.Uint16(oxm[8:]) {
 								case STROXM_BASIC_DOT11:
 									ext = fmt.Sprintf("dot11=%d", oxm[10])
 								case STROXM_BASIC_DOT11_ADDR1:
 									if oxm.Header().HasMask() {
-										h := len(oxm[10:])/2
+										h := len(oxm[10:]) / 2
 										ext = fmt.Sprintf("addr1=%s/%s",
 											mac2str(oxm[10:10+h]),
 											mac2str(oxm[10+h:]))
@@ -155,7 +155,7 @@ func main() {
 									}
 								}
 							case STRATOS_OXM_FIELD_RADIOTAP:
-								switch binary.BigEndian.Uint16(oxm[8:]){
+								switch binary.BigEndian.Uint16(oxm[8:]) {
 								case STROXM_RADIOTAP_TSFT:
 									ext = fmt.Sprintf("radiotap_tsft=%d",
 										binary.BigEndian.Uint64(oxm[10:]))
@@ -208,7 +208,7 @@ func main() {
 
 func readMsg(con io.Reader) ofp4.Header {
 	buf := make([]byte, 8)
-	if n,err:=con.Read(buf); err!=nil || n!=8 {
+	if n, err := con.Read(buf); err != nil || n != 8 {
 		panic("ofp header read error")
 	}
 	hdr := ofp4.Header(buf)
@@ -262,8 +262,8 @@ const (
 )
 
 type FlowMod struct {
-	Table uint8
-	OutPort uint32
+	Table    uint8
+	OutPort  uint32
 	OutGroup uint32
 }
 
@@ -281,5 +281,5 @@ var portNames = map[string]uint32{
 
 func mac2str(mac []byte) string {
 	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
-		mac[0],mac[1],mac[2],mac[3],mac[4],mac[5])
+		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
 }

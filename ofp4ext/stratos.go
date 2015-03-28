@@ -2,9 +2,9 @@ package ofp4ext
 
 import (
 	"bytes"
-	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"fmt"
+	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	"github.com/hkwi/gopenflow/ofp4sw"
@@ -43,7 +43,7 @@ func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 				length := hdr.Length() - 6
 				if useOxmMultiValue(key) {
 					payload := OxmMultiValue{}
-					if p,ok := ret[key]; ok {
+					if p, ok := ret[key]; ok {
 						payload = p.(OxmMultiValue)
 					}
 					payload.Values = append(payload.Values, oxm[10:10+length])
@@ -383,7 +383,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 					Value: []byte{0x88, 0xbb},
 					Mask:  []byte{0xff, 0xff},
 				}
-				if v,ok := fields[eth]; ok {
+				if v, ok := fields[eth]; ok {
 					if err := ethtype.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
 						return err
 					}
@@ -404,7 +404,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 						Value: []byte{0x00, 0x00},
 						Mask:  []byte{0x0F, 0x00},
 					}
-					if v,ok := fields[keyFrameCtrl]; ok {
+					if v, ok := fields[keyFrameCtrl]; ok {
 						if err := payload.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
 							return err
 						}
@@ -415,7 +415,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 						Value: []byte{0xC0, 0x00},
 						Mask:  []byte{0xCF, 0x00},
 					}
-					if v,ok := fields[keyFrameCtrl]; ok {
+					if v, ok := fields[keyFrameCtrl]; ok {
 						if err := payload.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
 							return err
 						}
@@ -426,13 +426,13 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 						Value: []byte{0xC0, 0x00},
 						Mask:  []byte{0xCF, 0x00},
 					}
-					if v,ok := fields[keyFrameCtrl]; ok {
+					if v, ok := fields[keyFrameCtrl]; ok {
 						if err := payload.Merge(v.(ofp4sw.OxmValueMask)); err != nil {
 							return err
 						}
 					}
 					fields[keyFrameCtrl] = payload
-					
+
 					fields[OxmKeyStratos{
 						Type:  gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY,
 						Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
@@ -441,7 +441,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 					}
 				case gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
 					if missing := func() bool {
-						if v,ok := fields[keyTag];ok {
+						if v, ok := fields[keyTag]; ok {
 							for _, v := range v.(OxmMultiValue).Values {
 								if v[0] == 221 {
 									return false

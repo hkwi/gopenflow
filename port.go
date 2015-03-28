@@ -4,10 +4,10 @@ package gopenflow
 
 import (
 	"bytes"
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"fmt"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/hkwi/nlgo"
 	syscall2 "github.com/hkwi/suppl/syscall"
 	"log"

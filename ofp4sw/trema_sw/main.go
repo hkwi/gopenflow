@@ -8,8 +8,8 @@ package main
 import (
 	"flag"
 	"github.com/hkwi/gopenflow"
-	"github.com/hkwi/gopenflow/ofp4sw"
 	"github.com/hkwi/gopenflow/ofp4ext"
+	"github.com/hkwi/gopenflow/ofp4sw"
 	"io"
 	"log"
 	"net"

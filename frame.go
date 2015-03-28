@@ -3,10 +3,10 @@
 package gopenflow
 
 import (
-	"code.google.com/p/gopacket"
-	"code.google.com/p/gopacket/layers"
 	"encoding/binary"
 	"fmt"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/hkwi/nlgo"
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
 )
