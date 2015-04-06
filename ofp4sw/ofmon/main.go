@@ -158,33 +158,33 @@ func main() {
 								switch binary.BigEndian.Uint16(oxm[8:]) {
 								case STROXM_RADIOTAP_TSFT:
 									ext = fmt.Sprintf("radiotap_tsft=%d",
-										binary.BigEndian.Uint64(oxm[10:]))
+										binary.LittleEndian.Uint64(oxm[10:]))
 								case STROXM_RADIOTAP_FLAGS:
 									ext = fmt.Sprintf("radiotap_flags=%x", oxm[10])
 								case STROXM_RADIOTAP_RATE:
 									ext = fmt.Sprintf("radiotap_rate=%x", oxm[10])
 								case STROXM_RADIOTAP_CHANNEL:
 									ext = fmt.Sprintf("radiotap_channel=%d/%x",
-										binary.BigEndian.Uint16(oxm[10:]),
-										oxm[12])
+										binary.LittleEndian.Uint16(oxm[10:]),
+										binary.LittleEndian.Uint16(oxm[12:]))
 								case STROXM_RADIOTAP_FHSS:
 									ext = fmt.Sprintf("radiotap_fhss=%d/%x",
-										binary.BigEndian.Uint16(oxm[10:]))
+										binary.LittleEndian.Uint16(oxm[10:]))
 								case STROXM_RADIOTAP_DBM_ANTSIGNAL:
-									ext = fmt.Sprintf("radiotap_dbm_antsignal=%d", oxm[10])
+									ext = fmt.Sprintf("radiotap_dbm_antsignal=%d", int8(oxm[10]))
 								case STROXM_RADIOTAP_DBM_ANTNOISE:
-									ext = fmt.Sprintf("radiotap_dbm_antnoise=%d", oxm[10])
+									ext = fmt.Sprintf("radiotap_dbm_antnoise=%d", int8(oxm[10]))
 								case STROXM_RADIOTAP_LOCK_QUALITY:
 									ext = fmt.Sprintf("radiotap_lock_quality=%d",
-										binary.BigEndian.Uint16(oxm[10:]))
+										binary.LittleEndian.Uint16(oxm[10:]))
 								case STROXM_RADIOTAP_TX_ATTENUATION:
 									ext = fmt.Sprintf("radiotap_tx_attenuation=%d",
-										binary.BigEndian.Uint16(oxm[10:]))
+										binary.LittleEndian.Uint16(oxm[10:]))
 								case STROXM_RADIOTAP_DB_TX_ATTENUATION:
 									ext = fmt.Sprintf("radiotap_db_tx_attenuation=%d",
-										binary.BigEndian.Uint64(oxm[10:]))
+										binary.LittleEndian.Uint16(oxm[10:]))
 								case STROXM_RADIOTAP_DBM_TX_POWER:
-									ext = fmt.Sprintf("radiotap_dbm_tx_power=%d", oxm[10])
+									ext = fmt.Sprintf("radiotap_dbm_tx_power=%d", int8(oxm[10]))
 								case STROXM_RADIOTAP_ANTENNA:
 									ext = fmt.Sprintf("radiotap_antenna=%d", oxm[10])
 								case STROXM_RADIOTAP_DB_ANTSIGNAL:

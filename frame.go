@@ -114,9 +114,9 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 		radiotapAdd(STROXM_RADIOTAP_RATE, []byte{uint8(rt.Rate)})
 	}
 	if rt.Present.Channel() {
-		buf := make([]byte, 3)
+		buf := make([]byte, 4)
 		binary.LittleEndian.PutUint16(buf, uint16(rt.ChannelFrequency))
-		buf[2] = uint8(rt.ChannelFlags)
+		binary.LittleEndian.PutUint16(buf[2:], uint16(rt.ChannelFlags))
 		radiotapAdd(STROXM_RADIOTAP_CHANNEL, buf)
 	}
 	if rt.Present.FHSS() {
@@ -142,7 +142,7 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 	}
 	if rt.Present.DBTxAttenuation() {
 		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, rt.TSFT)
+		binary.LittleEndian.PutUint16(buf, rt.DBTxAttenuation)
 		radiotapAdd(STROXM_RADIOTAP_DB_TX_ATTENUATION, buf)
 	}
 	if rt.Present.DBMTxPower() {
