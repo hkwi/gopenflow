@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	"io"
 	"log"
@@ -22,13 +23,17 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 
-	getConn := func() io.ReadWriter {
-		p := strings.SplitN(args[0], ":", 2)
+	getConn := func(spec string) io.ReadWriter {
+		p := strings.SplitN(spec, ":", 2)
 		if c, err := net.Dial(p[0], p[1]); err != nil {
 			panic(err)
 		} else if n, err := c.Write([]byte(hello)); n != 8 || err != nil {
 			panic("hello send error")
-		} else if res := readMsg(c); res.Type() != ofp4.OFPT_HELLO {
+		} else if res, err := gopenflow.ReadMessage(c); err != nil {
+			panic(err)
+		} else if res[0] != 4 {
+			panic("openflow version error")
+		} else if ofp4.Header(res).Type() != ofp4.OFPT_HELLO {
 			panic("hello recv error")
 		} else {
 			return c
@@ -37,7 +42,7 @@ func main() {
 
 	switch args[1] {
 	case "dump-flows":
-		con := getConn()
+		con := getConn(args[0])
 
 		flowStatsReq := make([]byte, 32)
 		flowStatsReq[0] = ofp4.OFPTT_ALL
@@ -54,11 +59,14 @@ func main() {
 		con.Write(msg)
 
 		for {
-			mp := readMsg(con)
-			if mp.Type() != ofp4.OFPT_MULTIPART_REPLY {
-				panic("mp error")
+			var seq ofp4.FlowStats
+			if mp, err := gopenflow.ReadMessage(con); err != nil {
+				panic(err)
+			} else if ofp4.Header(mp).Type() != ofp4.OFPT_MULTIPART_REPLY {
+				panic("multipart error")
+			} else {
+				seq = ofp4.FlowStats(ofp4.MultipartReply(mp).Body())
 			}
-			seq := ofp4.FlowStats(ofp4.MultipartReply(mp).Body())
 			for len(seq) >= 56 {
 				base := fmt.Sprintf("table=%d,priority=%d,idle_timeout=%d,hard_timeout=%d,cookie=%d",
 					seq.TableId(),
@@ -259,12 +267,14 @@ func main() {
 		if msg, err := flow_mod(args[2], ofp4.OFPFC_ADD); err != nil {
 			panic(err)
 		} else {
-			con := getConn()
+			con := getConn(args[0])
 
 			con.Write(msg)
 
 			con.Write([]byte(barrier))
-			if readMsg(con).Type() == ofp4.OFPT_ERROR {
+			if res, err := gopenflow.ReadMessage(con); err != nil {
+				panic(err)
+			} else if ofp4.Header(res).Type() == ofp4.OFPT_ERROR {
 				log.Print("error")
 			}
 		}
@@ -276,34 +286,22 @@ func main() {
 		if msg, err := flow_mod(filter, ofp4.OFPFC_DELETE); err != nil {
 			panic(err)
 		} else {
-			con := getConn()
+			con := getConn(args[0])
 
 			con.Write(msg)
 
 			con.Write([]byte(barrier))
-
-			readMsg(con)
+			for {
+				if res, err := gopenflow.ReadMessage(con); err != nil {
+					panic(err)
+				} else if ofp4.Header(res).Type() == ofp4.OFPT_BARRIER_REPLY {
+					break
+				} else {
+					log.Print(res)
+				}
+			}
 		}
 	}
-}
-
-func readMsg(con io.Reader) ofp4.Header {
-	buf := make([]byte, 8)
-	if n, err := con.Read(buf); err != nil || n != 8 {
-		panic("ofp header read error")
-	}
-	hdr := ofp4.Header(buf)
-	if hdr.Version() != 4 {
-		panic("ofp4 version error")
-	}
-	length := hdr.Length()
-	if length != 8 {
-		ext := make([]byte, length)
-		copy(ext, buf)
-		con.Read(ext[8:])
-		buf = ext
-	}
-	return ofp4.Header(buf)
 }
 
 type ValueMask struct {
