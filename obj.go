@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
 	"io"
+	"syscall"
 )
 
 func Parse(data []byte) (encoding.BinaryMarshaler, error) {
@@ -49,7 +50,11 @@ func ReadMessage(source io.Reader) ([]byte, error) {
 		offset := 8
 		for offset < length {
 			if n, err := source.Read(buf[offset:]); err != nil {
-				return nil, err
+				if e, ok := err.(syscall.Errno); ok && e.Temporary() {
+					// retry
+				} else {
+					return nil, err
+				}
 			} else if n == 0 {
 				return nil, fmt.Errorf("reached EOF during reading openflow body")
 			} else {
