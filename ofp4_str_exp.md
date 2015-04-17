@@ -79,6 +79,7 @@ oxm_class is always OFPXMC_EXPERIMENTER (0xFFFF), as defined in openflow specifi
  	
  	STROXM_RADIOTAP_MCS = 19,
  	STROXM_RADIOTAP_AMPDU_STATUS = 20,
+ 	STROXM_RADIOTAP_VHT = 21,
  }
 ```
 
@@ -138,7 +139,7 @@ To match prefix, use mask. Without mask, exact match will be performed.
 - prerequisite : STROXM_BASIC_DOT11_FRAME_CTRL=\x00\x00/\x0C\x00
 
 ### STROXM_BASIC_DOT11_ACTION_CATEGORY
-Represents "Action field" in Action frame. Vendor specific action will want ^M
+Represents "Action field" in Action frame. Vendor specific action will want 
 additional bytes for match, so length is defined as variable, prefix match.
 Set-field is not supported.
 Only non-ROBUST frames are supported for now (depends on the implementation).
@@ -161,7 +162,7 @@ Multiple oxm may present in flow match condition(AND).
 Set-field is not supported.
 
 - mask : no
-- length : 1 or more
+- length : 1
 
 ### STROXM_BASIC_DOT11_TAG_VENDOR
 Matches to vendor information element Origanization indentifier.
