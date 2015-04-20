@@ -580,19 +580,19 @@ func hookDot11Action(hdr oxm.Oxm) (uint32, []byte) {
 		if o.Header().Class() != ofp4.OFPXMC_EXPERIMENTER {
 			continue
 		}
-		if ofp4.OxmExperimenterHeader(o).Experimenter() != gopenflow.STRATOS_EXPERIMENTER_ID {
+		if ofp4.OxmExperimenterHeader(o).Experimenter() != oxm.STRATOS_EXPERIMENTER_ID {
 			continue
 		}
-		if o.Header().Field() != gopenflow.STRATOS_OXM_FIELD_BASIC {
+		if o.Header().Field() != oxm.STRATOS_OXM_FIELD_BASIC {
 			continue
 		}
 		switch binary.BigEndian.Uint16(o[8:]) {
-		case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
+		case oxm.STROXM_BASIC_DOT11_ACTION_CATEGORY:
 			buf := o[10:]
 			if len(action) < len(buf) {
 				action = buf
 			}
-		case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
+		case oxm.STROXM_BASIC_DOT11_PUBLIC_ACTION:
 			buf := append([]byte{4}, o[10:]...)
 			if len(action) < len(buf) {
 				action = buf

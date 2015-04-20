@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/hkwi/gopenflow/oxm"
 	"github.com/hkwi/nlgo"
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
 )
@@ -89,15 +90,15 @@ func fetchOxmExperimenter(buf []byte) []oxmExperimenter {
 func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 	// XXX: FCS
 	oob := oxmExperimenter{
-		Experimenter: STRATOS_EXPERIMENTER_ID,
-		Field:        STRATOS_OXM_FIELD_BASIC,
-		Type:         STROXM_BASIC_DOT11,
+		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
+		Field:        oxm.STRATOS_OXM_FIELD_BASIC,
+		Type:         oxm.STROXM_BASIC_DOT11,
 		Value:        []byte{1},
 	}.Bytes()
 	radiotapAdd := func(expType uint16, value []byte) {
 		oob = append(oob, oxmExperimenter{
-			Experimenter: STRATOS_EXPERIMENTER_ID,
-			Field:        STRATOS_OXM_FIELD_RADIOTAP,
+			Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
+			Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
 			Type:         expType,
 			Value:        value,
 		}.Bytes()...)
@@ -105,57 +106,57 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 	if rt.Present.TSFT() {
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buf, rt.TSFT)
-		radiotapAdd(STROXM_RADIOTAP_TSFT, buf)
+		radiotapAdd(oxm.STROXM_RADIOTAP_TSFT, buf)
 	}
 	if rt.Present.Flags() {
-		radiotapAdd(STROXM_RADIOTAP_FLAGS, []byte{uint8(rt.Flags)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_FLAGS, []byte{uint8(rt.Flags)})
 	}
 	if rt.Present.Rate() {
-		radiotapAdd(STROXM_RADIOTAP_RATE, []byte{uint8(rt.Rate)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_RATE, []byte{uint8(rt.Rate)})
 	}
 	if rt.Present.Channel() {
 		buf := make([]byte, 4)
 		binary.LittleEndian.PutUint16(buf, uint16(rt.ChannelFrequency))
 		binary.LittleEndian.PutUint16(buf[2:], uint16(rt.ChannelFlags))
-		radiotapAdd(STROXM_RADIOTAP_CHANNEL, buf)
+		radiotapAdd(oxm.STROXM_RADIOTAP_CHANNEL, buf)
 	}
 	if rt.Present.FHSS() {
 		buf := make([]byte, 2)
 		binary.LittleEndian.PutUint16(buf, rt.FHSS)
-		radiotapAdd(STROXM_RADIOTAP_FHSS, buf)
+		radiotapAdd(oxm.STROXM_RADIOTAP_FHSS, buf)
 	}
 	if rt.Present.DBMAntennaSignal() {
-		radiotapAdd(STROXM_RADIOTAP_DBM_ANTSIGNAL, []byte{uint8(rt.DBMAntennaSignal)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_DBM_ANTSIGNAL, []byte{uint8(rt.DBMAntennaSignal)})
 	}
 	if rt.Present.DBMAntennaNoise() {
-		radiotapAdd(STROXM_RADIOTAP_DBM_ANTNOISE, []byte{uint8(rt.DBMAntennaNoise)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_DBM_ANTNOISE, []byte{uint8(rt.DBMAntennaNoise)})
 	}
 	if rt.Present.LockQuality() {
 		buf := make([]byte, 2)
 		binary.LittleEndian.PutUint16(buf, rt.LockQuality)
-		radiotapAdd(STROXM_RADIOTAP_LOCK_QUALITY, buf)
+		radiotapAdd(oxm.STROXM_RADIOTAP_LOCK_QUALITY, buf)
 	}
 	if rt.Present.TxAttenuation() {
 		buf := make([]byte, 2)
 		binary.LittleEndian.PutUint16(buf, rt.TxAttenuation)
-		radiotapAdd(STROXM_RADIOTAP_TX_ATTENUATION, buf)
+		radiotapAdd(oxm.STROXM_RADIOTAP_TX_ATTENUATION, buf)
 	}
 	if rt.Present.DBTxAttenuation() {
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint16(buf, rt.DBTxAttenuation)
-		radiotapAdd(STROXM_RADIOTAP_DB_TX_ATTENUATION, buf)
+		radiotapAdd(oxm.STROXM_RADIOTAP_DB_TX_ATTENUATION, buf)
 	}
 	if rt.Present.DBMTxPower() {
-		radiotapAdd(STROXM_RADIOTAP_DBM_TX_POWER, []byte{uint8(rt.DBMTxPower)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_DBM_TX_POWER, []byte{uint8(rt.DBMTxPower)})
 	}
 	if rt.Present.Antenna() {
-		radiotapAdd(STROXM_RADIOTAP_ANTENNA, []byte{rt.Antenna})
+		radiotapAdd(oxm.STROXM_RADIOTAP_ANTENNA, []byte{rt.Antenna})
 	}
 	if rt.Present.DBAntennaSignal() {
-		radiotapAdd(STROXM_RADIOTAP_DB_ANTSIGNAL, []byte{uint8(rt.DBAntennaSignal)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_DB_ANTSIGNAL, []byte{uint8(rt.DBAntennaSignal)})
 	}
 	if rt.Present.DBAntennaNoise() {
-		radiotapAdd(STROXM_RADIOTAP_DB_ANTNOISE, []byte{uint8(rt.DBAntennaNoise)})
+		radiotapAdd(oxm.STROXM_RADIOTAP_DB_ANTNOISE, []byte{uint8(rt.DBAntennaNoise)})
 	}
 	if rt.Present.RxFlags() {
 		// gopacket no-impl
@@ -218,16 +219,16 @@ func FrameFromNlAttr(attrs nlgo.AttrList) (Frame, error) {
 	binary.LittleEndian.PutUint16(freqValue, uint16(freq))
 
 	oob := oxmExperimenter{
-		Experimenter: STRATOS_EXPERIMENTER_ID,
-		Field:        STRATOS_OXM_FIELD_RADIOTAP,
-		Type:         STROXM_RADIOTAP_CHANNEL,
+		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
+		Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
+		Type:         oxm.STROXM_RADIOTAP_CHANNEL,
 		Value:        freqValue,
 	}.Bytes()
 	if t := attrs.Get(nlgo.NL80211_ATTR_RX_SIGNAL_DBM); t != nil {
 		oob = append(oob, oxmExperimenter{
-			Experimenter: STRATOS_EXPERIMENTER_ID,
-			Field:        STRATOS_OXM_FIELD_RADIOTAP,
-			Type:         STROXM_RADIOTAP_DBM_ANTSIGNAL,
+			Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
+			Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
+			Type:         oxm.STROXM_RADIOTAP_DBM_ANTSIGNAL,
 			Value:        []byte{uint8(t.(uint32))},
 		}.Bytes()...)
 	}

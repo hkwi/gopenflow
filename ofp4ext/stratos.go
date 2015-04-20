@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/google/gopacket/layers"
-	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	"github.com/hkwi/gopenflow/ofp4sw"
 	"github.com/hkwi/gopenflow/oxm"
@@ -19,10 +18,10 @@ var _ = ofp4sw.OxmHandler(StratosOxm{})
 func useOxmMultiValue(key ofp4sw.OxmKey) bool {
 	if k, ok := key.(OxmKeyStratos); ok {
 		switch k.Field {
-		case gopenflow.STRATOS_OXM_FIELD_BASIC:
+		case oxm.STRATOS_OXM_FIELD_BASIC:
 			switch k.Type {
-			case gopenflow.STROXM_BASIC_DOT11_TAG,
-				gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
+			case oxm.STROXM_BASIC_DOT11_TAG,
+				oxm.STROXM_BASIC_DOT11_TAG_VENDOR:
 				return true
 			}
 		}
@@ -32,11 +31,11 @@ func useOxmMultiValue(key ofp4sw.OxmKey) bool {
 
 func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 	ret := make(map[ofp4sw.OxmKey]ofp4sw.OxmPayload)
-	for _, oxm := range oxm.Oxm(buf).Iter() {
-		hdr := oxm.Header()
+	for _, oxmbuf := range oxm.Oxm(buf).Iter() {
+		hdr := oxmbuf.Header()
 		if hdr.Class() == ofp4.OFPXMC_EXPERIMENTER {
-			exp := ofp4.OxmExperimenterHeader(oxm)
-			if exp.Experimenter() == gopenflow.STRATOS_EXPERIMENTER_ID {
+			exp := ofp4.OxmExperimenterHeader(oxmbuf)
+			if exp.Experimenter() == oxm.STRATOS_EXPERIMENTER_ID {
 				key := OxmKeyStratos{
 					Type:  binary.BigEndian.Uint16(exp[8:]),
 					Field: hdr.Field(),
@@ -47,17 +46,17 @@ func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 					if p, ok := ret[key]; ok {
 						payload = p.(OxmMultiValue)
 					}
-					payload.Values = append(payload.Values, oxm[10:10+length])
+					payload.Values = append(payload.Values, oxmbuf[10:10+length])
 					ret[key] = payload
 				} else {
 					if hdr.HasMask() {
 						ret[key] = ofp4sw.OxmValueMask{
-							Value: oxm[10 : 10+length/2],
-							Mask:  oxm[10+length/2:],
+							Value: oxmbuf[10 : 10+length/2],
+							Mask:  oxmbuf[10+length/2:],
 						}
 					} else {
 						ret[key] = ofp4sw.OxmValueMask{
-							Value: oxm[10 : 10+length],
+							Value: oxmbuf[10 : 10+length],
 						}
 					}
 				}
@@ -76,7 +75,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 	switch k := key.(type) {
 	case OxmKeyStratos:
 		switch k.Field {
-		case gopenflow.STRATOS_OXM_FIELD_BASIC:
+		case oxm.STRATOS_OXM_FIELD_BASIC:
 			fetch11 := func() *layers.Dot11 {
 				for _, layer := range data.Layers() {
 					switch l := layer.(type) {
@@ -98,7 +97,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 			}
 
 			switch k.Type {
-			case gopenflow.STROXM_BASIC_DOT11:
+			case oxm.STROXM_BASIC_DOT11:
 				p := payload.(ofp4sw.OxmValueMask)
 				var want uint8
 				if len(p.Value) > 0 {
@@ -109,7 +108,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					have = v.Value[0]
 				}
 				return want == have, nil
-			case gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL:
+			case oxm.STROXM_BASIC_DOT11_FRAME_CTRL:
 				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					v := []byte{
@@ -122,7 +121,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						return bytes.Equal(p.Value, v), nil
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR1:
+			case oxm.STROXM_BASIC_DOT11_ADDR1:
 				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
@@ -131,7 +130,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						return bytes.Equal(p.Value, []byte(m.Address1)), nil
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR2:
+			case oxm.STROXM_BASIC_DOT11_ADDR2:
 				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
@@ -140,7 +139,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						return bytes.Equal(p.Value, []byte(m.Address2)), nil
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR3:
+			case oxm.STROXM_BASIC_DOT11_ADDR3:
 				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
@@ -149,7 +148,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						return bytes.Equal(p.Value, []byte(m.Address3)), nil
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR4:
+			case oxm.STROXM_BASIC_DOT11_ADDR4:
 				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
 					if len(p.Mask) > 0 {
@@ -158,7 +157,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						return bytes.Equal(p.Value, []byte(m.Address4)), nil
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_SSID:
+			case oxm.STROXM_BASIC_DOT11_SSID:
 				for _, l := range fetchIeList() {
 					if l.ID == 0 {
 						p := payload.(ofp4sw.OxmValueMask)
@@ -170,13 +169,13 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 				return false, nil
-			case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
+			case oxm.STROXM_BASIC_DOT11_ACTION_CATEGORY:
 				// XXX: HT field handling is missing in gopacket
 				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt {
 					p := payload.(ofp4sw.OxmValueMask)
 					return bytes.HasPrefix(m.Payload, p.Value), nil
 				}
-			case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
+			case oxm.STROXM_BASIC_DOT11_PUBLIC_ACTION:
 				if m := fetch11(); m != nil && m.Type.MainType() == layers.Dot11TypeMgmt && m.Payload[0] == 4 { // Public Action
 					p := payload.(ofp4sw.OxmValueMask)
 					v := m.Payload[1] // Public Action field value
@@ -185,7 +184,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 					return v == p.Value[0], nil
 				}
-			case gopenflow.STROXM_BASIC_DOT11_TAG:
+			case oxm.STROXM_BASIC_DOT11_TAG:
 				ies := fetchIeList()
 				for _, v := range payload.(OxmMultiValue).Values {
 					for _, ie := range ies {
@@ -195,7 +194,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					}
 				}
 				return false, nil
-			case gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
+			case oxm.STROXM_BASIC_DOT11_TAG_VENDOR:
 				ies := fetchIeList()
 				for _, v := range payload.(OxmMultiValue).Values {
 					for _, ie := range ies {
@@ -208,7 +207,7 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 			default:
 				return false, fmt.Errorf("unsupported oxm experimenter type")
 			}
-		case gopenflow.STRATOS_OXM_FIELD_RADIOTAP:
+		case oxm.STRATOS_OXM_FIELD_RADIOTAP:
 			p := payload.(ofp4sw.OxmValueMask)
 
 			if v := data.Oob[key].(ofp4sw.OxmValueMask); len(v.Value) > 0 {
@@ -231,7 +230,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 	switch k := key.(type) {
 	case OxmKeyStratos:
 		switch k.Field {
-		case gopenflow.STRATOS_OXM_FIELD_BASIC:
+		case oxm.STRATOS_OXM_FIELD_BASIC:
 			p := payload.(ofp4sw.OxmValueMask)
 
 			fetch11 := func() *layers.Dot11 {
@@ -255,11 +254,11 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 			}
 
 			switch k.Type {
-			case gopenflow.STROXM_BASIC_DOT11:
+			case oxm.STROXM_BASIC_DOT11:
 				data.Oob[key] = ofp4sw.OxmValueMask{
 					Value: p.Value,
 				}
-			case gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL:
+			case oxm.STROXM_BASIC_DOT11_FRAME_CTRL:
 				if m := fetch11(); m != nil {
 					v := []byte{
 						uint8(m.Type<<2) | m.Proto,
@@ -270,7 +269,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 					m.Type = layers.Dot11Type(v[0] >> 2)
 					m.Flags = layers.Dot11Flags(v[1])
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR1:
+			case oxm.STROXM_BASIC_DOT11_ADDR1:
 				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address1 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address1), p.Mask))
@@ -278,7 +277,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 						m.Address1 = p.Value
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR2:
+			case oxm.STROXM_BASIC_DOT11_ADDR2:
 				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address2 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address2), p.Mask))
@@ -286,7 +285,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 						m.Address2 = p.Value
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR3:
+			case oxm.STROXM_BASIC_DOT11_ADDR3:
 				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address3 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address3), p.Mask))
@@ -294,7 +293,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 						m.Address3 = p.Value
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_ADDR4:
+			case oxm.STROXM_BASIC_DOT11_ADDR4:
 				if m := fetch11(); m != nil {
 					if len(p.Mask) > 0 {
 						m.Address4 = bytes2.Or(p.Value, bytes2.And([]byte(m.Address4), p.Mask))
@@ -302,7 +301,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 						m.Address4 = p.Value
 					}
 				}
-			case gopenflow.STROXM_BASIC_DOT11_SSID:
+			case oxm.STROXM_BASIC_DOT11_SSID:
 				for _, l := range fetchIeList() {
 					if l.ID == 0 {
 						if len(p.Mask) > 0 {
@@ -315,7 +314,7 @@ func (self StratosOxm) SetField(data *ofp4sw.Frame, key ofp4sw.OxmKey, payload o
 			default:
 				return fmt.Errorf("unsupported oxm experimenter type")
 			}
-		case gopenflow.STRATOS_OXM_FIELD_RADIOTAP:
+		case oxm.STRATOS_OXM_FIELD_RADIOTAP:
 			p := payload.(ofp4sw.OxmValueMask)
 
 			if v, ok := data.Oob[key].(ofp4sw.OxmValueMask); !ok {
@@ -378,7 +377,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 		switch k := key.(type) {
 		case OxmKeyStratos:
 			switch k.Field {
-			case gopenflow.STRATOS_OXM_FIELD_BASIC:
+			case oxm.STRATOS_OXM_FIELD_BASIC:
 				eth := ofp4sw.OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)
 				ethtype := ofp4sw.OxmValueMask{
 					Value: []byte{0x88, 0xbb},
@@ -392,15 +391,15 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 				fields[eth] = ethtype
 
 				keyFrameCtrl := OxmKeyStratos{
-					Type:  gopenflow.STROXM_BASIC_DOT11_FRAME_CTRL,
-					Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
+					Type:  oxm.STROXM_BASIC_DOT11_FRAME_CTRL,
+					Field: oxm.STRATOS_OXM_FIELD_BASIC,
 				}
 				keyTag := OxmKeyStratos{
-					Type:  gopenflow.STROXM_BASIC_DOT11_TAG,
-					Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
+					Type:  oxm.STROXM_BASIC_DOT11_TAG,
+					Field: oxm.STRATOS_OXM_FIELD_BASIC,
 				}
 				switch k.Type {
-				case gopenflow.STROXM_BASIC_DOT11_SSID:
+				case oxm.STROXM_BASIC_DOT11_SSID:
 					payload := ofp4sw.OxmValueMask{ // Management frame type
 						Value: []byte{0x00, 0x00},
 						Mask:  []byte{0x0F, 0x00},
@@ -411,7 +410,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 						}
 					}
 					fields[keyFrameCtrl] = payload
-				case gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY:
+				case oxm.STROXM_BASIC_DOT11_ACTION_CATEGORY:
 					payload := ofp4sw.OxmValueMask{ // Action, ActionNAK common
 						Value: []byte{0xC0, 0x00},
 						Mask:  []byte{0xCF, 0x00},
@@ -422,7 +421,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 						}
 					}
 					fields[keyFrameCtrl] = payload
-				case gopenflow.STROXM_BASIC_DOT11_PUBLIC_ACTION:
+				case oxm.STROXM_BASIC_DOT11_PUBLIC_ACTION:
 					payload := ofp4sw.OxmValueMask{ // Action, ActionNAK common
 						Value: []byte{0xC0, 0x00},
 						Mask:  []byte{0xCF, 0x00},
@@ -435,12 +434,12 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 					fields[keyFrameCtrl] = payload
 
 					fields[OxmKeyStratos{
-						Type:  gopenflow.STROXM_BASIC_DOT11_ACTION_CATEGORY,
-						Field: gopenflow.STRATOS_OXM_FIELD_BASIC,
+						Type:  oxm.STROXM_BASIC_DOT11_ACTION_CATEGORY,
+						Field: oxm.STRATOS_OXM_FIELD_BASIC,
 					}] = ofp4sw.OxmValueMask{
 						Value: []byte{4},
 					}
-				case gopenflow.STROXM_BASIC_DOT11_TAG_VENDOR:
+				case oxm.STROXM_BASIC_DOT11_TAG_VENDOR:
 					if missing := func() bool {
 						if v, ok := fields[keyTag]; ok {
 							for _, v := range v.(OxmMultiValue).Values {
@@ -477,7 +476,7 @@ func (self OxmKeyStratos) Bytes(payload ofp4sw.OxmPayload) []byte {
 		buf := make([]byte, 10+payloadLength)
 		hdr.SetLength(6 + payloadLength)
 		binary.BigEndian.PutUint32(buf, uint32(hdr))
-		binary.BigEndian.PutUint32(buf[4:], uint32(gopenflow.STRATOS_EXPERIMENTER_ID))
+		binary.BigEndian.PutUint32(buf[4:], uint32(oxm.STRATOS_EXPERIMENTER_ID))
 		binary.BigEndian.PutUint16(buf[8:], self.Type)
 		return buf
 	}

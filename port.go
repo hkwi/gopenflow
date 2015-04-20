@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/hkwi/gopenflow/oxm"
 	"github.com/hkwi/nlgo"
 	syscall2 "github.com/hkwi/suppl/syscall"
 	"log"
@@ -72,9 +73,9 @@ func (self NamedPort) Egress(pkt Frame) error {
 	case syscall.ARPHRD_ETHER:
 		dot11 := false
 		for _, oob := range fetchOxmExperimenter(pkt.Oob) {
-			if oob.Experimenter == STRATOS_EXPERIMENTER_ID &&
-				oob.Field == STRATOS_OXM_FIELD_BASIC &&
-				oob.Type == STROXM_BASIC_DOT11 &&
+			if oob.Experimenter == oxm.STRATOS_EXPERIMENTER_ID &&
+				oob.Field == oxm.STRATOS_OXM_FIELD_BASIC &&
+				oob.Type == oxm.STROXM_BASIC_DOT11 &&
 				oob.Value[0] > 0 {
 				dot11 = true
 			}
