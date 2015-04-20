@@ -2,6 +2,7 @@ package ofp4sw
 
 import (
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	"sync"
 	"time"
 )
@@ -204,7 +205,7 @@ func (self bandDscpRemark) MarshalBinary() ([]byte, error) {
 }
 
 func (self bandDscpRemark) remark(data *Frame) error {
-	if v, err := data.getValue(ofp4.OXM_OF_IP_DSCP); err != nil {
+	if v, err := data.getValue(oxm.OXM_OF_IP_DSCP); err != nil {
 		return nil
 	} else {
 		phb := uint8(v[0]) >> 3
@@ -214,7 +215,7 @@ func (self bandDscpRemark) remark(data *Frame) error {
 			if prec > 0x03 {
 				prec = 0x03
 			}
-			if err := oxmBasicHandler.SetField(data, OxmKeyBasic(ofp4.OXM_OF_IP_DSCP), OxmValueMask{
+			if err := oxmBasicHandler.SetField(data, OxmKeyBasic(oxm.OXM_OF_IP_DSCP), OxmValueMask{
 				Value: []byte{byte(phb<<3 | prec<<1)},
 				Mask:  []byte{0xff},
 			}); err != nil {

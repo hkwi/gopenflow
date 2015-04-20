@@ -2,12 +2,13 @@ package ofp4
 
 import (
 	"encoding/binary"
+	"github.com/hkwi/gopenflow/oxm"
 )
 
 type Oxm []byte
 
-func (self Oxm) Header() OxmHeader {
-	return OxmHeader(binary.BigEndian.Uint32(self))
+func (self Oxm) Header() oxm.Header {
+	return oxm.Header(binary.BigEndian.Uint32(self))
 }
 
 func (self Oxm) Value() []byte {

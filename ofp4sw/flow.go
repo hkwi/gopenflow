@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	"log"
 	"sort"
 	"sync"
@@ -567,15 +568,15 @@ func (prio *flowPriority) filterFlows(req flowFilter, tableId uint8) []flowStats
 	return hits
 }
 
-func hookDot11Action(oxm ofp4.Oxm) (uint32, []byte) {
+func hookDot11Action(hdr oxm.Oxm) (uint32, []byte) {
 	var inPort uint32
-	for _, o := range oxm.Iter() {
-		if o.Header().Type() == ofp4.OXM_OF_IN_PORT {
+	for _, o := range hdr.Iter() {
+		if o.Header().Type() == oxm.OXM_OF_IN_PORT {
 			inPort = binary.BigEndian.Uint32(o[4:])
 		}
 	}
 	var action []byte
-	for _, o := range oxm.Iter() {
+	for _, o := range hdr.Iter() {
 		if o.Header().Class() != ofp4.OFPXMC_EXPERIMENTER {
 			continue
 		}

@@ -209,8 +209,8 @@ func (self Match) Length() int {
 	return int(binary.BigEndian.Uint16(self[2:]))
 }
 
-func (self Match) OxmFields() Oxm {
-	return Oxm(self[4:self.Length()])
+func (self Match) OxmFields() []byte {
+	return []byte(self[4:self.Length()])
 }
 
 func MakeMatch(fields []byte) Match {

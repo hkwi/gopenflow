@@ -7,6 +7,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
 	"net"
 )
@@ -34,7 +35,7 @@ func (self oxmBasic) Parse(buf []byte) map[OxmKey]OxmPayload {
 
 func (self oxmBasic) OxmId(id uint32) uint32 {
 	length, mask := ofp4.OxmOfDefs(id)
-	hdr := ofp4.OxmHeader(id)
+	hdr := oxm.Header(id)
 	hdr.SetMask(mask)
 	if mask {
 		hdr.SetLength(length * 2)
@@ -58,30 +59,30 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 	switch uint32(key.(OxmKeyBasic)) {
 	default:
 		return fmt.Errorf("unknown oxm field")
-	case ofp4.OXM_OF_IN_PORT:
+	case oxm.OXM_OF_IN_PORT:
 		data.inPort = binary.BigEndian.Uint32(m.Value)
 		return nil
-	case ofp4.OXM_OF_IN_PHY_PORT:
+	case oxm.OXM_OF_IN_PHY_PORT:
 		data.inPhyPort = binary.BigEndian.Uint32(m.Value)
 		return nil
-	case ofp4.OXM_OF_METADATA:
+	case oxm.OXM_OF_METADATA:
 		data.metadata = binary.BigEndian.Uint64(m.Value)
 		return nil
-	case ofp4.OXM_OF_ETH_DST:
+	case oxm.OXM_OF_ETH_DST:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				t.DstMAC = net.HardwareAddr(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ETH_SRC:
+	case oxm.OXM_OF_ETH_SRC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.Ethernet); ok {
 				t.SrcMAC = net.HardwareAddr(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ETH_TYPE:
+	case oxm.OXM_OF_ETH_TYPE:
 		var lastLayer gopacket.Layer
 		for _, layer := range data.Layers() {
 			switch t := layer.(type) {
@@ -99,21 +100,21 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 			t.Type = layers.EthernetType(binary.BigEndian.Uint16(m.Value))
 			return nil
 		}
-	case ofp4.OXM_OF_VLAN_VID:
+	case oxm.OXM_OF_VLAN_VID:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.Dot1Q); ok {
 				t.VLANIdentifier = binary.BigEndian.Uint16(m.Value) & 0x0fff
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_VLAN_PCP:
+	case oxm.OXM_OF_VLAN_PCP:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.Dot1Q); ok {
 				t.Priority = m.Value[0]
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IP_DSCP:
+	case oxm.OXM_OF_IP_DSCP:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv4); ok {
 				t.TOS = t.TOS&0x03 | m.Value[0]<<2
@@ -124,7 +125,7 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IP_ECN:
+	case oxm.OXM_OF_IP_ECN:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv4); ok {
 				t.TOS = t.TOS&0xFC | m.Value[0]&0x03
@@ -135,7 +136,7 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IP_PROTO:
+	case oxm.OXM_OF_IP_PROTO:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv4); ok {
 				t.Protocol = layers.IPProtocol(m.Value[0])
@@ -146,147 +147,147 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IPV4_SRC:
+	case oxm.OXM_OF_IPV4_SRC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv4); ok {
 				t.SrcIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IPV4_DST:
+	case oxm.OXM_OF_IPV4_DST:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv4); ok {
 				t.DstIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_TCP_SRC:
+	case oxm.OXM_OF_TCP_SRC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.TCP); ok {
 				t.SrcPort = layers.TCPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_TCP_DST:
+	case oxm.OXM_OF_TCP_DST:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.TCP); ok {
 				t.DstPort = layers.TCPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_UDP_SRC:
+	case oxm.OXM_OF_UDP_SRC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.UDP); ok {
 				t.SrcPort = layers.UDPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_UDP_DST:
+	case oxm.OXM_OF_UDP_DST:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.UDP); ok {
 				t.DstPort = layers.UDPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_SCTP_SRC:
+	case oxm.OXM_OF_SCTP_SRC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.SCTP); ok {
 				t.SrcPort = layers.SCTPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_SCTP_DST:
+	case oxm.OXM_OF_SCTP_DST:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.SCTP); ok {
 				t.DstPort = layers.SCTPPort(binary.BigEndian.Uint16(m.Value))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ICMPV4_TYPE:
+	case oxm.OXM_OF_ICMPV4_TYPE:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv4); ok {
 				t.TypeCode = layers.ICMPv4TypeCode(uint16(t.TypeCode)&0x00FF | uint16(m.Value[0])<<8)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ICMPV4_CODE:
+	case oxm.OXM_OF_ICMPV4_CODE:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv4); ok {
 				t.TypeCode = layers.ICMPv4TypeCode(uint16(t.TypeCode)&0xFF00 | uint16(m.Value[0]))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ARP_OP:
+	case oxm.OXM_OF_ARP_OP:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ARP); ok {
 				t.Operation = binary.BigEndian.Uint16(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ARP_SPA:
+	case oxm.OXM_OF_ARP_SPA:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ARP); ok {
 				t.SourceProtAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ARP_TPA:
+	case oxm.OXM_OF_ARP_TPA:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ARP); ok {
 				t.DstProtAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ARP_SHA:
+	case oxm.OXM_OF_ARP_SHA:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ARP); ok {
 				t.SourceHwAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ARP_THA:
+	case oxm.OXM_OF_ARP_THA:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ARP); ok {
 				t.DstHwAddress = m.Value
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IPV6_SRC:
+	case oxm.OXM_OF_IPV6_SRC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv6); ok {
 				t.SrcIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IPV6_DST:
+	case oxm.OXM_OF_IPV6_DST:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv6); ok {
 				t.DstIP = net.IP(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IPV6_FLABEL:
+	case oxm.OXM_OF_IPV6_FLABEL:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.IPv6); ok {
 				t.FlowLabel = binary.BigEndian.Uint32(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ICMPV6_TYPE:
+	case oxm.OXM_OF_ICMPV6_TYPE:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				t.TypeCode = layers.ICMPv6TypeCode(uint16(t.TypeCode)&0x00FF | uint16(m.Value[0])<<8)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_ICMPV6_CODE:
+	case oxm.OXM_OF_ICMPV6_CODE:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				t.TypeCode = layers.ICMPv6TypeCode(uint16(t.TypeCode)&0xFF00 | uint16(m.Value[0]))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_IPV6_ND_TARGET:
+	case oxm.OXM_OF_IPV6_ND_TARGET:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -296,7 +297,7 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				}
 			}
 		}
-	case ofp4.OXM_OF_IPV6_ND_SLL:
+	case oxm.OXM_OF_IPV6_ND_SLL:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -318,7 +319,7 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				}
 			}
 		}
-	case ofp4.OXM_OF_IPV6_ND_TLL:
+	case oxm.OXM_OF_IPV6_ND_TLL:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.ICMPv6); ok {
 				typ := uint8(t.TypeCode >> 8)
@@ -340,21 +341,21 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				}
 			}
 		}
-	case ofp4.OXM_OF_MPLS_LABEL:
+	case oxm.OXM_OF_MPLS_LABEL:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.MPLS); ok {
 				t.Label = binary.BigEndian.Uint32(m.Value)
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_MPLS_TC:
+	case oxm.OXM_OF_MPLS_TC:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.MPLS); ok {
 				t.TrafficClass = m.Value[0]
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_MPLS_BOS:
+	case oxm.OXM_OF_MPLS_BOS:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers.MPLS); ok {
 				if m.Value[0] == 0 {
@@ -365,17 +366,17 @@ func (self oxmBasic) SetField(data *Frame, key OxmKey, payload OxmPayload) error
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_PBB_ISID:
+	case oxm.OXM_OF_PBB_ISID:
 		for _, layer := range data.Layers() {
 			if t, ok := layer.(*layers2.PBB); ok {
 				t.ServiceIdentifier = binary.BigEndian.Uint32(append(make([]byte, 1), m.Value...))
 				return nil
 			}
 		}
-	case ofp4.OXM_OF_TUNNEL_ID:
+	case oxm.OXM_OF_TUNNEL_ID:
 		data.tunnelId = binary.BigEndian.Uint64(m.Value)
 		return nil
-	case ofp4.OXM_OF_IPV6_EXTHDR:
+	case oxm.OXM_OF_IPV6_EXTHDR:
 		return fmt.Errorf("OXM_OF_IPV6_EXTHDR setter is unsupported")
 	}
 	return fmt.Errorf("layer not found: %v", m)
@@ -400,65 +401,65 @@ func (self oxmBasic) Expand(info map[OxmKey]OxmPayload) error {
 		switch k := t.(type) {
 		case OxmKeyBasic:
 			switch uint32(k) {
-			case ofp4.OXM_OF_IPV4_SRC, ofp4.OXM_OF_IPV4_DST:
-				req[OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_IPV4_SRC, oxm.OXM_OF_IPV4_DST:
+				req[OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)] = OxmValueMask{
 					Value: []byte{0x80, 0x00},
 					Mask:  []byte{0xFF, 0xFF},
 				}
-			case ofp4.OXM_OF_TCP_SRC, ofp4.OXM_OF_TCP_DST:
-				req[OxmKeyBasic(ofp4.OXM_OF_IP_PROTO)] = OxmValueMask{
+			case oxm.OXM_OF_TCP_SRC, oxm.OXM_OF_TCP_DST:
+				req[OxmKeyBasic(oxm.OXM_OF_IP_PROTO)] = OxmValueMask{
 					Value: []byte{0x06},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_UDP_SRC, ofp4.OXM_OF_UDP_DST:
-				req[OxmKeyBasic(ofp4.OXM_OF_IP_PROTO)] = OxmValueMask{
+			case oxm.OXM_OF_UDP_SRC, oxm.OXM_OF_UDP_DST:
+				req[OxmKeyBasic(oxm.OXM_OF_IP_PROTO)] = OxmValueMask{
 					Value: []byte{0x11},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_SCTP_SRC, ofp4.OXM_OF_SCTP_DST:
-				req[OxmKeyBasic(ofp4.OXM_OF_IP_PROTO)] = OxmValueMask{
+			case oxm.OXM_OF_SCTP_SRC, oxm.OXM_OF_SCTP_DST:
+				req[OxmKeyBasic(oxm.OXM_OF_IP_PROTO)] = OxmValueMask{
 					Value: []byte{0x84},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_ICMPV4_TYPE, ofp4.OXM_OF_ICMPV4_CODE:
-				req[OxmKeyBasic(ofp4.OXM_OF_IP_PROTO)] = OxmValueMask{
+			case oxm.OXM_OF_ICMPV4_TYPE, oxm.OXM_OF_ICMPV4_CODE:
+				req[OxmKeyBasic(oxm.OXM_OF_IP_PROTO)] = OxmValueMask{
 					Value: []byte{0x01},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_ARP_OP,
-				ofp4.OXM_OF_ARP_SPA, ofp4.OXM_OF_ARP_TPA,
-				ofp4.OXM_OF_ARP_SHA, ofp4.OXM_OF_ARP_THA:
-				req[OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_ARP_OP,
+				oxm.OXM_OF_ARP_SPA, oxm.OXM_OF_ARP_TPA,
+				oxm.OXM_OF_ARP_SHA, oxm.OXM_OF_ARP_THA:
+				req[OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)] = OxmValueMask{
 					Value: []byte{0x08, 0x06},
 					Mask:  []byte{0xFF, 0xFF},
 				}
-			case ofp4.OXM_OF_IPV6_SRC, ofp4.OXM_OF_IPV6_DST, ofp4.OXM_OF_IPV6_FLABEL:
-				req[OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_IPV6_SRC, oxm.OXM_OF_IPV6_DST, oxm.OXM_OF_IPV6_FLABEL:
+				req[OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)] = OxmValueMask{
 					Value: []byte{0x86, 0xDD},
 					Mask:  []byte{0xFF, 0xFF},
 				}
-			case ofp4.OXM_OF_ICMPV6_TYPE, ofp4.OXM_OF_ICMPV6_CODE:
-				req[OxmKeyBasic(ofp4.OXM_OF_IP_PROTO)] = OxmValueMask{
+			case oxm.OXM_OF_ICMPV6_TYPE, oxm.OXM_OF_ICMPV6_CODE:
+				req[OxmKeyBasic(oxm.OXM_OF_IP_PROTO)] = OxmValueMask{
 					Value: []byte{0x3A},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_IPV6_ND_SLL:
-				req[OxmKeyBasic(ofp4.OXM_OF_ICMPV6_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_IPV6_ND_SLL:
+				req[OxmKeyBasic(oxm.OXM_OF_ICMPV6_TYPE)] = OxmValueMask{
 					Value: []byte{135},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_IPV6_ND_TLL:
-				req[OxmKeyBasic(ofp4.OXM_OF_ICMPV6_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_IPV6_ND_TLL:
+				req[OxmKeyBasic(oxm.OXM_OF_ICMPV6_TYPE)] = OxmValueMask{
 					Value: []byte{136},
 					Mask:  []byte{0xFF},
 				}
-			case ofp4.OXM_OF_PBB_ISID:
-				req[OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_PBB_ISID:
+				req[OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)] = OxmValueMask{
 					Value: []byte{0x88, 0xE7},
 					Mask:  []byte{0xFF, 0xFF},
 				}
-			case ofp4.OXM_OF_IPV6_EXTHDR:
-				req[OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)] = OxmValueMask{
+			case oxm.OXM_OF_IPV6_EXTHDR:
+				req[OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)] = OxmValueMask{
 					Value: []byte{0x86, 0xDD},
 					Mask:  []byte{0xFF, 0xFF},
 				}
@@ -478,44 +479,44 @@ func (self oxmBasic) Expand(info map[OxmKey]OxmPayload) error {
 }
 
 var oxmOfbAll []uint32 = []uint32{
-	ofp4.OXM_OF_IN_PORT,
-	ofp4.OXM_OF_IN_PHY_PORT,
-	ofp4.OXM_OF_METADATA,
-	ofp4.OXM_OF_ETH_DST,
-	ofp4.OXM_OF_ETH_SRC,
-	ofp4.OXM_OF_ETH_TYPE,
-	ofp4.OXM_OF_VLAN_VID,
-	ofp4.OXM_OF_VLAN_PCP,
-	ofp4.OXM_OF_IP_DSCP,
-	ofp4.OXM_OF_IP_ECN,
-	ofp4.OXM_OF_IP_PROTO,
-	ofp4.OXM_OF_IPV4_SRC,
-	ofp4.OXM_OF_IPV4_DST,
-	ofp4.OXM_OF_TCP_SRC,
-	ofp4.OXM_OF_TCP_DST,
-	ofp4.OXM_OF_UDP_SRC,
-	ofp4.OXM_OF_UDP_DST,
-	ofp4.OXM_OF_SCTP_SRC,
-	ofp4.OXM_OF_SCTP_DST,
-	ofp4.OXM_OF_ICMPV4_TYPE,
-	ofp4.OXM_OF_ICMPV4_CODE,
-	ofp4.OXM_OF_ARP_OP,
-	ofp4.OXM_OF_ARP_SPA,
-	ofp4.OXM_OF_ARP_TPA,
-	ofp4.OXM_OF_ARP_SHA,
-	ofp4.OXM_OF_ARP_THA,
-	ofp4.OXM_OF_IPV6_SRC,
-	ofp4.OXM_OF_IPV6_DST,
-	ofp4.OXM_OF_IPV6_FLABEL,
-	ofp4.OXM_OF_ICMPV6_TYPE,
-	ofp4.OXM_OF_ICMPV6_CODE,
-	ofp4.OXM_OF_IPV6_ND_TARGET,
-	ofp4.OXM_OF_IPV6_ND_SLL,
-	ofp4.OXM_OF_IPV6_ND_TLL,
-	ofp4.OXM_OF_MPLS_LABEL,
-	ofp4.OXM_OF_MPLS_TC,
-	ofp4.OXM_OF_MPLS_BOS,
-	ofp4.OXM_OF_PBB_ISID,
-	ofp4.OXM_OF_TUNNEL_ID,
-	ofp4.OXM_OF_IPV6_EXTHDR,
+	oxm.OXM_OF_IN_PORT,
+	oxm.OXM_OF_IN_PHY_PORT,
+	oxm.OXM_OF_METADATA,
+	oxm.OXM_OF_ETH_DST,
+	oxm.OXM_OF_ETH_SRC,
+	oxm.OXM_OF_ETH_TYPE,
+	oxm.OXM_OF_VLAN_VID,
+	oxm.OXM_OF_VLAN_PCP,
+	oxm.OXM_OF_IP_DSCP,
+	oxm.OXM_OF_IP_ECN,
+	oxm.OXM_OF_IP_PROTO,
+	oxm.OXM_OF_IPV4_SRC,
+	oxm.OXM_OF_IPV4_DST,
+	oxm.OXM_OF_TCP_SRC,
+	oxm.OXM_OF_TCP_DST,
+	oxm.OXM_OF_UDP_SRC,
+	oxm.OXM_OF_UDP_DST,
+	oxm.OXM_OF_SCTP_SRC,
+	oxm.OXM_OF_SCTP_DST,
+	oxm.OXM_OF_ICMPV4_TYPE,
+	oxm.OXM_OF_ICMPV4_CODE,
+	oxm.OXM_OF_ARP_OP,
+	oxm.OXM_OF_ARP_SPA,
+	oxm.OXM_OF_ARP_TPA,
+	oxm.OXM_OF_ARP_SHA,
+	oxm.OXM_OF_ARP_THA,
+	oxm.OXM_OF_IPV6_SRC,
+	oxm.OXM_OF_IPV6_DST,
+	oxm.OXM_OF_IPV6_FLABEL,
+	oxm.OXM_OF_ICMPV6_TYPE,
+	oxm.OXM_OF_ICMPV6_CODE,
+	oxm.OXM_OF_IPV6_ND_TARGET,
+	oxm.OXM_OF_IPV6_ND_SLL,
+	oxm.OXM_OF_IPV6_ND_TLL,
+	oxm.OXM_OF_MPLS_LABEL,
+	oxm.OXM_OF_MPLS_TC,
+	oxm.OXM_OF_MPLS_BOS,
+	oxm.OXM_OF_PBB_ISID,
+	oxm.OXM_OF_TUNNEL_ID,
+	oxm.OXM_OF_IPV6_EXTHDR,
 }

@@ -3,6 +3,7 @@ package ofp4sw
 import (
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	"hash/fnv"
 	"log"
 )
@@ -28,7 +29,7 @@ func (self match) Match(data Frame) bool {
 		var handler OxmHandler
 		switch k := oxmKey.(type) {
 		case OxmKeyBasic:
-			if ofp4.OxmHeader(k).Class() == ofp4.OFPXMC_OPENFLOW_BASIC {
+			if oxm.Header(k).Class() == ofp4.OFPXMC_OPENFLOW_BASIC {
 				handler = oxmBasicHandler
 			}
 		default:
@@ -96,7 +97,7 @@ func (self match) Conflict(target match) (bool, error) {
 			var handle OxmHandler
 			switch k := oxmKey.(type) {
 			case OxmKeyBasic:
-				if ofp4.OxmHeader(k).Class() == ofp4.OFPXMC_OPENFLOW_BASIC {
+				if oxm.Header(k).Class() == ofp4.OFPXMC_OPENFLOW_BASIC {
 					handle = oxmBasicHandler
 				}
 			default:
@@ -216,7 +217,7 @@ func (self matchHash) Merge(from matchHash) {
 	for k, s := range self {
 		var a, b OxmValueMask
 		var length int
-		if bKey, ok := k.(OxmKeyBasic); !ok || ofp4.OxmHeader(bKey).Class() != ofp4.OFPXMC_OPENFLOW_BASIC {
+		if bKey, ok := k.(OxmKeyBasic); !ok || oxm.Header(bKey).Class() != ofp4.OFPXMC_OPENFLOW_BASIC {
 			continue
 		} else if f, ok := from[k]; !ok {
 			removal = append(removal, k)
@@ -269,7 +270,7 @@ func (self matchHash) Key(target matchHash) uint32 {
 	hasher := fnv.New32()
 	for k, s := range self {
 		var value, mask []byte
-		if bKey, ok := k.(OxmKeyBasic); !ok || ofp4.OxmHeader(bKey).Class() != ofp4.OFPXMC_OPENFLOW_BASIC {
+		if bKey, ok := k.(OxmKeyBasic); !ok || oxm.Header(bKey).Class() != ofp4.OFPXMC_OPENFLOW_BASIC {
 			continue
 		} else {
 			length, _ := ofp4.OxmOfDefs(uint32(bKey))

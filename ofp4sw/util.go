@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	"io"
 	"log"
 	"sort"
@@ -52,7 +53,7 @@ func makeOxmBasic(oxmType uint32) []byte {
 	if mask {
 		length = length * 2
 	}
-	hdr := ofp4.OxmHeader(oxmType)
+	hdr := oxm.Header(oxmType)
 	hdr.SetMask(mask)
 	hdr.SetLength(length)
 	buf := make([]byte, 4+length)

@@ -8,6 +8,7 @@ import (
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	"github.com/hkwi/gopenflow/ofp4sw"
+	"github.com/hkwi/gopenflow/oxm"
 	bytes2 "github.com/hkwi/suppl/bytes"
 )
 
@@ -31,7 +32,7 @@ func useOxmMultiValue(key ofp4sw.OxmKey) bool {
 
 func (self StratosOxm) Parse(buf []byte) map[ofp4sw.OxmKey]ofp4sw.OxmPayload {
 	ret := make(map[ofp4sw.OxmKey]ofp4sw.OxmPayload)
-	for _, oxm := range ofp4.Oxm(buf).Iter() {
+	for _, oxm := range oxm.Oxm(buf).Iter() {
 		hdr := oxm.Header()
 		if hdr.Class() == ofp4.OFPXMC_EXPERIMENTER {
 			exp := ofp4.OxmExperimenterHeader(oxm)
@@ -378,7 +379,7 @@ func (self StratosOxm) Expand(fields map[ofp4sw.OxmKey]ofp4sw.OxmPayload) error 
 		case OxmKeyStratos:
 			switch k.Field {
 			case gopenflow.STRATOS_OXM_FIELD_BASIC:
-				eth := ofp4sw.OxmKeyBasic(ofp4.OXM_OF_ETH_TYPE)
+				eth := ofp4sw.OxmKeyBasic(oxm.OXM_OF_ETH_TYPE)
 				ethtype := ofp4sw.OxmValueMask{
 					Value: []byte{0x88, 0xbb},
 					Mask:  []byte{0xff, 0xff},
@@ -471,7 +472,7 @@ type OxmMultiValue struct {
 }
 
 func (self OxmKeyStratos) Bytes(payload ofp4sw.OxmPayload) []byte {
-	hdr := ofp4.OxmHeader(ofp4.OFPXMC_EXPERIMENTER<<ofp4.OXM_CLASS_SHIFT | uint32(self.Field)<<ofp4.OXM_FIELD_SHIFT)
+	hdr := oxm.Header(oxm.OFPXMC_EXPERIMENTER<<oxm.OXM_CLASS_SHIFT | uint32(self.Field)<<oxm.OXM_FIELD_SHIFT)
 	makeCommon := func(payloadLength int) []byte {
 		buf := make([]byte, 10+payloadLength)
 		hdr.SetLength(6 + payloadLength)

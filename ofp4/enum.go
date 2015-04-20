@@ -1,5 +1,9 @@
 package ofp4
 
+import (
+	"github.com/hkwi/gopenflow/oxm"
+)
+
 const (
 	OFPFC_ADD = iota
 	OFPFC_MODIFY
@@ -159,188 +163,89 @@ const (
 	OFPXMT_OFB_IPV6_EXTHDR
 )
 
-type OxmHeader uint32
-
-const (
-	OXM_CLASS_SHIFT   = 16
-	OXM_FIELD_SHIFT   = 9
-	OXM_HASMASK_SHIFT = 8
-	OXM_TYPE_MASK     = 0xFFFFFE00
-	OXM_CLASS_MASK    = 0xFFFF0000
-	OXM_FIELD_MASK    = 0x0000FE00
-	OXM_HASMASK_MASK  = 0x00000100
-	OXM_LENGTH_MASK   = 0x000000FF
-)
-
-func (self OxmHeader) Type() uint32 {
-	return uint32(self & OXM_TYPE_MASK)
-}
-
-func (self OxmHeader) Class() uint16 {
-	return uint16((self & OXM_CLASS_MASK) >> OXM_CLASS_SHIFT)
-}
-
-func (self OxmHeader) Field() uint8 {
-	return uint8((self & OXM_FIELD_MASK) >> OXM_FIELD_SHIFT)
-}
-
-func (self OxmHeader) HasMask() bool {
-	return (self & OXM_HASMASK_MASK) != 0
-}
-
-// Length of OXM payload
-func (self OxmHeader) Length() int {
-	return int(self & OXM_LENGTH_MASK)
-}
-
-func (self *OxmHeader) SetLength(length int) {
-	*self = (*self &^ OXM_LENGTH_MASK) | OxmHeader(length&OXM_LENGTH_MASK)
-}
-
-func (self *OxmHeader) SetMask(mask bool) {
-	if mask {
-		*self |= OXM_HASMASK_MASK
-	} else {
-		*self &^= OXM_HASMASK_MASK
-	}
-}
-
-/*
-OXM_OF_ constnts are defined as combinations of OFPXMC_OPENFLOW_BASIC and their field.
-Following constants does not have oxm_hasmask and length.
-
-Following constants are usually used as match key.
-Experimenter oxm may have variable sized length or mask, and experimenter
-match key would be mixed with basic oxm key.
-So match key would better not have length and mask.
-This is because these constants does not have length and mask included.
-*/
-const (
-	OXM_OF_IN_PORT        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IN_PORT<<OXM_FIELD_SHIFT
-	OXM_OF_IN_PHY_PORT    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IN_PHY_PORT<<OXM_FIELD_SHIFT
-	OXM_OF_METADATA       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_METADATA<<OXM_FIELD_SHIFT
-	OXM_OF_ETH_DST        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ETH_DST<<OXM_FIELD_SHIFT
-	OXM_OF_ETH_SRC        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ETH_SRC<<OXM_FIELD_SHIFT
-	OXM_OF_ETH_TYPE       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ETH_TYPE<<OXM_FIELD_SHIFT
-	OXM_OF_VLAN_VID       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_VLAN_VID<<OXM_FIELD_SHIFT
-	OXM_OF_VLAN_PCP       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_VLAN_PCP<<OXM_FIELD_SHIFT
-	OXM_OF_IP_DSCP        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IP_DSCP<<OXM_FIELD_SHIFT
-	OXM_OF_IP_ECN         = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IP_ECN<<OXM_FIELD_SHIFT
-	OXM_OF_IP_PROTO       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IP_PROTO<<OXM_FIELD_SHIFT
-	OXM_OF_IPV4_SRC       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV4_SRC<<OXM_FIELD_SHIFT
-	OXM_OF_IPV4_DST       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV4_DST<<OXM_FIELD_SHIFT
-	OXM_OF_TCP_SRC        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_TCP_SRC<<OXM_FIELD_SHIFT
-	OXM_OF_TCP_DST        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_TCP_DST<<OXM_FIELD_SHIFT
-	OXM_OF_UDP_SRC        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_UDP_SRC<<OXM_FIELD_SHIFT
-	OXM_OF_UDP_DST        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_UDP_DST<<OXM_FIELD_SHIFT
-	OXM_OF_SCTP_SRC       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_SCTP_SRC<<OXM_FIELD_SHIFT
-	OXM_OF_SCTP_DST       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_SCTP_DST<<OXM_FIELD_SHIFT
-	OXM_OF_ICMPV4_TYPE    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ICMPV4_TYPE<<OXM_FIELD_SHIFT
-	OXM_OF_ICMPV4_CODE    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ICMPV4_CODE<<OXM_FIELD_SHIFT
-	OXM_OF_ARP_OP         = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ARP_OP<<OXM_FIELD_SHIFT
-	OXM_OF_ARP_SPA        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ARP_SPA<<OXM_FIELD_SHIFT
-	OXM_OF_ARP_TPA        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ARP_TPA<<OXM_FIELD_SHIFT
-	OXM_OF_ARP_SHA        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ARP_SHA<<OXM_FIELD_SHIFT
-	OXM_OF_ARP_THA        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ARP_THA<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_SRC       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_SRC<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_DST       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_DST<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_FLABEL    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_FLABEL<<OXM_FIELD_SHIFT
-	OXM_OF_ICMPV6_TYPE    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ICMPV6_TYPE<<OXM_FIELD_SHIFT
-	OXM_OF_ICMPV6_CODE    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_ICMPV6_CODE<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_ND_TARGET = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_ND_TARGET<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_ND_SLL    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_ND_SLL<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_ND_TLL    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_ND_TLL<<OXM_FIELD_SHIFT
-	OXM_OF_MPLS_LABEL     = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_MPLS_LABEL<<OXM_FIELD_SHIFT
-	OXM_OF_MPLS_TC        = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_MPLS_TC<<OXM_FIELD_SHIFT
-	OXM_OF_MPLS_BOS       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_MPLS_BOS<<OXM_FIELD_SHIFT
-	OXM_OF_PBB_ISID       = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_PBB_ISID<<OXM_FIELD_SHIFT
-	OXM_OF_TUNNEL_ID      = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_TUNNEL_ID<<OXM_FIELD_SHIFT
-	OXM_OF_IPV6_EXTHDR    = OFPXMC_OPENFLOW_BASIC<<OXM_CLASS_SHIFT | OFPXMT_OFB_IPV6_EXTHDR<<OXM_FIELD_SHIFT
-)
-
-func OxmOfDefs(oxm uint32) (length int, mayMask bool) {
-	switch OxmHeader(oxm).Type() {
+func OxmOfDefs(hdr uint32) (length int, mayMask bool) {
+	switch oxm.Header(hdr).Type() {
 	default:
 		return 0, false
-	case OXM_OF_IN_PORT:
+	case oxm.OXM_OF_IN_PORT:
 		return 4, false
-	case OXM_OF_IN_PHY_PORT:
+	case oxm.OXM_OF_IN_PHY_PORT:
 		return 4, false
-	case OXM_OF_METADATA:
+	case oxm.OXM_OF_METADATA:
 		return 8, true
-	case OXM_OF_ETH_DST:
+	case oxm.OXM_OF_ETH_DST:
 		return 6, true
-	case OXM_OF_ETH_SRC:
+	case oxm.OXM_OF_ETH_SRC:
 		return 6, true
-	case OXM_OF_ETH_TYPE:
+	case oxm.OXM_OF_ETH_TYPE:
 		return 2, false
-	case OXM_OF_VLAN_VID:
+	case oxm.OXM_OF_VLAN_VID:
 		return 2, true
-	case OXM_OF_VLAN_PCP:
+	case oxm.OXM_OF_VLAN_PCP:
 		return 1, false
-	case OXM_OF_IP_DSCP:
+	case oxm.OXM_OF_IP_DSCP:
 		return 1, false
-	case OXM_OF_IP_ECN:
+	case oxm.OXM_OF_IP_ECN:
 		return 1, false
-	case OXM_OF_IP_PROTO:
+	case oxm.OXM_OF_IP_PROTO:
 		return 1, false
-	case OXM_OF_IPV4_SRC:
+	case oxm.OXM_OF_IPV4_SRC:
 		return 4, true
-	case OXM_OF_IPV4_DST:
+	case oxm.OXM_OF_IPV4_DST:
 		return 4, true
-	case OXM_OF_TCP_SRC:
+	case oxm.OXM_OF_TCP_SRC:
 		return 2, false
-	case OXM_OF_TCP_DST:
+	case oxm.OXM_OF_TCP_DST:
 		return 2, false
-	case OXM_OF_UDP_SRC:
+	case oxm.OXM_OF_UDP_SRC:
 		return 2, false
-	case OXM_OF_UDP_DST:
+	case oxm.OXM_OF_UDP_DST:
 		return 2, false
-	case OXM_OF_SCTP_SRC:
+	case oxm.OXM_OF_SCTP_SRC:
 		return 2, false
-	case OXM_OF_SCTP_DST:
+	case oxm.OXM_OF_SCTP_DST:
 		return 2, false
-	case OXM_OF_ICMPV4_TYPE:
+	case oxm.OXM_OF_ICMPV4_TYPE:
 		return 1, false
-	case OXM_OF_ICMPV4_CODE:
+	case oxm.OXM_OF_ICMPV4_CODE:
 		return 1, false
-	case OXM_OF_ARP_OP:
+	case oxm.OXM_OF_ARP_OP:
 		return 2, false
-	case OXM_OF_ARP_SPA:
+	case oxm.OXM_OF_ARP_SPA:
 		return 4, true
-	case OXM_OF_ARP_TPA:
+	case oxm.OXM_OF_ARP_TPA:
 		return 4, true
-	case OXM_OF_ARP_SHA:
+	case oxm.OXM_OF_ARP_SHA:
 		return 6, true
-	case OXM_OF_ARP_THA:
+	case oxm.OXM_OF_ARP_THA:
 		return 6, true
-	case OXM_OF_IPV6_SRC:
+	case oxm.OXM_OF_IPV6_SRC:
 		return 16, true
-	case OXM_OF_IPV6_DST:
+	case oxm.OXM_OF_IPV6_DST:
 		return 16, true
-	case OXM_OF_IPV6_FLABEL:
+	case oxm.OXM_OF_IPV6_FLABEL:
 		return 4, true
-	case OXM_OF_ICMPV6_TYPE:
+	case oxm.OXM_OF_ICMPV6_TYPE:
 		return 1, false
-	case OXM_OF_ICMPV6_CODE:
+	case oxm.OXM_OF_ICMPV6_CODE:
 		return 1, false
-	case OXM_OF_IPV6_ND_TARGET:
+	case oxm.OXM_OF_IPV6_ND_TARGET:
 		return 16, false
-	case OXM_OF_IPV6_ND_SLL:
+	case oxm.OXM_OF_IPV6_ND_SLL:
 		return 6, false
-	case OXM_OF_IPV6_ND_TLL:
+	case oxm.OXM_OF_IPV6_ND_TLL:
 		return 6, false
-	case OXM_OF_MPLS_LABEL:
+	case oxm.OXM_OF_MPLS_LABEL:
 		return 4, true
-	case OXM_OF_MPLS_TC:
+	case oxm.OXM_OF_MPLS_TC:
 		return 1, false
-	case OXM_OF_MPLS_BOS:
+	case oxm.OXM_OF_MPLS_BOS:
 		return 1, false
-	case OXM_OF_PBB_ISID:
+	case oxm.OXM_OF_PBB_ISID:
 		return 3, true
-	case OXM_OF_TUNNEL_ID:
+	case oxm.OXM_OF_TUNNEL_ID:
 		return 8, true
-	case OXM_OF_IPV6_EXTHDR:
+	case oxm.OXM_OF_IPV6_EXTHDR:
 		return 2, true
 	}
 }

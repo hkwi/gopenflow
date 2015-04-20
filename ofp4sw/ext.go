@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	bytes2 "github.com/hkwi/suppl/bytes"
 )
 
@@ -50,7 +51,7 @@ type OxmValueMask struct {
 var _ = OxmKey(OxmKeyBasic(0)) // check for implementation
 
 func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
-	hdr := ofp4.OxmHeader(self)
+	hdr := oxm.Header(self)
 	length, mask := ofp4.OxmOfDefs(uint32(self))
 	payloadLength := length
 	if mask {
@@ -105,7 +106,7 @@ type OxmKeyExp struct {
 var _ = OxmKey(OxmKeyExp{}) // check for implementation
 
 func (self OxmKeyExp) Bytes(payload OxmPayload) []byte {
-	hdr := ofp4.OxmHeader(ofp4.OFPXMC_EXPERIMENTER<<ofp4.OXM_CLASS_SHIFT | uint32(self.Field)<<ofp4.OXM_FIELD_SHIFT)
+	hdr := oxm.Header(oxm.OFPXMC_EXPERIMENTER<<oxm.OXM_CLASS_SHIFT | uint32(self.Field)<<oxm.OXM_FIELD_SHIFT)
 	var buf []byte
 	setCommon := func(payloadLength int) {
 		buf = make([]byte, 4+payloadLength)

@@ -3,6 +3,7 @@ package ofp4sw
 import (
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	"log"
 	"math"
 	"sync"
@@ -392,9 +393,9 @@ func (self *ofmFlowMod) Map() Reducable {
 				filter.opStrict = true
 			}
 			for _, stat := range self.pipe.filterFlows(filter) {
-				if oxm, err := stat.flow.fields.MarshalBinary(); err != nil {
+				if hdr, err := stat.flow.fields.MarshalBinary(); err != nil {
 					log.Print(err)
-				} else if portNo, act := hookDot11Action(ofp4.Oxm(oxm)); portNo != 0 && len(act) != 0 {
+				} else if portNo, act := hookDot11Action(oxm.Oxm(hdr)); portNo != 0 && len(act) != 0 {
 					if port := self.pipe.getPort(portNo); port != nil {
 						if err := port.Vendor(gopenflow.MgmtFrameRemove(act)).(error); err != nil {
 							log.Print(err)
