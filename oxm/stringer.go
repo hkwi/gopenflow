@@ -3,7 +3,6 @@ package oxm
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 )
@@ -210,6 +209,24 @@ func (oxm single) String() string {
 				s = fmt.Sprintf("ipv6_exthdr=0x%x",
 					binary.BigEndian.Uint16(p))
 			}
+		case OFPXMT_OFB_PBB_UCA:
+			s = fmt.Sprintf("pbb_uca=%d", p[0])
+		case OFPXMT_OFB_TCP_FLAGS:
+			if hdr.HasMask() {
+				s = fmt.Sprintf("tcp_flags=0x%04x/0x%04x",
+					binary.BigEndian.Uint16(p),
+					binary.BigEndian.Uint16(p[2:]))
+			} else {
+				s = fmt.Sprintf("tcp_flags=0x%04x",
+					binary.BigEndian.Uint16(p))
+			}
+		case OFPXMT_OFB_ACTSET_OUTPUT:
+			fmt.Sprintf("actset_output=%d",
+				binary.BigEndian.Uint32(p))
+		case OFPXMT_OFB_PACKET_TYPE:
+			fmt.Sprintf("packet_type=0x%x:0x%x",
+				binary.BigEndian.Uint16(p),
+				binary.BigEndian.Uint16(p[2:]))
 		}
 	case OFPXMC_EXPERIMENTER:
 		if handler, ok := stringers[binary.BigEndian.Uint32(oxm[4:])]; ok {
@@ -245,17 +262,130 @@ func parseInt(txt string, ptr interface{}) error {
 	}
 }
 
-func ParseOne(txt string) ([]byte, int, error) {
+func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 	labelIdx := strings.IndexRune(txt, '=')
 	if labelIdx > 0 {
 		label := txt[:labelIdx]
 		args := txt[labelIdx+1:]
 		value, mask, baseN := parsePair(args)
-
 		var hdr Header
-		var buf []byte
+		nomask := false
 
 		switch label {
+		case "vlan_pcp", "ip_dscp", "ip_ecn", "ip_proto",
+			"icmpv4_type", "icmpv4_code",
+			"mpls_tc", "mpls_bos",
+			"pbb_uca":
+			switch label {
+			case "vlan_pcp":
+				hdr = OXM_OF_VLAN_PCP
+				nomask = true
+			case "ip_dscp":
+				hdr = OXM_OF_IP_DSCP
+				nomask = true
+			case "ip_ecn":
+				hdr = OXM_OF_IP_ECN
+				nomask = true
+			case "ip_proto":
+				hdr = OXM_OF_IP_PROTO
+				nomask = true
+			case "icmpv4_type":
+				hdr = OXM_OF_ICMPV4_TYPE
+				nomask = true
+			case "icmpv4_code":
+				hdr = OXM_OF_ICMPV4_CODE
+				nomask = true
+			case "icmpv6_type":
+				hdr = OXM_OF_ICMPV6_TYPE
+				nomask = true
+			case "icmpv6_code":
+				hdr = OXM_OF_ICMPV6_CODE
+				nomask = true
+			case "mpls_tc":
+				hdr = OXM_OF_MPLS_TC
+				nomask = true
+			case "mpls_bos":
+				hdr = OXM_OF_MPLS_BOS
+				nomask = true
+			case "pbb_uca":
+				hdr = OXM_OF_PBB_UCA
+				nomask = true
+			}
+			var v, m uint8
+			if err = parseInt(value, &v); err != nil {
+				return
+			} else if len(mask) == 0 {
+				buf = make([]byte, 5)
+				buf[4] = v
+			} else if err = parseInt(mask, &m); err != nil {
+				return
+			} else {
+				buf = make([]byte, 6)
+				buf[4] = v
+				buf[5] = m
+			}
+		case "eth_type", "vlan_vid", "ipv6_exthdr", "tcp_flags",
+			"tcp_src", "tcp_dst", "udp_src", "udp_dst", "sctp_src", "sctp_dst", "arp_op":
+			switch label {
+			case "eth_type":
+				hdr = OXM_OF_ETH_TYPE
+				nomask = true
+			case "vlan_vid":
+				hdr = OXM_OF_VLAN_VID
+			case "ipv6_exthdr":
+				hdr = OXM_OF_IPV6_EXTHDR
+			case "tcp_flags":
+				hdr = OXM_OF_TCP_FLAGS
+			case "tcp_src":
+				hdr = OXM_OF_TCP_SRC
+				nomask = true
+			case "tcp_dst":
+				hdr = OXM_OF_TCP_DST
+				nomask = true
+			case "udp_src":
+				hdr = OXM_OF_UDP_SRC
+				nomask = true
+			case "udp_dst":
+				hdr = OXM_OF_UDP_DST
+				nomask = true
+			case "sctp_src":
+				hdr = OXM_OF_SCTP_SRC
+				nomask = true
+			case "sctp_dst":
+				hdr = OXM_OF_SCTP_DST
+				nomask = true
+			case "arp_op":
+				hdr = OXM_OF_ARP_OP
+				nomask = true
+			}
+			var v, m uint16
+			if err = parseInt(value, &v); err != nil {
+				return
+			} else if len(mask) == 0 {
+				buf = make([]byte, 6)
+				binary.BigEndian.PutUint16(buf[4:], v)
+			} else if err = parseInt(mask, &m); err != nil {
+				return
+			} else {
+				buf = make([]byte, 8)
+				binary.BigEndian.PutUint16(buf[4:], v)
+				binary.BigEndian.PutUint16(buf[6:], m)
+			}
+		case "pbb_isid":
+			hdr = OXM_OF_PBB_ISID
+			var v, m uint32
+			if err = parseInt(value, &v); err != nil {
+				return
+			} else if len(mask) == 0 {
+				buf = make([]byte, 7)
+				binary.BigEndian.PutUint32(buf[3:], v)
+			} else if err = parseInt(mask, &m); err != nil {
+				return
+			} else {
+				buf = make([]byte, 10)
+				binary.BigEndian.PutUint32(buf[6:], m)
+				binary.BigEndian.PutUint32(buf[3:], v)
+			}
 		case "in_port", "in_phy_port":
 			switch label {
 			case "in_port":
@@ -263,16 +393,71 @@ func ParseOne(txt string) ([]byte, int, error) {
 			case "in_phy_port":
 				hdr = OXM_OF_IN_PHY_PORT
 			}
-			if len(mask) != 0 {
-				return nil, 0, fmt.Errorf("in_port/in_phy_port not maskable")
-			}
+			nomask = true
 			var port uint32
-			if err := parseInt(value, &port); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 8)
-				binary.BigEndian.PutUint32(buf[4:], port)
+			switch mask {
+			case "max":
+				port = OFPP_MAX
+			case "unset":
+				port = OFPP_UNSET
+			case "in_port":
+				port = OFPP_IN_PORT
+			case "table":
+				port = OFPP_TABLE
+			case "normal":
+				port = OFPP_NORMAL
+			case "flood":
+				port = OFPP_FLOOD
+			case "all":
+				port = OFPP_ALL
+			case "controller":
+				port = OFPP_CONTROLLER
+			case "local":
+				port = OFPP_LOCAL
+			case "any":
+				port = OFPP_ANY
+			default:
+				if err = parseInt(value, &port); err != nil {
+					return
+				}
 			}
+			buf = make([]byte, 8)
+			binary.BigEndian.PutUint32(buf[4:], port)
+		case "ipv6_flabel", "mpls_label", "actset_output":
+			switch label {
+			case "ipv6_flabel":
+				hdr = OXM_OF_IPV6_FLABEL
+			case "mpls_label":
+				hdr = OXM_OF_MPLS_LABEL
+			case "actset_output":
+				hdr = OXM_OF_ACTSET_OUTPUT
+				nomask = true
+			}
+			var v, m uint32
+			if err = parseInt(value, &v); err != nil {
+				return
+			} else if len(mask) == 0 {
+				buf = make([]byte, 8)
+				binary.BigEndian.PutUint32(buf[4:], v)
+			} else if err = parseInt(mask, &m); err != nil {
+				return
+			} else {
+				buf = make([]byte, 12)
+				binary.BigEndian.PutUint32(buf[4:], v)
+				binary.BigEndian.PutUint32(buf[8:], m)
+			}
+		case "packet_type":
+			hdr = OXM_OF_PACKET_TYPE
+			nomask = true
+			var v [2]uint16
+			for i, vs := range strings.SplitN(value, ":", 2) {
+				if err = parseInt(vs, &v[i]); err != nil {
+					return
+				}
+			}
+			buf = make([]byte, 8)
+			binary.BigEndian.PutUint16(buf[4:], v[0])
+			binary.BigEndian.PutUint16(buf[6:], v[1])
 		case "metadata", "tunnel_id":
 			switch label {
 			case "metadata":
@@ -281,21 +466,19 @@ func ParseOne(txt string) ([]byte, int, error) {
 				hdr = OXM_OF_TUNNEL_ID
 			}
 			var v, m uint64
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
+			if err = parseInt(value, &v); err != nil {
+				return
 			} else if len(mask) == 0 {
 				buf = make([]byte, 12)
 				binary.BigEndian.PutUint64(buf[4:], v)
-			} else if err := parseInt(mask, &m); err != nil {
-				return nil, 0, err
+			} else if err = parseInt(mask, &m); err != nil {
+				return
 			} else {
 				hdr.SetMask(true)
 				buf = make([]byte, 20)
 				binary.BigEndian.PutUint64(buf[4:], v)
 				binary.BigEndian.PutUint64(buf[12:], m)
-				log.Print(v, m)
 			}
-			log.Print(buf)
 		case "eth_dst", "eth_src", "arp_sha", "arp_tha", "ipv6_nd_sll", "ipv6_nd_tll":
 			switch label {
 			case "eth_dst":
@@ -311,81 +494,18 @@ func ParseOne(txt string) ([]byte, int, error) {
 			case "ipv6_nd_tll":
 				hdr = OXM_OF_IPV6_ND_TLL
 			}
-			if hw, err := net.ParseMAC(value); err != nil {
-				return nil, 0, err
+			var hw, ma []byte
+			if hw, err = net.ParseMAC(value); err != nil {
+				return
 			} else if len(mask) == 0 {
 				buf = make([]byte, 10)
 				copy(buf[4:], hw)
-			} else if ma, err := net.ParseMAC(mask); err != nil {
-				return nil, 0, err
+			} else if ma, err = net.ParseMAC(mask); err != nil {
+				return
 			} else {
 				buf = make([]byte, 16)
 				copy(buf[4:], hw)
 				copy(buf[10:], ma)
-			}
-		case "eth_type":
-			if len(mask) > 0 {
-				return nil, 0, fmt.Errorf("eth_type not maskable")
-			}
-			var v uint16
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 6)
-				binary.BigEndian.PutUint16(buf[4:], v)
-			}
-		case "vlan_vid", "ipv6_exthdr":
-			switch label {
-			case "vlan_vid":
-				hdr = OXM_OF_VLAN_VID
-			case "ipv6_exthdr":
-				hdr = OXM_OF_IPV6_EXTHDR
-			}
-			var v, m uint16
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
-			} else if len(mask) == 0 {
-				buf = make([]byte, 6)
-				binary.BigEndian.PutUint16(buf[4:], v)
-			} else if err := parseInt(mask, &m); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 8)
-				binary.BigEndian.PutUint16(buf[4:], v)
-				binary.BigEndian.PutUint16(buf[6:], m)
-			}
-		case "vlan_pcp", "ip_dscp", "ip_ecn", "ip_proto", "icmpv4_type", "icmpv4_code", "mpls_tc", "mpls_bos":
-			switch label {
-			case "vlan_pcp":
-				hdr = OXM_OF_VLAN_PCP
-			case "ip_dscp":
-				hdr = OXM_OF_IP_DSCP
-			case "ip_ecn":
-				hdr = OXM_OF_IP_ECN
-			case "ip_proto":
-				hdr = OXM_OF_IP_PROTO
-			case "icmpv4_type":
-				hdr = OXM_OF_ICMPV4_TYPE
-			case "icmpv4_code":
-				hdr = OXM_OF_ICMPV4_CODE
-			case "icmpv6_type":
-				hdr = OXM_OF_ICMPV6_TYPE
-			case "icmpv6_code":
-				hdr = OXM_OF_ICMPV6_CODE
-			case "mpls_tc":
-				hdr = OXM_OF_MPLS_TC
-			case "mpls_bos":
-				hdr = OXM_OF_MPLS_BOS
-			}
-			if len(mask) > 0 {
-				return nil, 0, fmt.Errorf("not maskable")
-			}
-			var v uint8
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 5)
-				buf[4] = v
 			}
 		case "ipv4_src", "ipv4_dst", "arp_spa", "arp_tpa":
 			switch label {
@@ -398,7 +518,9 @@ func ParseOne(txt string) ([]byte, int, error) {
 			case "arp_tpa":
 				hdr = OXM_OF_ARP_TPA
 			}
-			if hw, nw, err := net.ParseCIDR(args[:baseN]); err == nil {
+			var hw, nm net.IP
+			var nw *net.IPNet
+			if hw, nw, err = net.ParseCIDR(args[:baseN]); err == nil {
 				hdr.SetMask(true)
 				buf = make([]byte, 12)
 				copy(buf[4:], hw.To4())
@@ -409,45 +531,20 @@ func ParseOne(txt string) ([]byte, int, error) {
 					m[i/8] |= 1 << uint8(7-i%8)
 				}
 				copy(buf[8:], m)
-			} else if hw := net.ParseIP(value); hw == nil {
-				return nil, 0, fmt.Errorf("IP parse error %s %s", args[:baseN], err)
+			} else if hw = net.ParseIP(value); hw == nil {
+				err = fmt.Errorf("IP parse error %s %s", args[:baseN], err)
+				return
 			} else if len(mask) == 0 {
 				buf = make([]byte, 8)
 				copy(buf[4:], hw.To4())
-			} else if nw := net.ParseIP(mask); nw == nil {
-				return nil, 0, fmt.Errorf("mask parse error %s", mask)
+			} else if nm = net.ParseIP(mask); nm == nil {
+				err = fmt.Errorf("ipv4 mask parse error %s", mask)
+				return
 			} else {
 				hdr.SetMask(true)
 				buf = make([]byte, 12)
 				copy(buf[4:], hw.To4())
-				copy(buf[8:], nw.To4())
-			}
-		case "tcp_src", "tcp_dst", "udp_src", "udp_dst", "sctp_src", "sctp_dst", "arp_op":
-			if len(mask) > 0 {
-				return nil, 0, fmt.Errorf("%s not maskable", label)
-			}
-			switch label {
-			case "tcp_src":
-				hdr = OXM_OF_TCP_SRC
-			case "tcp_dst":
-				hdr = OXM_OF_TCP_DST
-			case "udp_src":
-				hdr = OXM_OF_UDP_SRC
-			case "udp_dst":
-				hdr = OXM_OF_UDP_DST
-			case "sctp_src":
-				hdr = OXM_OF_SCTP_SRC
-			case "sctp_dst":
-				hdr = OXM_OF_SCTP_DST
-			case "arp_op":
-				hdr = OXM_OF_ARP_OP
-			}
-			var v uint16
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 6)
-				binary.BigEndian.PutUint16(buf[4:], v)
+				copy(buf[8:], nm.To4())
 			}
 		case "ipv6_src", "ipv6_dst":
 			switch label {
@@ -458,7 +555,9 @@ func ParseOne(txt string) ([]byte, int, error) {
 			case "ipv6_nd_target":
 				hdr = OXM_OF_IPV6_ND_TARGET
 			}
-			if hw, nw, err := net.ParseCIDR(args[:baseN]); err == nil {
+			var hw, nm net.IP
+			var nw *net.IPNet
+			if hw, nw, err = net.ParseCIDR(args[:baseN]); err == nil {
 				hdr.SetMask(true)
 				buf = make([]byte, 36)
 				copy(buf[4:], hw.To16())
@@ -469,56 +568,25 @@ func ParseOne(txt string) ([]byte, int, error) {
 					m[i/8] |= 1 << uint8(7-i%8)
 				}
 				copy(buf[20:], m)
-			} else if hw := net.ParseIP(value); hw == nil {
-				return nil, 0, fmt.Errorf("IP parse error %s %s", args[:baseN], err)
+			} else if hw = net.ParseIP(value); hw == nil {
+				err = fmt.Errorf("IP parse error %s %s", args[:baseN], err)
+				return
 			} else if len(mask) == 0 {
 				buf = make([]byte, 20)
 				copy(buf[4:], hw.To16())
-			} else if nw := net.ParseIP(mask); nw == nil {
-				return nil, 0, fmt.Errorf("mask parse error %s", mask)
+			} else if nm = net.ParseIP(mask); nm == nil {
+				err = fmt.Errorf("ipv6 mask parse error %s", mask)
+				return
 			} else {
 				hdr.SetMask(true)
 				buf = make([]byte, 36)
 				copy(buf[4:], hw.To16())
-				copy(buf[20:], nw.To16())
+				copy(buf[20:], nm.To16())
 			}
-		case "ipv6_flabel", "mpls_label":
-			switch label {
-			case "ipv6_flabel":
-				hdr = OXM_OF_IPV6_FLABEL
-			case "mpls_label":
-				hdr = OXM_OF_MPLS_LABEL
-			}
-
-			var v, m uint32
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
-			} else if len(mask) == 0 {
-				buf = make([]byte, 8)
-				binary.BigEndian.PutUint32(buf[4:], v)
-			} else if err := parseInt(mask, &m); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 12)
-				binary.BigEndian.PutUint32(buf[4:], v)
-				binary.BigEndian.PutUint32(buf[8:], m)
-			}
-		case "pbb_isid":
-			hdr = OXM_OF_PBB_ISID
-
-			var v, m uint32
-			if err := parseInt(value, &v); err != nil {
-				return nil, 0, err
-			} else if len(mask) == 0 {
-				buf = make([]byte, 7)
-				binary.BigEndian.PutUint32(buf[3:], v)
-			} else if err := parseInt(mask, &m); err != nil {
-				return nil, 0, err
-			} else {
-				buf = make([]byte, 10)
-				binary.BigEndian.PutUint32(buf[6:], m)
-				binary.BigEndian.PutUint32(buf[3:], v)
-			}
+		}
+		if len(mask) > 0 && nomask {
+			err = fmt.Errorf("%s is not maskable", label)
+			return
 		}
 		if len(buf) > 0 {
 			hdr.SetLength(len(buf) - 4)
@@ -527,9 +595,10 @@ func ParseOne(txt string) ([]byte, int, error) {
 		}
 	}
 	for _, handler := range stringers {
-		if buf, n, err := handler.ToOxm(txt); err == nil {
-			return buf, n, nil
+		if buf, eatLen, err = handler.ToOxm(txt); err == nil {
+			return
 		}
 	}
-	return nil, 0, fmt.Errorf("parse failed %s", txt)
+	err = fmt.Errorf("parse failed %s", txt)
+	return
 }
