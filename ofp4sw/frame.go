@@ -60,6 +60,11 @@ func (self Frame) clone() Frame {
 	}
 }
 
+func (self *Frame) SetLayers(layers []gopacket.Layer) {
+	self.layers = layers
+	self.serialized = self.serialized[:0]
+}
+
 // Layers returns gopacket layer representation of this frame. layers contents are all pointer to struct,
 // so you can modify the frame information simply setting values to the slice contents directly.
 func (self *Frame) Layers() []gopacket.Layer {
@@ -68,6 +73,11 @@ func (self *Frame) Layers() []gopacket.Layer {
 		self.serialized = self.serialized[:0]
 	}
 	return self.layers
+}
+
+func (self *Frame) SetSerialized(data []byte) {
+	self.layers = self.layers[:0]
+	self.serialized = data
 }
 
 // Serialised returns []byte representation of this frame. You should treat this as frozen data and
