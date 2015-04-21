@@ -53,8 +53,10 @@ var _ = OxmKey(OxmKeyBasic(0)) // check for implementation
 func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
 	hdr := oxm.Header(self)
 	length, mask := ofp4.OxmOfDefs(uint32(self))
+	vm := payload.(OxmValueMask)
+
 	payloadLength := length
-	if mask {
+	if len(vm.Mask) > 0 && mask {
 		payloadLength = length * 2
 		hdr.SetMask(true)
 	}
@@ -62,9 +64,8 @@ func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
 	buf := make([]byte, 4+payloadLength)
 	binary.BigEndian.PutUint32(buf, uint32(hdr))
 
-	vm := payload.(OxmValueMask)
-	copy(buf[4:], vm.Value)
-	if mask {
+	copy(buf[4:4+length], vm.Value)
+	if hdr.HasMask() {
 		for i := 0; i < length; i++ {
 			buf[4+length+i] = 0xFF
 		}
