@@ -532,11 +532,14 @@ func (pipe *Pipeline) sendOutput(output outputToPort) error {
 			}
 		}()
 	case ofp4.OFPP_NORMAL, ofp4.OFPP_FLOOD, ofp4.OFPP_ALL:
+		inPort := pipe.getPort(output.inPort)
 		if fr, err := output.getFrozen(); err != nil {
 			return err
 		} else {
 			for _, port := range pipe.getAllPorts() {
-				port.Egress(fr)
+				if port != inPort {
+					port.Egress(fr)
+				}
 			}
 		}
 	case ofp4.OFPP_CONTROLLER:
