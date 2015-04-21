@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/hkwi/gopenflow/ofp4"
 	"github.com/hkwi/gopenflow/oxm"
 	bytes2 "github.com/hkwi/suppl/bytes"
 )
@@ -51,26 +50,18 @@ type OxmValueMask struct {
 var _ = OxmKey(OxmKeyBasic(0)) // check for implementation
 
 func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
-	hdr := oxm.Header(self)
-	length, mask := ofp4.OxmOfDefs(uint32(self))
 	vm := payload.(OxmValueMask)
+	buf := make([]byte, 4+len(vm.Value)+len(vm.Mask))
 
-	payloadLength := length
-	if len(vm.Mask) > 0 && mask {
-		payloadLength = length * 2
+	hdr := oxm.Header(self)
+	if len(vm.Mask) > 0 {
 		hdr.SetMask(true)
 	}
-	hdr.SetLength(payloadLength)
-	buf := make([]byte, 4+payloadLength)
+	hdr.SetLength(len(buf) - 4)
 	binary.BigEndian.PutUint32(buf, uint32(hdr))
 
-	copy(buf[4:4+length], vm.Value)
-	if hdr.HasMask() {
-		for i := 0; i < length; i++ {
-			buf[4+length+i] = 0xFF
-		}
-		copy(buf[4+length:], vm.Mask)
-	}
+	copy(buf[4:], vm.Value)
+	copy(buf[4+len(vm.Value):], vm.Mask)
 	return buf
 }
 
