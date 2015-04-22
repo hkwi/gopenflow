@@ -35,9 +35,9 @@ func (oxm single) String() string {
 
 		switch hdr.Field() {
 		case OFPXMT_OFB_IN_PORT:
-			s = fmt.Sprintf("in_port=%d", binary.BigEndian.Uint32(p))
+			s = fmt.Sprintf("in_port=%v", Port(binary.BigEndian.Uint32(p)))
 		case OFPXMT_OFB_IN_PHY_PORT:
-			s = fmt.Sprintf("in_phy_port=%d", binary.BigEndian.Uint32(p))
+			s = fmt.Sprintf("in_phy_port=%v", Port(binary.BigEndian.Uint32(p)))
 		case OFPXMT_OFB_METADATA:
 			if hdr.HasMask() {
 				s = fmt.Sprintf("metadata=0x%x/0x%x",
@@ -49,13 +49,13 @@ func (oxm single) String() string {
 			}
 		case OFPXMT_OFB_ETH_DST:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("eth_dst=%v/%v", net.HardwareAddr(p), net.HardwareAddr(p[6:]))
+				s = fmt.Sprintf("eth_dst=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
 			} else {
 				s = fmt.Sprintf("eth_dst=%v", net.HardwareAddr(p))
 			}
 		case OFPXMT_OFB_ETH_SRC:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("eth_src=%v/%v", net.HardwareAddr(p), net.HardwareAddr(p[6:]))
+				s = fmt.Sprintf("eth_src=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
 			} else {
 				s = fmt.Sprintf("eth_src=%v", net.HardwareAddr(p))
 			}
@@ -82,13 +82,13 @@ func (oxm single) String() string {
 			if hdr.HasMask() {
 				s = fmt.Sprintf("ipv4_src=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
 			} else {
-				s = fmt.Sprintf("ipv4_src=%v", net.IP(p[0:4]))
+				s = fmt.Sprintf("ipv4_src=%v", net.IP(p))
 			}
 		case OFPXMT_OFB_IPV4_DST:
 			if hdr.HasMask() {
 				s = fmt.Sprintf("ipv4_dst=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
 			} else {
-				s = fmt.Sprintf("ipv4_dst=%v", net.IP(p[0:4]))
+				s = fmt.Sprintf("ipv4_dst=%v", net.IP(p))
 			}
 		case OFPXMT_OFB_TCP_SRC:
 			s = fmt.Sprintf("tcp_src=%d", binary.BigEndian.Uint16(p))
@@ -110,37 +110,37 @@ func (oxm single) String() string {
 			s = fmt.Sprintf("arp_op=%d", binary.BigEndian.Uint16(p))
 		case OFPXMT_OFB_ARP_SPA:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_spa=%v/%v", net.IP(p), net.IP(p[4:]))
+				s = fmt.Sprintf("arp_spa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
 			} else {
 				s = fmt.Sprintf("arp_spa=%v", net.IP(p))
 			}
 		case OFPXMT_OFB_ARP_TPA:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_tpa=%v/%v", net.IP(p), net.IP(p[4:]))
+				s = fmt.Sprintf("arp_tpa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
 			} else {
 				s = fmt.Sprintf("arp_tpa=%v", net.IP(p))
 			}
 		case OFPXMT_OFB_ARP_SHA:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_sha=%v/%v", net.HardwareAddr(p), net.HardwareAddr(p[6:]))
+				s = fmt.Sprintf("arp_sha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
 			} else {
 				s = fmt.Sprintf("arp_sha=%v", net.HardwareAddr(p))
 			}
 		case OFPXMT_OFB_ARP_THA:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_tha=%v/%v", net.HardwareAddr(p), net.HardwareAddr(p[6:]))
+				s = fmt.Sprintf("arp_tha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
 			} else {
 				s = fmt.Sprintf("arp_tha=%v", net.HardwareAddr(p))
 			}
 		case OFPXMT_OFB_IPV6_SRC:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_src=%v/%v", net.IP(p), net.IP(p[16:]))
+				s = fmt.Sprintf("ipv6_src=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
 			} else {
 				s = fmt.Sprintf("ipv6_src=%v", net.IP(p))
 			}
 		case OFPXMT_OFB_IPV6_DST:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_dst=%v/%v", net.IP(p), net.IP(p[16:]))
+				s = fmt.Sprintf("ipv6_dst=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
 			} else {
 				s = fmt.Sprintf("ipv6_dst=%v", net.IP(p))
 			}
@@ -159,19 +159,19 @@ func (oxm single) String() string {
 			s = fmt.Sprintf("icmpv6_code=%d", p[0])
 		case OFPXMT_OFB_IPV6_ND_TARGET:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_nd_target=%v/%v", net.IP(p), net.IP(p[16:]))
+				s = fmt.Sprintf("ipv6_nd_target=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
 			} else {
 				s = fmt.Sprintf("ipv6_nd_target=%v", net.IP(p))
 			}
 		case OFPXMT_OFB_IPV6_ND_SLL:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_nd_sll=%v/%v", net.HardwareAddr(p), net.HardwareAddr(p[6:]))
+				s = fmt.Sprintf("ipv6_nd_sll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
 			} else {
 				s = fmt.Sprintf("ipv6_nd_sll=%v", net.HardwareAddr(p))
 			}
 		case OFPXMT_OFB_IPV6_ND_TLL:
 			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_nd_tll=%v/%v", net.HardwareAddr(p), net.HardwareAddr(p[6:]))
+				s = fmt.Sprintf("ipv6_nd_tll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
 			} else {
 				s = fmt.Sprintf("ipv6_nd_tll=%v", net.HardwareAddr(p))
 			}
@@ -190,7 +190,7 @@ func (oxm single) String() string {
 			s = fmt.Sprintf("mpls_bos=%d", p[0])
 		case OFPXMT_OFB_PBB_ISID:
 			s = fmt.Sprintf("pbb_isid=0x%x",
-				binary.BigEndian.Uint32(p))
+				uint32(p[0])<<16|uint32(p[1])<<8|uint32(p[2]))
 		case OFPXMT_OFB_TUNNEL_ID:
 			if hdr.HasMask() {
 				s = fmt.Sprintf("tunnel_id=0x%x/0x%x",
@@ -221,10 +221,10 @@ func (oxm single) String() string {
 					binary.BigEndian.Uint16(p))
 			}
 		case OFPXMT_OFB_ACTSET_OUTPUT:
-			fmt.Sprintf("actset_output=%d",
+			s = fmt.Sprintf("actset_output=%d",
 				binary.BigEndian.Uint32(p))
 		case OFPXMT_OFB_PACKET_TYPE:
-			fmt.Sprintf("packet_type=0x%x:0x%x",
+			s = fmt.Sprintf("packet_type=0x%x:0x%x",
 				binary.BigEndian.Uint16(p),
 				binary.BigEndian.Uint16(p[2:]))
 		}
@@ -258,7 +258,7 @@ func parseInt(txt string, ptr interface{}) error {
 	} else if n, err := fmt.Sscanf(txt, "%d", ptr); err == nil && n == 1 {
 		return nil
 	} else {
-		return fmt.Errorf("integer capture failed")
+		return fmt.Errorf("integer capture failed %s", txt)
 	}
 }
 
@@ -367,6 +367,7 @@ func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 			} else if err = parseInt(mask, &m); err != nil {
 				return
 			} else {
+				hdr.SetMask(true)
 				buf = make([]byte, 8)
 				binary.BigEndian.PutUint16(buf[4:], v)
 				binary.BigEndian.PutUint16(buf[6:], m)
@@ -382,6 +383,7 @@ func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 			} else if err = parseInt(mask, &m); err != nil {
 				return
 			} else {
+				hdr.SetMask(true)
 				buf = make([]byte, 10)
 				binary.BigEndian.PutUint32(buf[6:], m)
 				binary.BigEndian.PutUint32(buf[3:], v)
@@ -395,7 +397,7 @@ func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 			}
 			nomask = true
 			var port uint32
-			switch mask {
+			switch value {
 			case "max":
 				port = OFPP_MAX
 			case "unset":
@@ -442,6 +444,7 @@ func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 			} else if err = parseInt(mask, &m); err != nil {
 				return
 			} else {
+				hdr.SetMask(true)
 				buf = make([]byte, 12)
 				binary.BigEndian.PutUint32(buf[4:], v)
 				binary.BigEndian.PutUint32(buf[8:], m)
@@ -503,6 +506,7 @@ func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 			} else if ma, err = net.ParseMAC(mask); err != nil {
 				return
 			} else {
+				hdr.SetMask(true)
 				buf = make([]byte, 16)
 				copy(buf[4:], hw)
 				copy(buf[10:], ma)
@@ -601,4 +605,33 @@ func ParseOne(txt string) (buf []byte, eatLen int, err error) {
 	}
 	err = fmt.Errorf("parse failed %s", txt)
 	return
+}
+
+type Port uint32
+
+func (self Port) String() string {
+	switch self {
+	case OFPP_MAX:
+		return "max"
+	case OFPP_UNSET:
+		return "unset"
+	case OFPP_IN_PORT:
+		return "in_port"
+	case OFPP_TABLE:
+		return "table"
+	case OFPP_NORMAL:
+		return "normal"
+	case OFPP_FLOOD:
+		return "flood"
+	case OFPP_ALL:
+		return "all"
+	case OFPP_CONTROLLER:
+		return "controller"
+	case OFPP_LOCAL:
+		return "local"
+	case OFPP_ANY:
+		return "any"
+	default:
+		return fmt.Sprintf("%d", uint32(self))
+	}
 }

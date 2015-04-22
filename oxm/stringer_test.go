@@ -7,12 +7,20 @@ import (
 
 func TestStrings(t *testing.T) {
 	tokens := []string{
+		"in_port=any",
 		"in_port=10",
 		"in_phy_port=10",
 		"metadata=0x5/0xff",
+		"eth_src=00:00:00:00:00:00",
+		"eth_src=00:00:00:00:00:00/01:00:00:00:00:00",
 		"ipv4_src=192.168.0.1",
 		"ipv4_src=192.168.0.1/255.255.255.0",
 		"ipv4_src=192.168.0.1/255.0.255.255",
+		"ipv6_src=::/ffff::",
+		"vlan_vid=0x5",
+		"vlan_vid=0x1000/0x1000",
+		"pbb_isid=0x5",
+		"packet_type=0x2:0x3",
 	}
 	for _, token := range tokens {
 		if o, n, err := ParseOne(token); err != nil {
