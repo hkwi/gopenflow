@@ -2,6 +2,8 @@ package oxm
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +31,18 @@ func TestStrings(t *testing.T) {
 			t.Errorf("consumed length error %d for %s len=%d", n, token, len(token))
 		} else if token != Oxm(o).String() {
 			t.Errorf("stringer %s != %s", token, Oxm(o).String())
+		}
+	}
+	all := strings.Join(tokens, ",")
+	if o, _, err := Parse(all); err != nil {
+		t.Error(err)
+	} else {
+		var v []string
+		for _, x := range Oxm(o).Iter() {
+			v = append(v, fmt.Sprintf("%v", x))
+		}
+		if all != strings.Join(v, ",") {
+			t.Error("join failed")
 		}
 	}
 }

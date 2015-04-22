@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"unicode"
 )
 
 type OxmStringer interface {
@@ -236,13 +237,33 @@ func (oxm single) String() string {
 	return s
 }
 
-func (self *Oxm) Parse(text string) error {
-	// xxx
-	return nil
+func isSeparator(r rune) bool {
+	return r == ',' || unicode.IsSpace(r)
+}
+
+func Parse(txt string) (buf []byte, eatLen int, err error) {
+	for len(txt) > 0 {
+		var one []byte
+		var step int
+		if one, step, err = ParseOne(txt); err != nil {
+			return
+		}
+		buf = append(buf, one...)
+
+		for i, c := range txt[step:] {
+			if !isSeparator(c) {
+				step += i
+				break
+			}
+		}
+		eatLen += step
+		txt = txt[step:]
+	}
+	return
 }
 
 func parsePair(txt string) (string, string, int) {
-	if sep := strings.IndexRune(txt, ','); sep > 0 {
+	if sep := strings.IndexFunc(txt, isSeparator); sep > 0 {
 		txt = txt[:sep]
 	}
 	if split := strings.IndexRune(txt, '/'); split > 0 {
