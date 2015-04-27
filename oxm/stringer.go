@@ -237,7 +237,21 @@ func (oxm single) String() string {
 	return s
 }
 
-func isSeparator(r rune) bool {
+/*
+IsSeparator is the rule separator.
+
+We use "," or unicode white character as separator.
+Use whichever you like, depending on the environment.
+For example, you may want to pass the rule as an 
+argument to some program. In such usecase, comma 
+separator would be useful instead of quoting them all.
+Another use case is that you'd create some rules from 
+CSV data set. Empty entry may be there and as a result,
+there may be several continuous comma in the flow rule.
+In the program, you'd want to indent the rule entries 
+with white spaces.
+*/
+func IsSeparator(r rune) bool {
 	return r == ',' || unicode.IsSpace(r)
 }
 
@@ -251,7 +265,7 @@ func Parse(txt string) (buf []byte, eatLen int, err error) {
 		buf = append(buf, one...)
 
 		for i, c := range txt[step:] {
-			if !isSeparator(c) {
+			if !IsSeparator(c) {
 				step += i
 				break
 			}
@@ -263,7 +277,7 @@ func Parse(txt string) (buf []byte, eatLen int, err error) {
 }
 
 func parsePair(txt string) (string, string, int) {
-	if sep := strings.IndexFunc(txt, isSeparator); sep > 0 {
+	if sep := strings.IndexFunc(txt, IsSeparator); sep > 0 {
 		txt = txt[:sep]
 	}
 	if split := strings.IndexRune(txt, '/'); split > 0 {
