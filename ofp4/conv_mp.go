@@ -99,6 +99,7 @@ func (self FlowStats) ByteCount() uint64 {
 	return binary.BigEndian.Uint64(self[40:])
 }
 
+// Match returns Match part including the padding.
 func (self FlowStats) Match() Match {
 	m := Match(self[48:])
 	return Match(m[:align8(int(m.Length()))])
