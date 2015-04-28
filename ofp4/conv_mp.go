@@ -106,12 +106,14 @@ func (self FlowStats) Match() Match {
 }
 
 func (self FlowStats) Instructions() []Instruction {
-	var ret []Instruction
-	end := self.Length()
-	for cur := 48 + len(self.Match()); cur < end; {
-		i := Instruction(self[cur:])
-		ret = append(ret, Instruction(i[:i.Len()]))
-		cur += i.Len()
+	return Instruction(self[48+len(self.Match()):]).Iter()
+}
+
+func (self FlowStats) Iter() []FlowStats {
+	var ret []FlowStats
+	for len(self) > 56 {
+		ret = append(ret, self[:self.Length()])
+		self = self[self.Length():]
 	}
 	return ret
 }
