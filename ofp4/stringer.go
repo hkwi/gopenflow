@@ -140,22 +140,14 @@ func ParseAction(txt string) (buf []byte, eatLen int, err error) {
 		case "any":
 			port = OFPP_ANY
 		default:
-			var n int
-			if n, err = fmt.Sscanf(value, "%v", &port); err != nil {
-				return
-			} else if n != 1 {
-				err = fmt.Errorf("port uncaptured")
+			if err = parseInt(vs[0], &port); err != nil {
 				return
 			}
 		}
 
 		maxLen := uint16(OFPCML_NO_BUFFER)
 		if len(vs) > 1 {
-			var n int
-			if n, err = fmt.Sscanf(vs[1], "%v", &maxLen); err != nil {
-				return
-			} else if n != 1 {
-				err = fmt.Errorf("max_len uncaptured")
+			if err = parseInt(vs[1], &maxLen); err != nil {
 				return
 			}
 		}
@@ -164,12 +156,8 @@ func ParseAction(txt string) (buf []byte, eatLen int, err error) {
 		binary.BigEndian.PutUint32(buf[4:], port)
 		binary.BigEndian.PutUint16(buf[8:], maxLen)
 	case "set_mpls_ttl", "set_nw_ttl":
-		var n int
 		var v uint8
-		if n, err = fmt.Sscanf(value, "%v", &v); err != nil {
-			return
-		} else if n != 1 {
-			err = fmt.Errorf("value capture failed")
+		if err = parseInt(value, &v); err != nil {
 			return
 		}
 		switch label {
@@ -180,12 +168,8 @@ func ParseAction(txt string) (buf []byte, eatLen int, err error) {
 		}
 		buf[4] = v
 	case "push_vlan", "push_mpls", "pop_mpls", "push_pbb":
-		var n int
 		var v uint16
-		if n, err = fmt.Sscanf(value, "%v", &v); err != nil {
-			return
-		} else if n != 1 {
-			err = fmt.Errorf("value capture failed")
+		if err = parseInt(value, &v); err != nil {
 			return
 		}
 		switch label {
@@ -200,12 +184,8 @@ func ParseAction(txt string) (buf []byte, eatLen int, err error) {
 		}
 		binary.BigEndian.PutUint16(buf[4:], v)
 	case "group", "set_queue":
-		var n int
 		var v uint32
-		if n, err = fmt.Sscanf(value, "%v", &v); err != nil {
-			return
-		} else if n != 1 {
-			err = fmt.Errorf("value capture failed")
+		if err = parseInt(value, &v); err != nil {
 			return
 		}
 		switch label {
@@ -441,15 +421,16 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 		case "@metadata", "@write_metadata":
 			phase = PHASE_META
 			var v, m uint64
-			if n, e := fmt.Sscanf(value, "%v/%v", &v, &m); n == 1 {
-				m = 0xFFFFFFFFFFFFFFFF
-			} else if n == 0 {
-				if e != nil {
-					err = e
-				} else {
-					err = fmt.Errorf("metadata capture failed %s", value)
+			vm := strings.SplitN(value, "/", 2)
+			if err := parseInt(vm[0], &v); err != nil {
+				return err
+			}
+			if len(vm) == 2 {
+				if err := parseInt(vm[1], &m); err != nil {
+					return err
 				}
-				return
+			} else {
+				m = 0xFFFFFFFFFFFFFFFF
 			}
 			var inst [24]byte
 			binary.BigEndian.PutUint16(inst[0:], OFPIT_WRITE_METADATA)
@@ -493,11 +474,13 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 					}
 				case "cookie":
 					var v, m uint64
-					if n, e := fmt.Sscanf(value, "%v/%v", &v, &m); n == 0 {
-						if e != nil {
-							err = e
-						} else {
-							err = fmt.Errorf("metadata capture failed %s", value)
+					vm := strings.SplitN(value, "/", 2)
+					if err := parseInt(vm[0], &v); err != nil {
+						return err
+					}
+					if len(vm) == 2 {
+						if err := parseInt(vm[1], &m); err != nil {
+							return err
 						}
 						return
 					}
