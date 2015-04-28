@@ -365,11 +365,7 @@ type flowRule struct {
 	Instructions []byte
 }
 
-func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
-	flow.BufferId = OFP_NO_BUFFER
-	flow.OutPort = OFPP_ANY
-	flow.OutGroup = OFPG_ANY
-
+func (self *flowRule) Parse(txt string) error {
 	var actions []byte
 	var delayed func() = nil
 	phase := PHASE_MATCH
@@ -384,22 +380,22 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 		case "@meter":
 			phase = PHASE_METER
 			var meterId uint32
-			if err = parseInt(value, &meterId); err != nil {
-				return
+			if err := parseInt(value, &meterId); err != nil {
+				return err
 			}
 			var inst [8]byte
 			binary.BigEndian.PutUint16(inst[:], OFPIT_METER)
 			binary.BigEndian.PutUint16(inst[2:], 8)
 			binary.BigEndian.PutUint32(inst[4:], meterId)
-			flow.Instructions = append(flow.Instructions, inst[:]...)
+			self.Instructions = append(self.Instructions, inst[:]...)
 		case "@apply", "@apply_actions":
 			phase = PHASE_APPLY
 			delayed = func() {
 				var inst [8]byte
 				binary.BigEndian.PutUint16(inst[:], OFPIT_APPLY_ACTIONS)
 				binary.BigEndian.PutUint16(inst[2:], uint16(len(actions)+8))
-				flow.Instructions = append(flow.Instructions, inst[:]...)
-				flow.Instructions = append(flow.Instructions, actions...)
+				self.Instructions = append(self.Instructions, inst[:]...)
+				self.Instructions = append(self.Instructions, actions...)
 				actions = actions[:0]
 			}
 		case "@clear", "@clear_actions":
@@ -407,19 +403,20 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 			var inst [8]byte
 			binary.BigEndian.PutUint16(inst[:], OFPIT_CLEAR_ACTIONS)
 			binary.BigEndian.PutUint16(inst[2:], 8)
-			flow.Instructions = append(flow.Instructions, inst[:]...)
+			self.Instructions = append(self.Instructions, inst[:]...)
 		case "@write", "@write_actions":
 			phase = PHASE_WRITE
 			delayed = func() {
 				var inst [8]byte
 				binary.BigEndian.PutUint16(inst[:], OFPIT_WRITE_ACTIONS)
 				binary.BigEndian.PutUint16(inst[2:], uint16(len(actions)+8))
-				flow.Instructions = append(flow.Instructions, inst[:]...)
-				flow.Instructions = append(flow.Instructions, actions...)
+				self.Instructions = append(self.Instructions, inst[:]...)
+				self.Instructions = append(self.Instructions, actions...)
 				actions = actions[:0]
 			}
 		case "@metadata", "@write_metadata":
 			phase = PHASE_META
+
 			var v, m uint64
 			vm := strings.SplitN(value, "/", 2)
 			if err := parseInt(vm[0], &v); err != nil {
@@ -432,45 +429,46 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 			} else {
 				m = 0xFFFFFFFFFFFFFFFF
 			}
+
 			var inst [24]byte
 			binary.BigEndian.PutUint16(inst[0:], OFPIT_WRITE_METADATA)
 			binary.BigEndian.PutUint16(inst[2:], 24)
 			binary.BigEndian.PutUint64(inst[8:], v)
 			binary.BigEndian.PutUint64(inst[16:], m)
-			flow.Instructions = append(flow.Instructions, inst[:]...)
+			self.Instructions = append(self.Instructions, inst[:]...)
 		case "@goto", "@goto_table":
 			phase = PHASE_GOTO
 			var tableId uint8
-			if err = parseInt(value, &tableId); err != nil {
-				return
+			if err := parseInt(value, &tableId); err != nil {
+				return err
 			}
 			var inst [8]byte
 			binary.BigEndian.PutUint16(inst[:], OFPIT_GOTO_TABLE)
 			binary.BigEndian.PutUint16(inst[2:], uint16(len(inst)))
 			inst[4] = tableId
-			flow.Instructions = append(flow.Instructions, inst[:]...)
+			self.Instructions = append(self.Instructions, inst[:]...)
 		default:
 			switch phase {
 			case PHASE_MATCH:
 				switch label {
 				case "table":
 					var v uint8
-					if err = parseInt(value, &v); err != nil {
-						return
+					if err := parseInt(value, &v); err != nil {
+						return err
 					}
-					flow.TableId = v
+					self.TableId = v
 				case "priority", "idle_timeout", "hard_timeout":
 					var v uint16
-					if err = parseInt(value, &v); err != nil {
-						return
+					if err := parseInt(value, &v); err != nil {
+						return err
 					}
 					switch label {
 					case "idle_timeout":
-						flow.IdleTimeout = v
+						self.IdleTimeout = v
 					case "hard_timeout":
-						flow.HardTimeout = v
+						self.HardTimeout = v
 					case "priority":
-						flow.Priority = v
+						self.Priority = v
 					}
 				case "cookie":
 					var v, m uint64
@@ -482,35 +480,35 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 						if err := parseInt(vm[1], &m); err != nil {
 							return err
 						}
-						return
 					}
-					flow.Cookie = v
-					flow.CookieMask = m
+					self.Cookie = v
+					self.CookieMask = m
 				case "out_port":
 					var v uint32
-					if err = parseInt(value, &v); err != nil {
-						return
+					if err := parseInt(value, &v); err != nil {
+						return err
 					}
-					flow.OutPort = v
+					self.OutPort = v
 				case "out_group", "group":
 					var v uint32
-					if err = parseInt(value, &v); err != nil {
-						return
+					if err := parseInt(value, &v); err != nil {
+						return err
 					}
-					flow.OutGroup = v
+					self.OutGroup = v
 				default:
-					if buf, _, err := oxm.ParseOne(txt); err != nil {
-						break
+					if buf, n, err := oxm.ParseOne(txt); err != nil {
+						return err
 					} else {
-						flow.Match = append(flow.Match, buf...)
+						self.Match = append(self.Match, buf...)
+						step = n
 					}
 				}
 			case PHASE_APPLY, PHASE_WRITE:
-				var buf []byte
-				if buf, step, err = ParseAction(txt); err != nil {
+				if buf, n, err := ParseAction(txt); err != nil {
 					break
 				} else {
 					actions = append(actions, buf...)
+					step = n
 				}
 			}
 		}
@@ -520,50 +518,51 @@ func parseFlowRule(txt string) (flow flowRule, eatLen int, err error) {
 				break
 			}
 		}
-		eatLen += step
 		txt = txt[step:]
 	}
 	if delayed != nil {
 		delayed()
 	}
-	return
+	return nil
 }
 
-func parseFlowMod(txt string) (ret []byte, eatLen int, err error) {
-	if f, step, e := parseFlowRule(txt); e != nil {
-		err = e
-	} else if step != len(txt) {
-		err = fmt.Errorf("text parse stoped in half")
+func (self *FlowMod) Parse(txt string) error {
+	var f flowRule
+	if cmd := self.Command(); cmd == OFPFC_DELETE || cmd == OFPFC_DELETE_STRICT {
+		f.TableId = OFPTT_ALL
+		f.OutPort = OFPP_ANY
+		f.OutGroup = OFPG_ANY
 	} else {
-		var buf [48]byte
-		binary.BigEndian.PutUint64(buf[8:], f.Cookie)
-		binary.BigEndian.PutUint64(buf[16:], f.CookieMask)
-		buf[24] = f.TableId
-		binary.BigEndian.PutUint16(buf[26:], f.IdleTimeout)
-		binary.BigEndian.PutUint16(buf[28:], f.HardTimeout)
-		binary.BigEndian.PutUint16(buf[30:], f.Priority)
-		binary.BigEndian.PutUint32(buf[32:], f.BufferId)
-		binary.BigEndian.PutUint32(buf[36:], f.OutPort)
-		binary.BigEndian.PutUint32(buf[40:], f.OutGroup)
-
-		mLength := len(f.Match) + 4
-		match := make([]byte, align8(mLength))
-		binary.BigEndian.PutUint16(match[:], OFPMT_OXM)
-		binary.BigEndian.PutUint16(match[2:], uint16(mLength))
-		copy(match[4:], f.Match)
-
-		ret = make([]byte, 48+len(match)+len(f.Instructions))
-		copy(ret, buf[:])
-		copy(ret[48:], match)
-		copy(ret[48+len(match):], f.Instructions)
-
-		eatLen = step
-
-		ret[0] = 4
-		ret[1] = OFPT_FLOW_MOD
-		binary.BigEndian.PutUint16(ret[2:], uint16(len(ret)))
+		f.BufferId = OFP_NO_BUFFER
 	}
-	return
+	if err := f.Parse(txt); err != nil {
+		return err
+	}
+	buf := []byte(*self)[:48]
+	binary.BigEndian.PutUint64(buf[8:], f.Cookie)
+	binary.BigEndian.PutUint64(buf[16:], f.CookieMask)
+	buf[24] = f.TableId
+	binary.BigEndian.PutUint16(buf[26:], f.IdleTimeout)
+	binary.BigEndian.PutUint16(buf[28:], f.HardTimeout)
+	binary.BigEndian.PutUint16(buf[30:], f.Priority)
+	binary.BigEndian.PutUint32(buf[32:], f.BufferId)
+	binary.BigEndian.PutUint32(buf[36:], f.OutPort)
+	binary.BigEndian.PutUint32(buf[40:], f.OutGroup)
+
+	mLength := len(f.Match) + 4
+	match := make([]byte, align8(mLength))
+	binary.BigEndian.PutUint16(match[:], OFPMT_OXM)
+	binary.BigEndian.PutUint16(match[2:], uint16(mLength))
+	copy(match[4:], f.Match)
+
+	buf = append(buf, match...)
+	buf = append(buf, f.Instructions...)
+
+	buf[0] = 4
+	buf[1] = OFPT_FLOW_MOD
+	binary.BigEndian.PutUint16(buf[2:], uint16(len(buf)))
+	*self = buf
+	return nil
 }
 
 func (self FlowMod) String() string {
@@ -604,35 +603,31 @@ func (self FlowMod) String() string {
 	return strings.Join(comps, ",")
 }
 
-func parseFlowStats(txt string) (ret []byte, eatLen int, err error) {
-	if f, step, e := parseFlowRule(txt); e != nil {
-		err = e
-	} else if step != len(txt) {
-		err = fmt.Errorf("text parse stoped in half")
-	} else {
-		var buf [48]byte
-		buf[2] = f.TableId
-		binary.BigEndian.PutUint16(buf[12:], f.Priority)
-		binary.BigEndian.PutUint16(buf[14:], f.IdleTimeout)
-		binary.BigEndian.PutUint16(buf[16:], f.HardTimeout)
-		binary.BigEndian.PutUint64(buf[24:], f.Cookie)
-
-		mLength := len(f.Match) + 4
-		match := make([]byte, align8(mLength))
-		binary.BigEndian.PutUint16(match[:], OFPMT_OXM)
-		binary.BigEndian.PutUint16(match[2:], uint16(mLength))
-		copy(match[4:], f.Match)
-
-		ret = make([]byte, 48+len(match)+len(f.Instructions))
-		copy(ret, buf[:])
-		copy(ret[48:], match)
-		copy(ret[48+len(match):], f.Instructions)
-
-		eatLen = step
-
-		binary.BigEndian.PutUint16(ret, uint16(len(ret)))
+func (self *FlowStats) Parse(txt string) error {
+	var f flowRule
+	if err := f.Parse(txt); err != nil {
+		return err
 	}
-	return
+	buf := []byte(*self)[:48]
+	buf[2] = f.TableId
+	binary.BigEndian.PutUint16(buf[12:], f.Priority)
+	binary.BigEndian.PutUint16(buf[14:], f.IdleTimeout)
+	binary.BigEndian.PutUint16(buf[16:], f.HardTimeout)
+	binary.BigEndian.PutUint64(buf[24:], f.Cookie)
+
+	mLength := len(f.Match) + 4
+	match := make([]byte, align8(mLength))
+	binary.BigEndian.PutUint16(match[:], OFPMT_OXM)
+	binary.BigEndian.PutUint16(match[2:], uint16(mLength))
+	copy(match[4:], f.Match)
+
+	buf = append(buf, match...)
+	buf = append(buf, f.Instructions...)
+
+	binary.BigEndian.PutUint16(buf, uint16(len(buf)))
+
+	*self = buf
+	return nil
 }
 
 func (self FlowStats) String() string {

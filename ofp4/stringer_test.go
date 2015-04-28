@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestParseInt(t *testing.T) {
+	var v uint8
+	if err := parseInt("10", &v); err != nil {
+		t.Error(err)
+	} else if v != 10 {
+		t.Error("parse failed")
+	}
+	if err := parseInt("0xa", &v); err != nil {
+		t.Error(err)
+	} else if v != 10 {
+		t.Error("parse failed")
+	}
+	if err := parseInt("10junk", &v); err == nil {
+		t.Error("ignored junk")
+	}
+}
+
 func TestParseAction(t *testing.T) {
 	strs := []string{
 		"output=10",
@@ -38,12 +55,11 @@ func TestParseFlowMod(t *testing.T) {
 		"table=2,priority=8,cookie=0x5,in_port=1,eth_dst=ff:ff:ff:ff:ff:ff,@apply,output=1,@meter=1",
 	}
 	for _, s := range strs {
-		if buf, eatLen, err := parseFlowMod(s); err != nil {
+		flow := FlowMod(make([]byte, 56))
+		if err := flow.Parse(s); err != nil {
 			t.Error(err)
-		} else if eatLen != len(s) {
-			t.Error("no consume")
-		} else if s != fmt.Sprintf("%v", FlowMod(buf)) {
-			t.Errorf("encode decode error %s", s)
+		} else if s != fmt.Sprintf("%v", flow) {
+			t.Errorf("encode decode error %s != %v", s, flow)
 		}
 	}
 }
@@ -55,13 +71,11 @@ func TestParseFlowStats(t *testing.T) {
 		"table=2,priority=8,cookie=0x5,in_port=1,eth_dst=ff:ff:ff:ff:ff:ff,@apply,output=1,@meter=1",
 	}
 	for _, s := range strs {
-		if buf, eatLen, err := parseFlowStats(s); err != nil {
+		flow := FlowStats(make([]byte, 56))
+		if err := flow.Parse(s); err != nil {
 			t.Error(err)
-		} else if eatLen != len(s) {
-			t.Error("no consume")
-		} else if s != fmt.Sprintf("%v", FlowStats(buf)) {
-			t.Logf("%v", FlowStats(buf))
-			t.Errorf("encode decode error %s", s)
+		} else if s != fmt.Sprintf("%v", flow) {
+			t.Errorf("encode decode error %s != %v", s, flow)
 		}
 	}
 }
