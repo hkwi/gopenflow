@@ -243,13 +243,13 @@ IsSeparator is the rule separator.
 
 We use "," or unicode white character as separator.
 Use whichever you like, depending on the environment.
-For example, you may want to pass the rule as an 
-argument to some program. In such usecase, comma 
+For example, you may want to pass the rule as an
+argument to some program. In such usecase, comma
 separator would be useful instead of quoting them all.
-Another use case is that you'd create some rules from 
+Another use case is that you'd create some rules from
 CSV data set. Empty entry may be there and as a result,
 there may be several continuous comma in the flow rule.
-In the program, you'd want to indent the rule entries 
+In the program, you'd want to indent the rule entries
 with white spaces.
 */
 func IsSeparator(r rune) bool {
