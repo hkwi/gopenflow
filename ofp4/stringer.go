@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/hkwi/gopenflow/oxm"
+	"strconv"
 	"strings"
 )
 
@@ -39,10 +40,51 @@ func parseLabeledValue(txt string) (label, value string, eatLen int) {
 }
 
 func parseInt(txt string, value interface{}) error {
-	if n, err := fmt.Sscanf(txt, "%v", value); err != nil {
-		return err
-	} else if n != 1 {
-		return fmt.Errorf("integer capture failed %s", txt)
+	bitSize := 0
+	switch value.(type) {
+	case *uint8, *int8:
+		bitSize = 8
+	case *uint16, *int16:
+		bitSize = 16
+	case *uint32, *int32:
+		bitSize = 32
+	case *uint64, *int64:
+		bitSize = 64
+	default:
+		return fmt.Errorf("unsupported type")
+	}
+
+	switch value.(type) {
+	case *int8, *int16, *int32, *int64:
+		if n, err := strconv.ParseInt(txt, 0, bitSize); err != nil {
+			return err
+		} else {
+			switch p := value.(type) {
+			case *int8:
+				*p = int8(n)
+			case *int16:
+				*p = int16(n)
+			case *int32:
+				*p = int32(n)
+			case *int64:
+				*p = n
+			}
+		}
+	default:
+		if n, err := strconv.ParseUint(txt, 0, bitSize); err != nil {
+			return err
+		} else {
+			switch p := value.(type) {
+			case *uint8:
+				*p = uint8(n)
+			case *uint16:
+				*p = uint16(n)
+			case *uint32:
+				*p = uint32(n)
+			case *uint64:
+				*p = n
+			}
+		}
 	}
 	return nil
 }
