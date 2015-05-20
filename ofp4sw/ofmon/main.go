@@ -6,6 +6,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow/ofp4"
+	"github.com/hkwi/gopenflow/oxm"
 	_ "github.com/hkwi/suppl/gopacket/layers"
 	"io"
 	"log"
@@ -43,7 +44,7 @@ func main() {
 				fmt.Sprintf("table=%d,cookie=%d", pin.TableId(), pin.Cookie()),
 			}
 			if match := pin.Match().OxmFields(); len(match) > 0 {
-				comps = append(comps, fmt.Sprintf("%v", match))
+				comps = append(comps, oxm.Oxm(match).String())
 			}
 			log.Print(strings.Join(comps, ","))
 			log.Print(gopacket.NewPacket(pin.Data(), layers.LayerTypeEthernet, gopacket.Default))
