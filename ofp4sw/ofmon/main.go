@@ -22,7 +22,9 @@ func main() {
 
 	getConn := func() io.ReadWriter {
 		p := strings.SplitN(args[0], ":", 2)
-		if c, err := net.Dial(p[0], p[1]); err != nil {
+		if len(p) == 1 {
+			panic("connection scheme failure %s", args[0])
+		} else if c, err := net.Dial(p[0], p[1]); err != nil {
 			panic(err)
 		} else if n, err := c.Write([]byte(hello)); n != 8 || err != nil {
 			panic("hello send error")
