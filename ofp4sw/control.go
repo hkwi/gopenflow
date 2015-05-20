@@ -325,6 +325,7 @@ type ofmFlowMod struct {
 
 func (self *ofmFlowMod) Map() Reducable {
 	msg := ofp4.FlowMod(self.req)
+	bufferId := msg.BufferId()
 
 	switch msg.Command() {
 	case ofp4.OFPFC_ADD:
@@ -336,7 +337,7 @@ func (self *ofmFlowMod) Map() Reducable {
 			}
 		}
 	case ofp4.OFPFC_MODIFY, ofp4.OFPFC_MODIFY_STRICT:
-		var reqMatch match
+		reqMatch := match{}
 		if err := reqMatch.UnmarshalBinary(msg.Match().OxmFields()); err != nil {
 			log.Print(err)
 		} else if msg.TableId() > ofp4.OFPTT_MAX {
@@ -375,7 +376,7 @@ func (self *ofmFlowMod) Map() Reducable {
 			}
 		}
 	case ofp4.OFPFC_DELETE, ofp4.OFPFC_DELETE_STRICT:
-		var reqMatch match
+		reqMatch := match{}
 		if err := reqMatch.UnmarshalBinary(msg.Match().OxmFields()); err != nil {
 			log.Print(err)
 		} else {
@@ -407,8 +408,8 @@ func (self *ofmFlowMod) Map() Reducable {
 				}
 			}
 		}
+		bufferId = ofp4.OFP_NO_BUFFER // nothing to do with buffer by specification.
 	}
-	bufferId := msg.BufferId()
 	if bufferId != ofp4.OFP_NO_BUFFER {
 		original, ok := func() (outputToPort, bool) {
 			self.pipe.lock.Lock()
