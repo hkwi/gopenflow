@@ -108,7 +108,7 @@ func (self Stratos) FromOxm(buf []byte) string {
 		case STROXM_RADIOTAP_FLAGS:
 			ret = fmt.Sprintf("radiotap_flags=0x%02x", value[0])
 		case STROXM_RADIOTAP_RATE: // bps
-			kbps := float64(binary.LittleEndian.Uint16(value)) * 500.0
+			kbps := float64(value[0]) * 500.0
 			if kbps < 1000 {
 				ret = fmt.Sprintf("radiotap_rate=%.1fK", kbps)
 			} else {
