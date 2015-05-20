@@ -180,6 +180,9 @@ enable 802.11 management frame capture. In this case, depending on the port type
 might be responsibile for handling those captured management frames, and sending response frames 
 if required.
 
+With nl80211 non-monotir netdev, when some other program already handles that dot11_action frame, 
+mod_flow may fail because kernel will return EALREADY for that case.
+
 
 STRATOS_OXM_FIELD_RADIOTAP
 --------------------------
