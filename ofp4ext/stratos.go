@@ -210,11 +210,13 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 		case oxm.STRATOS_OXM_FIELD_RADIOTAP:
 			p := payload.(ofp4sw.OxmValueMask)
 
-			if v := data.Oob[key].(ofp4sw.OxmValueMask); len(v.Value) > 0 {
-				if len(p.Mask) > 0 {
-					return bytes.Equal(p.Value, bytes2.And(v.Value, p.Mask)), nil
-				} else {
-					return bytes.Equal(p.Value, v.Value), nil
+			if val, ok := data.Oob[key]; ok && val != nil {
+				if v, ok := val.(ofp4sw.OxmValueMask); ok && len(v.Value) > 0 {
+					if len(p.Mask) > 0 {
+						return bytes.Equal(p.Value, bytes2.And(v.Value, p.Mask)), nil
+					} else {
+						return bytes.Equal(p.Value, v.Value), nil
+					}
 				}
 			}
 		default:
