@@ -159,16 +159,48 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 		radiotapAdd(oxm.STROXM_RADIOTAP_DB_ANTNOISE, []byte{uint8(rt.DBAntennaNoise)})
 	}
 	if rt.Present.RxFlags() {
-		// gopacket no-impl
+		buf := make([]byte, 2)
+		binary.LittleEndian.PutUint16(buf, uint16(rt.RxFlags))
+		radiotapAdd(oxm.STROXM_RADIOTAP_RX_FLAGS, buf)
 	}
 	if rt.Present.TxFlags() {
-		// gopacket no-impl
+		buf := make([]byte, 2)
+		binary.LittleEndian.PutUint16(buf, uint16(rt.TxFlags))
+		radiotapAdd(oxm.STROXM_RADIOTAP_TX_FLAGS, buf)
 	}
 	if rt.Present.RtsRetries() {
-		// gopacket no-impl
+		radiotapAdd(oxm.STROXM_RADIOTAP_RTS_RETRIES, []byte{uint8(rt.RtsRetries)})
 	}
 	if rt.Present.DataRetries() {
-		// gopacket no-impl
+		radiotapAdd(oxm.STROXM_RADIOTAP_DATA_RETRIES, []byte{uint8(rt.DataRetries)})
+	}
+	if rt.Present.Mcs() {
+		radiotapAdd(oxm.STROXM_RADIOTAP_MCS, []byte{
+			uint8(rt.Mcs.Known),
+			uint8(rt.Mcs.Flags),
+			rt.Mcs.Mcs,
+		})
+	}
+	if rt.Present.AmpduStatus() {
+		buf := make([]byte, 8)
+		binary.LittleEndian.PutUint32(buf, rt.AmpduStatus.Reference)
+		binary.LittleEndian.PutUint32(buf[4:], uint32(rt.AmpduStatus.Flags))
+		buf[6] = uint8(rt.AmpduStatus.Crc)
+		radiotapAdd(oxm.STROXM_RADIOTAP_AMPDU_STATUS, buf)
+	}
+	if rt.Present.Vht() {
+		buf := make([]byte, 12)
+		binary.LittleEndian.PutUint16(buf, uint16(rt.Vht.Known))
+		buf[2] = uint8(rt.Vht.Flags)
+		buf[3] = rt.Vht.Bandwidth
+		buf[4] = uint8(rt.Vht.McsNss[0])
+		buf[5] = uint8(rt.Vht.McsNss[1])
+		buf[6] = uint8(rt.Vht.McsNss[2])
+		buf[7] = uint8(rt.Vht.McsNss[3])
+		buf[8] = uint8(rt.Vht.Coding)
+		buf[9] = uint8(rt.Vht.GroupId)
+		binary.LittleEndian.PutUint16(buf[10:], rt.Vht.PartialAid)
+		radiotapAdd(oxm.STROXM_RADIOTAP_VHT, buf)
 	}
 
 	dot11 := rt.Payload
