@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"fmt"
 )
 
 var hello = string([]byte{4, ofp4.OFPT_HELLO, 0, 8, 255, 0, 0, 1})
@@ -21,7 +22,7 @@ func main() {
 	getConn := func(spec string) io.ReadWriter {
 		p := strings.SplitN(spec, ":", 2)
 		if len(p) == 1 {
-			panic("connection scheme failure %s", args[0])
+			panic(fmt.Sprintf("connection scheme failure %s", args[0]))
 		} else if c, err := net.Dial(p[0], p[1]); err != nil {
 			panic(err)
 		} else if n, err := c.Write([]byte(hello)); n != 8 || err != nil {
