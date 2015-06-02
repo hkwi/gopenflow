@@ -358,7 +358,18 @@ func (self StratosOxm) Fit(key ofp4sw.OxmKey, narrow, wide ofp4sw.OxmPayload) (b
 	} else {
 		n := narrow.(ofp4sw.OxmValueMask)
 		w := wide.(ofp4sw.OxmValueMask)
-		return bytes.Equal(bytes2.And(n.Value, w.Mask), w.Value), nil
+		
+		mask := make([]byte, len(w.Value))
+		for i,_ := range mask {
+			mask[i] = 0xFF
+		}
+		if len(w.Mask) > 0 {
+			mask = bytes2.And(mask, w.Mask)
+		}
+		if len(n.Mask) > 0 {
+			mask = bytes2.And(mask, n.Mask)
+		}
+		return bytes.Equal(bytes2.And(n.Value, mask), w.Value), nil
 	}
 }
 
