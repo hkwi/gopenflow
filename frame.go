@@ -9,12 +9,12 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow/oxm"
 	"github.com/hkwi/nlgo"
-	layers2 "github.com/hkwi/suppl/gopacket/layers"
+	_ "github.com/hkwi/suppl/gopacket/layers"
 )
 
 func makeLwapp(dot11pkt []byte) ([]byte, error) {
 	//
-	// Ether HDR + LWAPP HDR + 802.11
+	// Ether HDR + LWAPP HDR + 802.11(without FCS)
 	//
 	pkt := make([]byte, 20, 20+len(dot11pkt))
 
@@ -172,8 +172,8 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 	}
 
 	dot11 := rt.Payload
-	if !rt.Flags.FCS() {
-		dot11 = append(dot11, 0, 0, 0, 0) // append dummy FCS - because dot11 parser requires this
+	if rt.Flags.FCS() {
+		dot11 = dot11[:len(dot11)-4] // remove FCS
 	}
 
 	if data, err := makeLwapp(dot11); err != nil {
@@ -187,16 +187,18 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 }
 
 func (self *Frame) Dot11() ([]byte, error) {
+	// requires LWAPP gopacket registration here
 	dpkt := gopacket.NewPacket(self.Data, layers.LayerTypeEthernet, gopacket.Lazy)
-	if dtl := dpkt.Layer(layers2.LayerTypeLwapp); dtl == nil {
-		return nil, fmt.Errorf("dot11 layer error")
-	} else if dt, ok := dtl.(*layers2.Lwapp); !ok {
-		return nil, fmt.Errorf("dot11 layer type error")
-	} else if dt.NextLayerType() != layers.LayerTypeDot11 {
-		return nil, fmt.Errorf("lwapp data packet required")
-	} else {
-		return dt.Payload, nil
+
+	if dot11Layer := dpkt.Layer(layers.LayerTypeDot11); dot11Layer != nil {
+		dot11, _ := dot11Layer.(*layers.Dot11)
+		payload := make([]byte, len(dot11.Contents)+len(dot11.Payload)+4)
+		copy(payload, dot11.Contents)
+		copy(payload[len(dot11.Contents):], dot11.Payload)
+		binary.LittleEndian.PutUint32(payload[len(dot11.Contents)+len(dot11.Payload):], dot11.Checksum)
+		return payload, nil
 	}
+	return nil, fmt.Errorf("no dot11 layer")
 }
 
 func (self *Frame) Radiotap() ([]byte, error) {
