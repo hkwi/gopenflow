@@ -3,13 +3,13 @@ package main
 import (
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4"
 	"io"
 	"log"
 	"net"
 	"strings"
-	"fmt"
 )
 
 var hello = string([]byte{4, ofp4.OFPT_HELLO, 0, 8, 255, 0, 0, 1})
