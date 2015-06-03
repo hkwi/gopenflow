@@ -104,8 +104,10 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 					want = p.Value[0]
 				}
 				var have uint8
-				if v := data.Oob[key].(ofp4sw.OxmValueMask); len(v.Value) > 0 {
-					have = v.Value[0]
+				if val, ok := data.Oob[key]; ok && val != nil {
+					if v, ok := val.(ofp4sw.OxmValueMask); ok && len(v.Value) > 0 {
+						have = v.Value[0]
+					}
 				}
 				return want == have, nil
 			case oxm.STROXM_BASIC_DOT11_FRAME_CTRL:
