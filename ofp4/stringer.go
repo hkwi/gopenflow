@@ -323,10 +323,10 @@ func (self Instruction) String() string {
 		case OFPIT_WRITE_METADATA:
 			m := InstructionWriteMetadata(inst)
 			if mask := m.MetadataMask(); mask != 0 {
-				ret = append(ret, fmt.Sprintf("@meta=0x%x/0x%x",
+				ret = append(ret, fmt.Sprintf("@metadata=0x%x/0x%x",
 					m.Metadata(), mask))
 			} else {
-				ret = append(ret, fmt.Sprintf("@meta=0x%x",
+				ret = append(ret, fmt.Sprintf("@metadata=0x%x",
 					m.Metadata()))
 			}
 		case OFPIT_WRITE_ACTIONS:
