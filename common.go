@@ -18,7 +18,7 @@ type Port interface {
 	Name() string
 	HwAddr() [6]byte
 	PhysicalPort() uint32
-	Monitor() <-chan bool // By passing false, datapath will remove this port.
+	Monitor() <-chan bool // By passing false, datapath will remove this port. XXX: Monitor notifies datapath to send port_status message, so for deletion, we have to change this passing all of the member of port_mod message for concurrency.
 	Ingress() <-chan Frame
 	Egress(Frame) error
 

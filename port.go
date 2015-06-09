@@ -703,7 +703,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	case syscall.RTM_DELLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
 			port.Down()
-			port.monitor <- false
+			port.monitor <- true
 		}
 		// for wiphy unplug
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_WIPHY, syscall.NLM_F_DUMP, nil, nil); err != nil {
