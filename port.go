@@ -213,6 +213,10 @@ func (self NamedPort) Stats() (PortStats, error) {
 			return PortStats{}, err
 		} else {
 			for _, r := range res {
+				rIfinfo := (*syscall.IfInfomsg)(unsafe.Pointer(&r.Message.Data[0]))
+				if rIfinfo.Index != int32(self.ifIndex) {
+					continue
+				}
 				switch r.Message.Header.Type {
 				case syscall.RTM_NEWLINK:
 					if attrs, err := nlgo.RouteLinkPolicy.Parse(r.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
