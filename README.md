@@ -8,6 +8,5 @@ Quick start
 -----------
 ```
 go get github.com/hkwi/gopenflow
-go install github.com/hkwi/gopenflow/ofp4sw/trema_sw
-go install github.com/hkwi/gopenflow/ofp4sw/ofctl
+go install github.com/hkwi/gopenflow/...
 ```
