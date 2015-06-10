@@ -107,5 +107,7 @@ func main() {
 				}
 			}
 		}
+	default:
+		panic(fmt.Sprintf("unknown subcommand %s", args[1]))
 	}
 }
