@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sort"
 	"strings"
 )
 
@@ -67,8 +68,13 @@ func main() {
 			} else {
 				seq = ofp4.FlowStats(mp.Body())
 			}
+			var lines []string
 			for _, stat := range seq.Iter() {
-				log.Printf("%v", stat)
+				lines = append(lines, fmt.Sprintf("%v pkts=%d bytes=%d", stat, stat.PacketCount(), stat.ByteCount()))
+			}
+			sort.Sort(sort.Reverse(sort.StringSlice(lines)))
+			for _, line := range lines {
+				fmt.Print(line, "\n")
 			}
 			if binary.BigEndian.Uint16(mphdr[10:])&ofp4.OFPMPF_REPLY_MORE == 0 {
 				break
