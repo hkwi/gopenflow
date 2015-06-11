@@ -621,7 +621,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	switch mtype {
 	case syscall.RTM_NEWLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
-			port.flags = (port.flags &^ ifinfo.Change) | (ifinfo.Flags & ifinfo.Change)
+			port.flags = ifinfo.Flags
 			if len(evPort.name) > 0 {
 				port.name = evPort.name
 			}
