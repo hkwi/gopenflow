@@ -106,7 +106,7 @@ func (self FlowStats) Match() Match {
 }
 
 func (self FlowStats) Instructions() []Instruction {
-	return Instruction(self[48+len(self.Match()):]).Iter()
+	return Instruction(self[48+len(self.Match()) : int(self.Length())]).Iter()
 }
 
 func (self FlowStats) Iter() []FlowStats {
