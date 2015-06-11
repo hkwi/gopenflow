@@ -6,6 +6,7 @@ import (
 	"github.com/hkwi/gopenflow/oxm"
 	"hash/fnv"
 	"log"
+	"sort"
 )
 
 var oxmBasicHandler oxmBasic
@@ -120,9 +121,14 @@ func (self match) Conflict(target match) (bool, error) {
 }
 
 func (self match) MarshalBinary() ([]byte, error) {
-	var ret []byte
+	var bulk []string
 	for k, v := range self {
-		ret = append(ret, k.Bytes(v)...)
+		bulk = append(bulk, string(k.Bytes(v)))
+	}
+	sort.Strings(bulk)
+	var ret []byte
+	for _, b := range bulk {
+		ret = append(ret, []byte(b)...)
 	}
 	return ret, nil
 }
