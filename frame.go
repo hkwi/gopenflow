@@ -18,9 +18,10 @@ func makeLwapp(dot11pkt []byte) ([]byte, error) {
 	//
 	pkt := make([]byte, 20, 20+len(dot11pkt))
 
-	dpkt := gopacket.NewPacket(dot11pkt, layers.LayerTypeDot11, gopacket.Lazy)
+	fcsPkt := append(append([]byte{}, dot11pkt...), 0, 0, 0, 0)
+	dpkt := gopacket.NewPacket(fcsPkt, layers.LayerTypeDot11, gopacket.Lazy)
 	if dtl := dpkt.Layer(layers.LayerTypeDot11); dtl == nil {
-		return nil, fmt.Errorf("dot11 layer error")
+		return nil, fmt.Errorf("dot11 pkt error:%v", dot11pkt)
 	} else if dt, ok := dtl.(*layers.Dot11); !ok {
 		return nil, fmt.Errorf("dot11 layer type error")
 	} else {
