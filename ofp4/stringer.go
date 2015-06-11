@@ -330,11 +330,15 @@ func (self Instruction) String() string {
 					m.Metadata()))
 			}
 		case OFPIT_WRITE_ACTIONS:
-			ret = append(ret, fmt.Sprintf("@write,%v",
-				InstructionActions(inst).Actions()))
+			ret = append(ret, "@write")
+			for _, a := range InstructionActions(inst).Actions().Iter() {
+				ret = append(ret, fmt.Sprintf("%v", a))
+			}
 		case OFPIT_APPLY_ACTIONS:
-			ret = append(ret, fmt.Sprintf("@apply,%v",
-				InstructionActions(inst).Actions()))
+			ret = append(ret, "@apply")
+			for _, a := range InstructionActions(inst).Actions().Iter() {
+				ret = append(ret, fmt.Sprintf("%v", a))
+			}
 		case OFPIT_CLEAR_ACTIONS:
 			ret = append(ret, "@clear")
 		case OFPIT_METER:
