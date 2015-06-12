@@ -70,7 +70,7 @@ func main() {
 			}
 			var lines []string
 			for _, stat := range seq.Iter() {
-				lines = append(lines, fmt.Sprintf("%v pkts=%d bytes=%d", stat, stat.PacketCount(), stat.ByteCount()))
+				lines = append(lines, fmt.Sprintf("%v pkts=%d bytes=%d dur=%d", stat, stat.PacketCount(), stat.ByteCount(), stat.DurationSec()))
 			}
 			sort.Sort(sort.Reverse(sort.StringSlice(lines)))
 			for _, line := range lines {
