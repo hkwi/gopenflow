@@ -92,59 +92,71 @@ func (self *Pipeline) AddPort(port gopenflow.Port) error {
 	}
 	self.ports[portNo] = port
 	self.portAlive[portNo] = watchTimer{}
-	go func() {
-		// xxx: locks !
-		buf := makePort(portNo, port)
-		for _, ch := range self.channels {
-			ch.Notify(ofp4.MakePortStatus(ofp4.OFPPR_ADD, buf))
+	updateTimer := func(ofpPort []byte) {
+		wt := self.portAlive[portNo]
+		if ofp4.Port(ofpPort).State()&ofp4.OFPPS_LIVE != 0 {
+			if wt.Active == nil {
+				save := time.Now()
+				wt.Active = &save
+				self.portAlive[portNo] = wt
+			}
+		} else {
+			if wt.Active != nil {
+				wt.Past += time.Now().Sub(*wt.Active)
+				wt.Active = nil
+				self.portAlive[portNo] = wt
+			}
 		}
-		for {
-			select {
-			case alive := <-port.Monitor():
-				buf := makePort(portNo, port)
-				if !bytes.Equal(self.portSnapshot[portNo], buf) || !alive {
-					reason := uint8(ofp4.OFPPR_MODIFY)
-					self.portSnapshot[portNo] = buf
-					if !alive {
-						reason = ofp4.OFPPR_DELETE
-						delete(self.portSnapshot, portNo)
-						delete(self.ports, portNo)
-					}
-					for _, ch := range self.channels {
-						ch.Notify(ofp4.MakePortStatus(reason, buf))
-					}
-				}
-				wt := self.portAlive[portNo]
-				if ofp4.Port(buf).State()&ofp4.OFPPS_LIVE != 0 {
-					if wt.Active == nil {
-						save := time.Now()
-						wt.Active = &save
-						self.portAlive[portNo] = wt
-					}
-				} else {
-					if wt.Active != nil {
-						wt.Past += time.Now().Sub(*wt.Active)
-						wt.Active = nil
-						self.portAlive[portNo] = wt
-					}
-				}
-			case pkt := <-port.Ingress():
-				oob := match(make(map[OxmKey]OxmPayload))
-				if err := oob.UnmarshalBinary(pkt.Oob); err != nil {
-					log.Print(err)
-				} else {
-					self.datapath <- &flowTask{
-						Frame: Frame{
-							serialized: pkt.Data,
-							inPort:     portNo,
-							inPhyPort:  port.PhysicalPort(),
-							Oob:        oob,
-						},
-						pipe: self,
-					}
+	}
+
+	// add port first.
+	ofpPort := makePort(portNo, port)
+	self.portSnapshot[portNo] = ofpPort
+	updateTimer(ofpPort)
+	for _, ch := range self.channels {
+		ch.Notify(ofp4.MakePortStatus(ofp4.OFPPR_ADD, ofpPort))
+	}
+	
+	pktIngress := make(chan bool)
+	go func(){
+		for pkt := range port.Ingress() {
+			oob := match(make(map[OxmKey]OxmPayload))
+			if err := oob.UnmarshalBinary(pkt.Oob); err != nil {
+				log.Print(err)
+			} else {
+				self.datapath <- &flowTask{
+					Frame: Frame{
+						serialized: pkt.Data,
+						inPort:     portNo,
+						inPhyPort:  port.PhysicalPort(),
+						Oob:        oob,
+					},
+					pipe: self,
 				}
 			}
 		}
+		pktIngress <- true
+	}()
+	go func() {
+		for _ = range port.Monitor() {
+			ofpPort := makePort(portNo, port)
+			if bytes.Equal(ofpPort, self.portSnapshot[portNo]) {
+				continue
+			} else {
+				self.portSnapshot[portNo] = ofpPort
+			}
+			for _, ch := range self.channels {
+				ch.Notify(ofp4.MakePortStatus(ofp4.OFPPR_MODIFY, ofpPort))
+			}
+			updateTimer(ofpPort)
+		}
+		for _, ch := range self.channels {
+			ch.Notify(ofp4.MakePortStatus(ofp4.OFPPR_DELETE, self.portSnapshot[portNo]))
+		}
+		<-pktIngress
+		delete(self.ports, portNo)
+		delete(self.portSnapshot, portNo)
+		delete(self.portAlive, portNo)
 	}()
 	return nil
 }
@@ -507,24 +519,18 @@ func (pipe *Pipeline) sendOutput(output outputToPort) error {
 		portNo := output.outPort
 		if 0 < portNo && portNo <= ofp4.OFPP_MAX {
 			if port := pipe.getPort(portNo); port == nil {
-				return ofp4.MakeErrorMsg(
-					ofp4.OFPET_PORT_MOD_FAILED,
-					ofp4.OFPPMFC_BAD_PORT)
+				return fmt.Errorf("output port missing %d", portNo)
 			} else if fr, err := output.getFrozen(); err != nil {
 				return err
 			} else {
 				port.Egress(fr)
 			}
 		} else {
-			return ofp4.MakeErrorMsg(
-				ofp4.OFPET_PORT_MOD_FAILED,
-				ofp4.OFPPMFC_BAD_PORT)
+			return fmt.Errorf("unknown output special port")
 		}
 	case ofp4.OFPP_IN_PORT:
 		if port := pipe.getPort(output.inPort); port == nil {
-			return ofp4.MakeErrorMsg(
-				ofp4.OFPET_PORT_MOD_FAILED,
-				ofp4.OFPPMFC_BAD_PORT)
+			return fmt.Errorf("output port missing %d", output.inPort)
 		} else if fr, err := output.getFrozen(); err != nil {
 			return err
 		} else {

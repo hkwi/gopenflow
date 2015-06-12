@@ -250,6 +250,9 @@ func (self NamedPort) Stats() (PortStats, error) {
 	return PortStats{}, fmt.Errorf("rtnetlink query failed")
 }
 
+// Up activates packet processing.
+// When the interface is down(IFF_UP is unset), opening the socket raise error.
+// This is because we have to call Up each time the state changed.
 func (self *NamedPort) Up() error {
 	self.lock.Lock()
 	defer self.lock.Unlock()
@@ -436,8 +439,8 @@ func (self *NamedPort) Down() {
 }
 
 func (self NamedPort) Close() error {
-	close(self.ingress)
 	close(self.monitor)
+	close(self.ingress)
 	return nil
 }
 
@@ -707,8 +710,9 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	case syscall.RTM_DELLINK:
 		if port := self.ports[evPort.ifIndex]; port != nil {
 			port.Down()
-			port.monitor <- true
+			port.Close()
 		}
+		delete(self.ports, evPort.ifIndex)
 		// for wiphy unplug
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_WIPHY, syscall.NLM_F_DUMP, nil, nil); err != nil {
 			log.Print(err)
