@@ -62,6 +62,12 @@ func NewPipeline() *Pipeline {
 		Desc:         ofp4.Desc(make([]byte, 1056)),
 		missSendLen:  ofp4.OFPCML_NO_BUFFER,
 	}
+	go func(){
+		for {
+			time.Sleep(time.Second)
+			self.validate(time.Now())
+		}
+	}()
 	go MapReduce(self.datapath, 4) // XXX: NUM_CPUS
 	return self
 }
