@@ -381,6 +381,7 @@ func (self *NamedPort) Up() error {
 				}
 			}
 		}
+		close(self.ingress)
 	}()
 	return nil
 }
@@ -440,7 +441,6 @@ func (self *NamedPort) Down() {
 
 func (self NamedPort) Close() error {
 	close(self.monitor)
-	close(self.ingress)
 	return nil
 }
 
