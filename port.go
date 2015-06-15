@@ -306,7 +306,7 @@ func (self *NamedPort) Up() error {
 				if e, ok := err.(syscall.Errno); ok && e.Temporary() {
 					continue
 				} else {
-					log.Print(err)
+					log.Print("Recvmsg", err)
 					break
 				}
 			} else if bufN == 0 {
@@ -381,7 +381,6 @@ func (self *NamedPort) Up() error {
 				}
 			}
 		}
-		close(self.ingress)
 	}()
 	return nil
 }
@@ -441,6 +440,7 @@ func (self *NamedPort) Down() {
 
 func (self NamedPort) Close() error {
 	close(self.monitor)
+	close(self.ingress)
 	return nil
 }
 
@@ -708,11 +708,11 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			}
 		}
 	case syscall.RTM_DELLINK:
-		if port := self.ports[evPort.ifIndex]; port != nil {
+		if port, ok := self.ports[evPort.ifIndex]; ok && port != nil {
 			port.Down()
 			port.Close()
+			delete(self.ports, evPort.ifIndex)
 		}
-		delete(self.ports, evPort.ifIndex)
 		// for wiphy unplug
 		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_WIPHY, syscall.NLM_F_DUMP, nil, nil); err != nil {
 			log.Print(err)
