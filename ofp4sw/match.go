@@ -74,6 +74,11 @@ func (self match) Fit(target match) (bool, error) {
 			}
 		}
 	}
+	for oxmKey, _ := range target {
+		if _, ok := self[oxmKey]; !ok { // target has more specific rule
+			return false, nil
+		}
+	}
 	return true, nil
 }
 
