@@ -62,7 +62,7 @@ func NewPipeline() *Pipeline {
 		Desc:         ofp4.Desc(make([]byte, 1056)),
 		missSendLen:  ofp4.OFPCML_NO_BUFFER,
 	}
-	go func(){
+	go func() {
 		for {
 			time.Sleep(time.Second)
 			self.validate(time.Now())
@@ -116,9 +116,9 @@ func (self *Pipeline) AddPort(port gopenflow.Port) error {
 	for _, ch := range self.channels {
 		ch.Notify(ofp4.MakePortStatus(ofp4.OFPPR_ADD, ofpPort))
 	}
-	
+
 	pktIngress := make(chan bool)
-	go func(){
+	go func() {
 		for pkt := range port.Ingress() {
 			oob := match(make(map[OxmKey]OxmPayload))
 			if err := oob.UnmarshalBinary(pkt.Oob); err != nil {
