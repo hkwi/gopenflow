@@ -515,3 +515,12 @@ func (self OxmKeyStratos) Bytes(payload ofp4sw.OxmPayload) []byte {
 	}
 	return nil
 }
+
+func (self OxmKeyStratos) IsEmpty(payload ofp4sw.OxmPayload) bool {
+	if self.Field == oxm.STRATOS_OXM_FIELD_BASIC && self.Type == oxm.STROXM_BASIC_DOT11 {
+		if v, ok := payload.(ofp4sw.OxmValueMask); ok && len(v.Value) > 0 && v.Value[0] == 0 {
+			return true
+		}
+	}
+	return false
+}

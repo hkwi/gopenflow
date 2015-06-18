@@ -74,7 +74,10 @@ func (self match) Fit(target match) (bool, error) {
 			}
 		}
 	}
-	for oxmKey, _ := range target {
+	for oxmKey, tPayload := range target {
+		if oxmKey.IsEmpty(tPayload) {
+			continue
+		}
 		if _, ok := self[oxmKey]; !ok { // target has more specific rule
 			return false, nil
 		}

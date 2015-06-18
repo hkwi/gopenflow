@@ -97,6 +97,10 @@ Packets with this field is always an LWAPP L2 frame.
 Switch port emits 802.11 raw frame in the LWAPP payload if this is 1.
 Switch will set this 1 when sending packet_in message with raw 802.11 frame.
 
+Setting 0 for this fields means that the packet is a normal ethernet frame of LWAPP,
+and switch will behave as if the field was missing. This approach is different from
+OFPVID_PRESENT. This is for making dot11 frame as a normal LWAPP ethernet frame.
+
 - mask : No
 - length : 1 byte
 

@@ -33,6 +33,7 @@ type ActionHandler interface {
 // as far as it satisfies the interface.
 type OxmKey interface {
 	Bytes(OxmPayload) []byte
+	IsEmpty(OxmPayload) bool // Some field use special value for meaning as if the field was not present.
 }
 
 type OxmPayload interface{}
@@ -63,6 +64,10 @@ func (self OxmKeyBasic) Bytes(payload OxmPayload) []byte {
 	copy(buf[4:], vm.Value)
 	copy(buf[4+len(vm.Value):], vm.Mask)
 	return buf
+}
+
+func (self OxmKeyBasic) IsEmpty(payload OxmPayload) bool {
+	return false
 }
 
 func (self OxmValueMask) Equal(vm OxmValueMask) bool {
@@ -122,6 +127,10 @@ func (self OxmKeyExp) Bytes(payload OxmPayload) []byte {
 		setCommon(6)
 	}
 	return buf
+}
+
+func (self OxmKeyExp) IsEmpty(payload OxmPayload) bool {
+	return false
 }
 
 // oxm helpers
