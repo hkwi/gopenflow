@@ -674,9 +674,11 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 					return true
 				}
 			}
-			for _, wiphy := range self.trackingWiphy {
-				if port.wiphy == wiphy {
-					return true
+			if port.hasWiphy {
+				for _, wiphy := range self.trackingWiphy {
+					if port.wiphy == wiphy {
+						return true
+					}
 				}
 			}
 			for idx, _ := range self.ports {
