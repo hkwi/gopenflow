@@ -377,7 +377,15 @@ func (self *NamedPort) Up() error {
 					}
 				}
 				if len(frame.Data) != 0 {
-					self.ingress <- frame
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								// this may happen in socket race condition(rtnetlink and pf_packet).
+								fmt.Println("dropping packet on closed ingress.")
+							}
+						}()
+						self.ingress <- frame
+					}()
 				}
 			}
 		}
