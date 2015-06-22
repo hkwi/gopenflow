@@ -69,7 +69,7 @@ func (self *Frame) SetLayers(layers []gopacket.Layer) {
 // so you can modify the frame information simply setting values to the slice contents directly.
 func (self *Frame) Layers() []gopacket.Layer {
 	if len(self.serialized) != 0 {
-		self.layers = gopacket.NewPacket(self.serialized, layers.LinkTypeEthernet, gopacket.NoCopy).Layers()
+		self.layers = gopacket.NewPacket(self.serialized, layers.LinkTypeEthernet, gopacket.Lazy).Layers()
 		self.serialized = self.serialized[:0]
 	}
 	return self.layers
