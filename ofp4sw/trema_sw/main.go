@@ -7,12 +7,15 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/hkwi/gopenflow"
 	"github.com/hkwi/gopenflow/ofp4ext"
 	"github.com/hkwi/gopenflow/ofp4sw"
 	"io"
 	"log"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"strings"
 	"time"
 )
@@ -36,6 +39,10 @@ func (self Wrapper) Write(p []byte) (n int, err error) {
 }
 
 func main() {
+	var debug string
+	flag.StringVar(&debug, "d", "", "debug http server port number. ex 127.0.0.1:6060")
+	var dsock string
+	flag.StringVar(&dsock, "l", "", "local listening socket. ex unix:/socket/path or tcp:host:port")
 	var ports string
 	flag.StringVar(&ports, "e", "", "comma separated switch ports (netdev names)")
 	var host string
@@ -48,6 +55,11 @@ func main() {
 
 	ofp4sw.AddOxmHandler(0xFF00E04D, ofp4ext.StratosOxm{})
 
+	if len(debug) > 0 {
+		go func() {
+			log.Println(http.ListenAndServe(debug, nil))
+		}()
+	}
 	pipe := ofp4sw.NewPipeline()
 	pipe.DatapathId = uint64(datapathId)
 
@@ -57,6 +69,24 @@ func main() {
 	} else {
 		for _, e := range strings.Split(ports, ",") {
 			pman.AddName(e)
+		}
+	}
+	if len(dsock) > 0 {
+		parts := strings.SplitN(dsock, ":", 2)
+		if li, err := net.Listen(parts[0], parts[1]); err != nil {
+			fmt.Errorf("opening unix domain socket %v failed %v", dsock, err)
+		} else {
+			go func() {
+				defer li.Close()
+				for {
+					if con, err := li.Accept(); err != nil {
+						fmt.Errorf("socket %v accept failed %v", dsock, err)
+						break
+					} else if err := pipe.AddChannel(con); err != nil {
+						fmt.Errorf("socket %v channel registeration failed", dsock)
+					}
+				}
+			}()
 		}
 	}
 	for {
