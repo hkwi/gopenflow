@@ -44,9 +44,6 @@ func (self ofmReply) Reduce() {
 		for len(resp) > 0 {
 			if n, err := self.channel.Conn.Write(resp); err != nil {
 				log.Print(err)
-				if err := self.channel.Conn.Close(); err != nil {
-					log.Print(err)
-				}
 				return
 			} else {
 				resp = resp[n:]
