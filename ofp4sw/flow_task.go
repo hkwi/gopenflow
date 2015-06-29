@@ -232,7 +232,7 @@ func (self *flowTask) Reduce() {
 	if self.nextTable != 0 {
 		self.tableId = self.nextTable
 		self.nextTable = 0
-		defer func() {
+		go func() {
 			self.pipe.datapath <- self
 		}()
 	} else {
