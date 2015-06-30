@@ -109,7 +109,14 @@ func (self StratosOxm) Match(data ofp4sw.Frame, key ofp4sw.OxmKey, payload ofp4s
 						have = v.Value[0]
 					}
 				}
-				return want == have, nil
+				switch want {
+				case 1:
+					return have == 1, nil
+				case 2:
+					return have != 1, nil
+				default:
+					return true, nil
+				}
 			case oxm.STROXM_BASIC_DOT11_FRAME_CTRL:
 				if m := fetch11(); m != nil {
 					p := payload.(ofp4sw.OxmValueMask)
@@ -361,6 +368,24 @@ func (self StratosOxm) Fit(key ofp4sw.OxmKey, narrow, wide ofp4sw.OxmPayload) (b
 		n := narrow.(ofp4sw.OxmValueMask)
 		w := wide.(ofp4sw.OxmValueMask)
 
+		if skey, ok := key.(OxmKeyStratos); ok && skey.Type == oxm.STROXM_BASIC_DOT11 && skey.Field == oxm.STRATOS_OXM_FIELD_BASIC {
+			var nval, wval uint8
+			if len(n.Value) > 0 {
+				nval = n.Value[0]
+			}
+			if len(w.Value) > 0 {
+				wval = w.Value[0]
+			}
+			switch wval {
+			default:
+				return true, nil
+			case 1:
+				return nval == 1, nil
+			case 2:
+				return nval != 1, nil
+			}
+		}
+
 		mask := make([]byte, len(w.Value))
 		for i, _ := range mask {
 			mask[i] = 0xFF
@@ -382,6 +407,25 @@ func (self StratosOxm) Conflict(key ofp4sw.OxmKey, a, b ofp4sw.OxmPayload) (bool
 	} else {
 		x := a.(ofp4sw.OxmValueMask)
 		y := b.(ofp4sw.OxmValueMask)
+
+		if skey, ok := key.(OxmKeyStratos); ok && skey.Type == oxm.STROXM_BASIC_DOT11 && skey.Field == oxm.STRATOS_OXM_FIELD_BASIC {
+			var xval, yval uint8
+			if len(x.Value) > 0 {
+				xval = x.Value[0]
+			}
+			if len(y.Value) > 0 {
+				yval = y.Value[0]
+			}
+			switch {
+			case xval == 1 && yval == 2:
+				return true, nil
+			case xval == 2 && yval == 1:
+				return true, nil
+			default:
+				return false, nil
+			}
+		}
+
 		mask := bytes2.And(x.Mask, y.Mask)
 		return bytes.Equal(bytes2.And(x.Value, mask), bytes2.And(y.Value, mask)), nil
 	}

@@ -92,12 +92,17 @@ STRATOS_OXM_FIELD_BASIC is used for usual frame matching.
 We don't use this value for normal use for now. 0 will be reserved.
 
 ### STROXM_BASIC_DOT11
-Bit 1 indicates that operations on that LWAPP L2 frame is done as 802.11 frame. 
-Packets with this field is always an LWAPP L2 frame.
+Value 1 indicates that the frame is an 802.11 frame in LWAPP L2 frame.
+Packet with this field 1 is always an LWAPP L2 frame.
 Switch port emits 802.11 raw frame in the LWAPP payload if this is 1.
 Switch will set this 1 when sending packet_in message with raw 802.11 frame.
 
-Setting 0 for this fields means that the packet is a normal ethernet frame of LWAPP,
+Value 0 indicates DONT-CARE. Flow rules that have 0 will match both 802.11 and
+non-802.11 frame.
+
+Value 2 indicates that the frame not an 802.11 frame explicitly.
+Flow rule with this field 2 does not match 802.11 frame.
+Setting 2 for this fields means that the packet is a normal ethernet frame of LWAPP,
 and switch will behave as if the field was missing. This approach is different from
 OFPVID_PRESENT. This is for making dot11 frame as a normal LWAPP ethernet frame.
 

@@ -76,7 +76,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 			if oob.Experimenter == oxm.STRATOS_EXPERIMENTER_ID &&
 				oob.Field == oxm.STRATOS_OXM_FIELD_BASIC &&
 				oob.Type == oxm.STROXM_BASIC_DOT11 &&
-				oob.Value[0] > 0 {
+				oob.Value[0] == 1 {
 				dot11 = true
 			}
 		}
