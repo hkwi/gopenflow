@@ -94,6 +94,8 @@ func main() {
 			panic(err)
 		} else if con, err := net.DialTCP("tcp", nil, &net.TCPAddr{IP: addr.IP, Port: port}); err != nil {
 			log.Print(err)
+		} else if err := con.SetDeadline(5 * time.Second); err!= nil {
+			log.Print(err)
 		} else {
 			ch := Wrapper{
 				con:    con,
