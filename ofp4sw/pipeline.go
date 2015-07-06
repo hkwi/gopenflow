@@ -226,8 +226,12 @@ func (self *Pipeline) AddChannel(conn io.ReadWriteCloser) error {
 			}
 			reply := ofmReply{pipe: self, channel: ch, req: msg}
 			switch ofp4.Header(msg).Type() {
+			case ofp4.OFPT_ERROR:
+				log.Print("got unexpected OFPT_ERROR")
 			case ofp4.OFPT_ECHO_REQUEST:
 				worker <- &ofmEcho{reply}
+			case ofp4.OFPT_ECHO_REPLY:
+				log.Print("got unexpected OFPT_ECHO_REPLY")
 			case ofp4.OFPT_EXPERIMENTER:
 				worker <- &ofmExperimenter{reply}
 			case ofp4.OFPT_FEATURES_REQUEST:
@@ -318,10 +322,9 @@ func (self *Pipeline) AddChannel(conn io.ReadWriteCloser) error {
 			case ofp4.OFPT_METER_MOD:
 				worker <- &ofmMeterMod{reply}
 			default:
-				panic("unknown ofp_header.type")
+				fmt.Printf("unknown ofp_header.type %v\n", msg)
+				return
 			}
-			// xxx:
-			// log.Print(msg)
 		}
 	}()
 	return nil
