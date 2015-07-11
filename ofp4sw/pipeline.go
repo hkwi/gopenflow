@@ -521,6 +521,9 @@ func (pipe *Pipeline) sendOutput(output outputToPort) error {
 	default:
 		portNo := output.outPort
 		if 0 < portNo && portNo <= ofp4.OFPP_MAX {
+			if portNo == output.inPort {
+				return fmt.Errorf("output to ingress will be just dropped")
+			}
 			if port := pipe.getPort(portNo); port == nil {
 				return fmt.Errorf("output port missing %d", portNo)
 			} else if fr, err := output.getFrozen(); err != nil {
