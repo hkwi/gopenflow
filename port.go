@@ -104,7 +104,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 							Header: syscall.NlAttr{
 								Type: nlgo.NL80211_ATTR_FRAME,
 							},
-							Value: buf,
+							Value: nlgo.Binary(buf),
 						},
 					}); err != nil {
 						return err
@@ -116,7 +116,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 								if attrs, err := nlgo.Nl80211Policy.Parse(r.Payload); err != nil {
 									return err
 								} else {
-									cookie := attrs.Get(nlgo.NL80211_ATTR_COOKIE).(uint64)
+									cookie := uint64(attrs.(nlgo.AttrMap).Get(nlgo.NL80211_ATTR_COOKIE).(nlgo.U64))
 									self.txStatus[cookie] = status
 								}
 							}
@@ -221,8 +221,9 @@ func (self NamedPort) Stats() (PortStats, error) {
 				case syscall.RTM_NEWLINK:
 					if attrs, err := nlgo.RouteLinkPolicy.Parse(r.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
 						return PortStats{}, err
-					} else if blk := attrs.Get(nlgo.IFLA_STATS64); blk != nil {
-						s := (*nlgo.RtnlLinkStats64)(unsafe.Pointer(&blk.([]byte)[0]))
+					} else if blk := attrs.(nlgo.AttrMap).Get(nlgo.IFLA_STATS64); blk != nil {
+						stat := []byte(blk.(nlgo.Binary))
+						s := (*nlgo.RtnlLinkStats64)(unsafe.Pointer(&stat[0]))
 						ret := PortStats{
 							RxPackets: s.RxPackets,
 							TxPackets: s.TxPackets,
@@ -401,7 +402,7 @@ func (self NamedPort) GenlListen(ev nlgo.GenlMessage) {
 	case nlgo.NL80211_CMD_FRAME:
 		if attrs, err := nlgo.Nl80211Policy.Parse(ev.Payload); err != nil {
 			log.Print(err)
-		} else if frame, err := FrameFromNlAttr(attrs); err != nil {
+		} else if frame, err := FrameFromNlAttr(attrs.(nlgo.AttrMap)); err != nil {
 			log.Print(err)
 		} else {
 			self.ingress <- frame
@@ -412,9 +413,13 @@ func (self NamedPort) GenlListen(ev nlgo.GenlMessage) {
 
 		if attrs, err := nlgo.Nl80211Policy.Parse(ev.Payload); err != nil {
 			log.Print(err)
+		} else if amap, ok := attrs.(nlgo.AttrMap); !ok {
+			log.Print("nl80211 policy did not return attr map")
 		} else {
-			cookie = attrs.Get(nlgo.NL80211_ATTR_COOKIE).(uint64)
-			ack = attrs.Get(nlgo.NL80211_ATTR_ACK).(bool)
+			cookie = uint64(amap.Get(nlgo.NL80211_ATTR_COOKIE).(nlgo.U64))
+			if value := amap.Get(nlgo.NL80211_ATTR_ACK); value != nil {
+				ack = true
+			}
 		}
 		func() {
 			self.lock.Lock()
@@ -472,14 +477,9 @@ func (self *NamedPort) Vendor(reqAny interface{}) interface{} {
 			if hres, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_REGISTER_FRAME, 0, nil, nlgo.AttrList{
 				nlgo.Attr{
 					Header: syscall.NlAttr{
-						Type: nlgo.NL80211_ATTR_FRAME_MATCH | syscall.NLA_F_NESTED,
+						Type: nlgo.NL80211_ATTR_FRAME_MATCH,
 					},
-					Value: nlgo.Attr{
-						Header: syscall.NlAttr{
-							Type: uint16(nlgo.NLA_BINARY),
-						},
-						Value: []byte(fr),
-					},
+					Value: nlgo.Binary(fr),
 				},
 			}); err != nil {
 				return err
@@ -570,14 +570,9 @@ func (self *NamedPortManager) AddName(name string) error {
 	if res, err := self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
 		nlgo.Attr{
 			Header: syscall.NlAttr{
-				Type: syscall.IFLA_IFNAME | syscall.NLA_F_NESTED,
+				Type: syscall.IFLA_IFNAME,
 			},
-			Value: nlgo.Attr{
-				Header: syscall.NlAttr{
-					Type: uint16(nlgo.NLA_STRING),
-				},
-				Value: name,
-			},
+			Value: nlgo.NulString(name),
 		},
 	}); err != nil {
 		return err
@@ -617,15 +612,17 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 	}
 	if attrs, err := nlgo.RouteLinkPolicy.Parse(ev.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
 		log.Print(err)
+	} else if amap, ok := attrs.(nlgo.AttrMap); !ok {
+		log.Print("route link policy did not return attr map")
 	} else {
-		if t := attrs.Get(nlgo.IFLA_IFNAME); t != nil {
-			evPort.name = nlgo.NlaStringRemoveNul(t.(string))
+		if t := amap.Get(nlgo.IFLA_IFNAME); t != nil {
+			evPort.name = string(t.(nlgo.NulString))
 		}
-		if t := attrs.Get(nlgo.IFLA_MTU); t != nil {
-			evPort.mtu = t.(uint32)
+		if t := amap.Get(nlgo.IFLA_MTU); t != nil {
+			evPort.mtu = uint32(t.(nlgo.U32))
 		}
-		if t := attrs.Get(nlgo.IFLA_ADDRESS); t != nil {
-			evPort.mac = t.([]byte)
+		if t := amap.Get(nlgo.IFLA_ADDRESS); t != nil {
+			evPort.mac = []byte(t.(nlgo.Binary))
 		}
 	}
 
@@ -654,7 +651,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 				Header: syscall.NlAttr{
 					Type: nlgo.NL80211_ATTR_IFINDEX,
 				},
-				Value: uint32(ifinfo.Index),
+				Value: nlgo.U32(ifinfo.Index),
 			},
 		}); err != nil {
 			log.Print(err)
@@ -668,10 +665,12 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 				}
 				if attrs, err := nlgo.Nl80211Policy.Parse(r.Payload); err != nil {
 					log.Print(err)
+				} else if amap, ok := attrs.(nlgo.AttrMap); !ok {
+					log.Print("nl80211 attr policy error")
 				} else {
-					if evPort.ifIndex == attrs.Get(nlgo.NL80211_ATTR_IFINDEX).(uint32) {
+					if evPort.ifIndex == uint32(amap.Get(nlgo.NL80211_ATTR_IFINDEX).(nlgo.U32)) {
 						evPort.hasWiphy = true
-						evPort.wiphy = attrs.Get(nlgo.NL80211_ATTR_WIPHY).(uint32)
+						evPort.wiphy = uint32(amap.Get(nlgo.NL80211_ATTR_WIPHY).(nlgo.U32))
 					}
 				}
 			}
@@ -735,7 +734,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 				if attrs, err := nlgo.Nl80211Policy.Parse(r.Payload); err != nil {
 					log.Print(err)
 				} else {
-					activeWiphy = append(activeWiphy, attrs.Get(nlgo.NL80211_ATTR_WIPHY).(uint32))
+					activeWiphy = append(activeWiphy, uint32(attrs.(nlgo.AttrMap).Get(nlgo.NL80211_ATTR_WIPHY).(nlgo.U32)))
 				}
 			}
 			var trackingWiphy []uint32

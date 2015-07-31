@@ -216,8 +216,8 @@ func (self *Frame) Radiotap() ([]byte, error) {
 	}
 }
 
-func FrameFromNlAttr(attrs nlgo.AttrList) (Frame, error) {
-	freq := attrs.Get(nlgo.NL80211_ATTR_WIPHY_FREQ).(uint32)
+func FrameFromNlAttr(attrs nlgo.AttrMap) (Frame, error) {
+	freq := uint32(attrs.Get(nlgo.NL80211_ATTR_WIPHY_FREQ).(nlgo.U32))
 	freqValue := make([]byte, 3)
 	binary.LittleEndian.PutUint16(freqValue, uint16(freq))
 
@@ -232,10 +232,10 @@ func FrameFromNlAttr(attrs nlgo.AttrList) (Frame, error) {
 			Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
 			Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
 			Type:         oxm.STROXM_RADIOTAP_DBM_ANTSIGNAL,
-			Value:        []byte{uint8(t.(uint32))},
+			Value:        []byte{uint8(t.(nlgo.U32))},
 		}.Bytes()...)
 	}
-	if data, err := makeLwapp(attrs.Get(nlgo.NL80211_ATTR_FRAME).([]byte)); err != nil {
+	if data, err := makeLwapp([]byte(attrs.Get(nlgo.NL80211_ATTR_FRAME).(nlgo.Binary))); err != nil {
 		return Frame{}, err
 	} else {
 		return Frame{

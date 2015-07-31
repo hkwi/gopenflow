@@ -472,9 +472,6 @@ type ofmMpDesc struct {
 }
 
 func (self *ofmMpDesc) Map() Reducable {
-
-	log.Print(self.pipe.Desc)
-
 	self.chunks = append(self.chunks, self.pipe.Desc)
 	return self
 }
