@@ -151,11 +151,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 		}
 	case syscall2.ARPHRD_6LOWPAN:
 		if binary.BigEndian.Uint16(pkt.Data[12:]) == 0x86DD {
-			buf := make([]byte, 14+len(pkt.Data[12:]))
-			// linux_sll is in network byte order.
-			binary.BigEndian.PutUint16(buf, uint16(layers.LinuxSLLPacketTypeOutgoing))
-			binary.BigEndian.PutUint16(buf[2:], syscall2.ARPHRD_6LOWPAN)
-			copy(buf[14:], pkt.Data[12:]) // copy from ethertype
+			buf := pkt.Data[14:]
 			if n, err := syscall.Write(self.fd, buf); err != nil {
 				return err
 			} else if n != len(buf) {
@@ -395,25 +391,19 @@ func (self *NamedPort) Up() error {
 						}
 					}
 				case syscall2.ARPHRD_6LOWPAN:
-					pkt := make([]byte, bufN-2)
-					copy(pkt[12:], buf[14:bufN])
+					pkt := make([]byte, 14+bufN)
+					binary.BigEndian.PutUint16(pkt[12:], 0x86DD)
+					copy(pkt[14:], buf[:bufN])
 
-					bpkt := gopacket.NewPacket(buf[:bufN], layers.LayerTypeLinuxSLL, gopacket.Lazy)
-					sll := bpkt.Layer(layers.LayerTypeLinuxSLL).(*layers.LinuxSLL)
+					bpkt := gopacket.NewPacket(buf[:bufN], layers.LayerTypeIPv6, gopacket.Lazy)
 					ip6 := bpkt.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
 					if ip6.DstIP.IsMulticast() {
 						copy(pkt, []byte{0x33, 0x33})
 						copy(pkt[2:6], []byte(ip6.DstIP.To16())[12:16])
 						copy(pkt[6:], self.get6lowpanMac(ip6.SrcIP))
 					} else {
-						switch sll.PacketType {
-						case layers.LinuxSLLPacketTypeHost: // unicast to us
-							copy(pkt, v6toMac(ip6.DstIP))
-							copy(pkt[6:], self.get6lowpanMac(ip6.SrcIP))
-						default:
-							copy(pkt, self.get6lowpanMac(ip6.DstIP))
-							copy(pkt[6:], v6toMac(ip6.SrcIP))
-						}
+						copy(pkt[6:], self.get6lowpanMac(ip6.SrcIP))
+						copy(pkt, self.get6lowpanMac(ip6.DstIP))
 					}
 					frame = Frame{
 						Data: pkt,
