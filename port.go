@@ -12,6 +12,7 @@ import (
 	"github.com/hkwi/nlgo"
 	syscall2 "github.com/hkwi/suppl/syscall"
 	"log"
+	"net"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -36,6 +37,7 @@ type NamedPort struct {
 	// socket handling
 	hatype   uint16
 	fd       int
+	rhub     *nlgo.RtHub   // pointer to NamedPortManager's rhub
 	ghub     *nlgo.GenlHub // GenlHub is here because Frame registration can only be removed by closing the socket.
 	txStatus map[uint64]chan error
 
@@ -99,7 +101,7 @@ func (self NamedPort) Egress(pkt Frame) error {
 					self.lock.Lock()
 					defer self.lock.Unlock()
 
-					if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_FRAME, 0, nil, nlgo.AttrList{
+					if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_FRAME, 0, nil, nlgo.AttrSlice{
 						nlgo.Attr{
 							Header: syscall.NlAttr{
 								Type: nlgo.NL80211_ATTR_FRAME,
@@ -139,12 +141,26 @@ func (self NamedPort) Egress(pkt Frame) error {
 			}
 		}
 	case syscall.ARPHRD_IEEE80211_RADIOTAP:
+		// XXX: only when Dot11 flag ?
 		if buf, err := pkt.Radiotap(); err != nil {
 			return err
 		} else if n, err := syscall.Write(self.fd, buf); err != nil {
 			return err
 		} else if n != len(buf) {
 			return fmt.Errorf("write not complete")
+		}
+	case syscall2.ARPHRD_6LOWPAN:
+		if binary.BigEndian.Uint16(pkt.Data[12:]) == 0x86DD {
+			buf := make([]byte, 14+len(pkt.Data[12:]))
+			// linux_sll is in network byte order.
+			binary.BigEndian.PutUint16(buf, uint16(layers.LinuxSLLPacketTypeOutgoing))
+			binary.BigEndian.PutUint16(buf[2:], syscall2.ARPHRD_6LOWPAN)
+			copy(buf[14:], pkt.Data[12:]) // copy from ethertype
+			if n, err := syscall.Write(self.fd, buf); err != nil {
+				return err
+			} else if n != len(buf) {
+				return fmt.Errorf("write not complete")
+			}
 		}
 	}
 	return nil
@@ -289,6 +305,8 @@ func (self *NamedPort) Up() error {
 				// ok
 			case syscall.ARPHRD_ETHER:
 				// ok
+			case syscall2.ARPHRD_6LOWPAN:
+				// ok
 			}
 		}
 		return nil
@@ -376,6 +394,30 @@ func (self *NamedPort) Up() error {
 							frame = f
 						}
 					}
+				case syscall2.ARPHRD_6LOWPAN:
+					pkt := make([]byte, bufN-2)
+					copy(pkt[12:], buf[14:bufN])
+
+					bpkt := gopacket.NewPacket(buf[:bufN], layers.LayerTypeLinuxSLL, gopacket.Lazy)
+					sll := bpkt.Layer(layers.LayerTypeLinuxSLL).(*layers.LinuxSLL)
+					ip6 := bpkt.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+					if ip6.DstIP.IsMulticast() {
+						copy(pkt, []byte{0x33, 0x33})
+						copy(pkt[2:6], []byte(ip6.DstIP.To16())[12:16])
+						copy(pkt[6:], self.get6lowpanMac(ip6.SrcIP))
+					} else {
+						switch sll.PacketType {
+						case layers.LinuxSLLPacketTypeHost: // unicast to us
+							copy(pkt, v6toMac(ip6.DstIP))
+							copy(pkt[6:], self.get6lowpanMac(ip6.SrcIP))
+						default:
+							copy(pkt, self.get6lowpanMac(ip6.DstIP))
+							copy(pkt[6:], v6toMac(ip6.SrcIP))
+						}
+					}
+					frame = Frame{
+						Data: pkt,
+					}
 				}
 				if len(frame.Data) != 0 {
 					func() {
@@ -391,6 +433,62 @@ func (self *NamedPort) Up() error {
 			}
 		}
 	}()
+	return nil
+}
+
+// v6toMac gets hw addr from ipv6 in lowpan rule
+func v6toMac(addr net.IP) net.HardwareAddr {
+	gaddr := []byte(addr.To16())
+	if gaddr[11] == 0xFF && gaddr[12] == 0xFE {
+		return net.HardwareAddr{
+			gaddr[8] ^ 0x02,
+			gaddr[9],
+			gaddr[10],
+			gaddr[13],
+			gaddr[14],
+			gaddr[15],
+		}
+	}
+	return nil
+}
+
+func (self NamedPort) get6lowpanMac(addr net.IP) net.HardwareAddr {
+	if msgs, err := self.rhub.Request(
+		syscall.RTM_GETROUTE,
+		syscall.NLM_F_REQUEST,
+		(*[syscall.SizeofRtMsg]byte)(unsafe.Pointer(&syscall.RtMsg{
+			Family: syscall.AF_INET6,
+		}))[:],
+		nlgo.AttrSlice{
+			nlgo.Attr{
+				Header: syscall.NlAttr{
+					Type: syscall.RTA_DST,
+				},
+				Value: nlgo.Binary(addr.To16()),
+			},
+		},
+	); err != nil {
+		return nil
+	} else {
+		for _, msg := range msgs {
+			if msg.Error != nil {
+				continue
+			}
+			switch msg.Message.Header.Type {
+			case syscall.RTM_NEWROUTE:
+				if attr, err := nlgo.RoutePolicy.Parse(msg.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofRtMsg):]); err != nil {
+					return nil
+				} else if gw := attr.(nlgo.AttrMap).Get(nlgo.RTA_GATEWAY); gw != nil {
+					if mac := v6toMac(net.IP(gw.(nlgo.Binary))); mac != nil {
+						return mac
+					}
+				}
+			}
+		}
+	}
+	if mac := v6toMac(addr); mac != nil {
+		return mac
+	}
 	return nil
 }
 
@@ -474,7 +572,7 @@ func (self *NamedPort) Vendor(reqAny interface{}) interface{} {
 			}
 		}
 		for _, fr := range self.mgmtFrames {
-			if hres, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_REGISTER_FRAME, 0, nil, nlgo.AttrList{
+			if hres, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_REGISTER_FRAME, 0, nil, nlgo.AttrSlice{
 				nlgo.Attr{
 					Header: syscall.NlAttr{
 						Type: nlgo.NL80211_ATTR_FRAME_MATCH,
@@ -531,6 +629,7 @@ type NamedPortManager struct {
 	datapath Datapath
 	hub      *nlgo.RtHub
 	ghub     *nlgo.GenlHub
+	rhub     *nlgo.RtHub // for routing table lookup
 }
 
 func NewNamedPortManager(datapath Datapath) (*NamedPortManager, error) {
@@ -544,9 +643,14 @@ func NewNamedPortManager(datapath Datapath) (*NamedPortManager, error) {
 	} else if hub, err := nlgo.NewRtHub(); err != nil {
 		ghub.Close()
 		return nil, err
+	} else if rhub, err := nlgo.NewRtHub(); err != nil {
+		ghub.Close()
+		hub.Close()
+		return nil, err
 	} else {
 		self.hub = hub
 		self.ghub = ghub
+		self.rhub = rhub
 		if err := hub.Add(syscall.RTNLGRP_LINK, self); err != nil {
 			hub.Close()
 			ghub.Close()
@@ -559,6 +663,7 @@ func NewNamedPortManager(datapath Datapath) (*NamedPortManager, error) {
 func (self NamedPortManager) Close() error {
 	self.hub.Close()
 	self.ghub.Close()
+	self.rhub.Close()
 	return nil
 }
 
@@ -567,7 +672,7 @@ func (self *NamedPortManager) AddName(name string) error {
 	defer self.lock.Unlock()
 	self.trackingNames = append(self.trackingNames, name)
 
-	if res, err := self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
+	if res, err := self.hub.Request(syscall.RTM_GETLINK, syscall.NLM_F_DUMP, nil, nlgo.AttrSlice{
 		nlgo.Attr{
 			Header: syscall.NlAttr{
 				Type: syscall.IFLA_IFNAME,
@@ -609,6 +714,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 		flags:   ifinfo.Flags,
 		fd:      -1,
 		lock:    &sync.Mutex{},
+		rhub:    self.rhub,
 	}
 	if attrs, err := nlgo.RouteLinkPolicy.Parse(ev.Message.Data[nlgo.NLMSG_ALIGN(syscall.SizeofIfInfomsg):]); err != nil {
 		log.Print(err)
@@ -646,7 +752,7 @@ func (self *NamedPortManager) RtListen(ev nlgo.RtMessage) {
 			return
 		}
 		// query wiphy
-		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_INTERFACE, syscall.NLM_F_DUMP, nil, nlgo.AttrList{
+		if res, err := self.ghub.Request("nl80211", 1, nlgo.NL80211_CMD_GET_INTERFACE, syscall.NLM_F_DUMP, nil, nlgo.AttrSlice{
 			nlgo.Attr{
 				Header: syscall.NlAttr{
 					Type: nlgo.NL80211_ATTR_IFINDEX,
