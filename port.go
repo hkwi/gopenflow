@@ -43,6 +43,7 @@ type NamedPort struct {
 
 	// below for non-monitor nl80211
 	mgmtFrames []MgmtFramePrefix
+	fragmentId uint8
 }
 
 func (self NamedPort) Name() string {
@@ -312,6 +313,8 @@ func (self *NamedPort) Up() error {
 	}
 	go func() {
 		defer self.Down()
+		var fragmentId uint8
+
 		buf := make([]byte, 32*1024)               // enough for jumbo frame
 		oob := make([]byte, syscall.CmsgSpace(20)) // msg_control, 20 = sizeof(auxdata)
 		for {
@@ -384,10 +387,11 @@ func (self *NamedPort) Up() error {
 					} else if rt, ok := rtl.(*layers.RadioTap); !ok {
 						log.Print("radiotap layer type error")
 					} else {
-						if f, err := FrameFromRadiotap(rt); err != nil {
+						if f, err := FrameFromRadiotap(rt, self.mac, fragmentId); err != nil {
 							log.Print(err)
 						} else {
 							frame = f
+							fragmentId++
 						}
 					}
 				case syscall2.ARPHRD_6LOWPAN:
@@ -490,10 +494,11 @@ func (self NamedPort) GenlListen(ev nlgo.GenlMessage) {
 	case nlgo.NL80211_CMD_FRAME:
 		if attrs, err := nlgo.Nl80211Policy.Parse(ev.Payload); err != nil {
 			log.Print(err)
-		} else if frame, err := FrameFromNlAttr(attrs.(nlgo.AttrMap)); err != nil {
+		} else if frame, err := FrameFromNlAttr(attrs.(nlgo.AttrMap), self.mac, self.fragmentId); err != nil {
 			log.Print(err)
 		} else {
 			self.ingress <- frame
+			self.fragmentId++
 		}
 	case nlgo.NL80211_CMD_FRAME_TX_STATUS:
 		var cookie uint64

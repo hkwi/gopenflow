@@ -12,42 +12,23 @@ import (
 	_ "github.com/hkwi/suppl/gopacket/layers"
 )
 
-func makeLwapp(dot11pkt []byte) ([]byte, error) {
+func makeLwapp(dot11pkt, mac []byte, fragmentId uint8) ([]byte, error) {
 	//
 	// Ether HDR + LWAPP HDR + 802.11(without FCS)
 	//
+	// as wireshark lwapp dissector handles.
+	//
 	pkt := make([]byte, 20, 20+len(dot11pkt))
 
-	fcsPkt := append(append([]byte{}, dot11pkt...), 0, 0, 0, 0)
-	dpkt := gopacket.NewPacket(fcsPkt, layers.LayerTypeDot11, gopacket.Lazy)
-	if dtl := dpkt.Layer(layers.LayerTypeDot11); dtl == nil {
-		return nil, fmt.Errorf("dot11 pkt error:%v", dot11pkt)
-	} else if dt, ok := dtl.(*layers.Dot11); !ok {
-		return nil, fmt.Errorf("dot11 layer type error")
-	} else {
-		dst := dt.Address1
-		if dt.Flags.ToDS() {
-			dst = dt.Address3
-		}
-		copy(pkt[0:6], dst)
+	// eth dst is any
+	copy(pkt[6:12], mac)                           // eth src is mac
+	binary.BigEndian.PutUint16(pkt[12:14], 0x88bb) // LWAPP(L2)
 
-		src := dt.Address2
-		if dt.Flags.FromDS() {
-			if dt.Flags.ToDS() {
-				src = dt.Address4
-			} else {
-				src = dt.Address3
-			}
-		}
-		copy(pkt[6:12], src)
+	// LWAPP header
+	pkt[15] = fragmentId                                          // LWAPP Frag ID
+	binary.BigEndian.PutUint16(pkt[16:18], uint16(len(dot11pkt))) // LWAPP Length
+	// Status/WLANs is zero
 
-		binary.BigEndian.PutUint16(pkt[12:14], 0x88bb) // LWAPP(L2)
-
-		// LWAPP header
-		// LWAPP Frag ID is zero
-		binary.BigEndian.PutUint16(pkt[16:18], uint16(len(dot11pkt))) // LWAPP Length
-		// Status/WLANs is zero
-	}
 	return append(pkt, dot11pkt...), nil
 }
 
@@ -88,7 +69,7 @@ func fetchOxmExperimenter(buf []byte) []oxmExperimenter {
 	return ret
 }
 
-func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
+func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame, error) {
 	// XXX: FCS
 	oob := oxmExperimenter{
 		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
@@ -177,7 +158,7 @@ func FrameFromRadiotap(rt *layers.RadioTap) (Frame, error) {
 		dot11 = dot11[:len(dot11)-4] // remove FCS
 	}
 
-	if data, err := makeLwapp(dot11); err != nil {
+	if data, err := makeLwapp(dot11, mac, fragmentId); err != nil {
 		return Frame{}, err
 	} else {
 		return Frame{
@@ -216,7 +197,7 @@ func (self *Frame) Radiotap() ([]byte, error) {
 	}
 }
 
-func FrameFromNlAttr(attrs nlgo.AttrMap) (Frame, error) {
+func FrameFromNlAttr(attrs nlgo.AttrMap, mac []byte, fragmentId uint8) (Frame, error) {
 	freq := uint32(attrs.Get(nlgo.NL80211_ATTR_WIPHY_FREQ).(nlgo.U32))
 	freqValue := make([]byte, 3)
 	binary.LittleEndian.PutUint16(freqValue, uint16(freq))
@@ -235,7 +216,7 @@ func FrameFromNlAttr(attrs nlgo.AttrMap) (Frame, error) {
 			Value:        []byte{uint8(t.(nlgo.U32))},
 		}.Bytes()...)
 	}
-	if data, err := makeLwapp([]byte(attrs.Get(nlgo.NL80211_ATTR_FRAME).(nlgo.Binary))); err != nil {
+	if data, err := makeLwapp([]byte(attrs.Get(nlgo.NL80211_ATTR_FRAME).(nlgo.Binary)), mac, fragmentId); err != nil {
 		return Frame{}, err
 	} else {
 		return Frame{
