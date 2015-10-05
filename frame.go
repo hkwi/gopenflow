@@ -70,6 +70,8 @@ func fetchOxmExperimenter(buf []byte) []oxmExperimenter {
 }
 
 func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame, error) {
+	var status [2]uint8
+
 	// XXX: FCS
 	oob := oxmExperimenter{
 		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
@@ -108,9 +110,13 @@ func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame
 		radiotapAdd(oxm.STROXM_RADIOTAP_FHSS, buf)
 	}
 	if rt.Present.DBMAntennaSignal() {
+		status[0] = uint8(rt.DBMAntennaSignal) // RSSI in dBm
 		radiotapAdd(oxm.STROXM_RADIOTAP_DBM_ANTSIGNAL, []byte{uint8(rt.DBMAntennaSignal)})
 	}
 	if rt.Present.DBMAntennaNoise() {
+		if rt.Present.DBMAntennaSignal() {
+			status[1] = uint8(rt.DBMAntennaSignal - rt.DBMAntennaNoise) // SNR in dB
+		}
 		radiotapAdd(oxm.STROXM_RADIOTAP_DBM_ANTNOISE, []byte{uint8(rt.DBMAntennaNoise)})
 	}
 	if rt.Present.LockQuality() {
@@ -161,6 +167,8 @@ func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame
 	if data, err := makeLwapp(dot11, mac, fragmentId); err != nil {
 		return Frame{}, err
 	} else {
+		copy(data[18:], status[:])
+
 		return Frame{
 			Data: data,
 			Oob:  oob,
