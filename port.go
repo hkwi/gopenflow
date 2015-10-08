@@ -388,7 +388,9 @@ func (self *NamedPort) Up() error {
 						log.Print("radiotap layer type error")
 					} else {
 						if f, err := FrameFromRadiotap(rt, self.mac, fragmentId); err != nil {
-							log.Print(err)
+							if _, ok := err.(frameError); !ok {
+								log.Print(err)
+							}
 						} else {
 							frame = f
 							fragmentId++

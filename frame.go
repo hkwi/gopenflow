@@ -12,6 +12,12 @@ import (
 	layers2 "github.com/hkwi/suppl/gopacket/layers"
 )
 
+type frameError string
+
+func (self frameError) Error() string {
+	return string(self)
+}
+
 func makeLwapp(dot11pkt, mac []byte, fragmentId uint8) ([]byte, error) {
 	//
 	// Ether HDR + LWAPP HDR + 802.11(without FCS)
@@ -74,7 +80,7 @@ func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame
 
 	dot11 := layers2.FetchDot11FromRadioTap(rt)
 	if dot11 == nil {
-		return Frame{}, fmt.Errorf("frame error")
+		return Frame{}, frameError("frame error")
 	}
 	oob := oxmExperimenter{
 		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
