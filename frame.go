@@ -9,7 +9,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/hkwi/gopenflow/oxm"
 	"github.com/hkwi/nlgo"
-	_ "github.com/hkwi/suppl/gopacket/layers"
+	layers2 "github.com/hkwi/suppl/gopacket/layers"
 )
 
 func makeLwapp(dot11pkt, mac []byte, fragmentId uint8) ([]byte, error) {
@@ -72,7 +72,10 @@ func fetchOxmExperimenter(buf []byte) []oxmExperimenter {
 func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame, error) {
 	var status [2]uint8
 
-	// XXX: FCS
+	dot11 := layers2.FetchDot11FromRadioTap(rt)
+	if dot11 == nil {
+		return Frame{}, fmt.Errorf("frame error")
+	}
 	oob := oxmExperimenter{
 		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
 		Field:        oxm.STRATOS_OXM_FIELD_BASIC,
@@ -157,11 +160,6 @@ func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame
 	}
 	if rt.Present.DataRetries() {
 		// gopacket no-impl
-	}
-
-	dot11 := rt.Payload
-	if rt.Flags.FCS() {
-		dot11 = dot11[:len(dot11)-4] // remove FCS
 	}
 
 	if data, err := makeLwapp(dot11, mac, fragmentId); err != nil {
