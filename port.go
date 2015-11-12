@@ -185,7 +185,7 @@ func (self NamedPort) SetConfig(mods []PortConfig) {
 				log.Print(err)
 			} else {
 				defer hub.Close()
-				ifinfo := &syscall.IfInfomsg{
+				ifinfo := syscall.IfInfomsg{
 					Index: int32(self.ifIndex),
 				}
 				if !bool(m) {
@@ -193,12 +193,13 @@ func (self NamedPort) SetConfig(mods []PortConfig) {
 				}
 				ifinfo.Change |= syscall.IFF_UP
 				// xxx:should add error check?
-				hub.Async(syscall.NetlinkMessage{
+				req := syscall.NetlinkMessage{
 					Header: syscall.NlMsghdr{
 						Type: syscall.RTM_SETLINK,
 					},
-					Data: (*[syscall.SizeofIfInfomsg]byte)(unsafe.Pointer(ifinfo))[:],
-				}, nil)
+				}
+				(*nlgo.IfInfoMessage)(&req).Set(ifinfo, nil)
+				hub.Async(req, nil)
 			}
 		default:
 			config = append(config, mod)
@@ -221,31 +222,30 @@ func (self NamedPort) Mtu() uint32 {
 }
 
 func (self NamedPort) Stats() (PortStats, error) {
-	ifinfo := (*[syscall.SizeofIfInfomsg]byte)(unsafe.Pointer(&syscall.IfInfomsg{
+	ifinfo := syscall.IfInfomsg{
 		Index: int32(self.ifIndex),
-	}))[:]
+	}
 	if hub, err := nlgo.NewRtHub(); err != nil {
 		return PortStats{}, err
 	} else {
 		defer hub.Close()
-		if res, err := hub.Sync(syscall.NetlinkMessage{
+		req := syscall.NetlinkMessage{
 			Header: syscall.NlMsghdr{
 				Type:  syscall.RTM_GETLINK,
 				Flags: syscall.NLM_F_DUMP,
 			},
-			Data: ifinfo,
-		}); err != nil {
+		}
+		(*nlgo.IfInfoMessage)(&req).Set(ifinfo, nil)
+		if res, err := hub.Sync(req); err != nil {
 			return PortStats{}, err
 		} else {
 			for _, r := range res {
-				rIfinfo := (*syscall.IfInfomsg)(unsafe.Pointer(&r.Data[0]))
-				if rIfinfo.Index != int32(self.ifIndex) {
-					continue
-				}
 				switch r.Header.Type {
 				case syscall.RTM_NEWLINK:
 					msg := nlgo.IfInfoMessage(r)
-					if attrs, err := msg.Attrs(); err != nil {
+					if msg.IfInfo().Index != int32(self.ifIndex) {
+						// pass
+					} else if attrs, err := msg.Attrs(); err != nil {
 						return PortStats{}, err
 					} else if blk := attrs.(nlgo.AttrMap).Get(nlgo.IFLA_STATS64); blk != nil {
 						stat := []byte(blk.(nlgo.Binary))
