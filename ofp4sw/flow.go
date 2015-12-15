@@ -583,17 +583,14 @@ func hookDot11Action(hdr oxm.Oxm) (uint32, []byte) {
 		if ofp4.OxmExperimenterHeader(o).Experimenter() != oxm.STRATOS_EXPERIMENTER_ID {
 			continue
 		}
-		if o.Header().Field() != oxm.STRATOS_OXM_FIELD_BASIC {
-			continue
-		}
-		switch binary.BigEndian.Uint16(o[8:]) {
+		switch o.Header().Field() {
 		case oxm.STROXM_BASIC_DOT11_ACTION_CATEGORY:
-			buf := o[10:]
+			buf := o[8:]
 			if len(action) < len(buf) {
 				action = buf
 			}
 		case oxm.STROXM_BASIC_DOT11_PUBLIC_ACTION:
-			buf := append([]byte{4}, o[10:]...)
+			buf := append([]byte{4}, o[8:]...)
 			if len(action) < len(buf) {
 				action = buf
 			}

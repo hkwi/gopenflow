@@ -7,10 +7,7 @@ import (
 )
 
 func TestDot11(t *testing.T) {
-	k := OxmKeyStratos{
-		Type:  oxm.STROXM_BASIC_DOT11,
-		Field: oxm.STRATOS_OXM_FIELD_BASIC,
-	}
+	k := OxmKeyStratos(oxm.STROXM_BASIC_DOT11)
 	vZero := ofp4sw.OxmValueMask{Value: []byte{0}}
 	vOne := ofp4sw.OxmValueMask{Value: []byte{1}}
 	vTwo := ofp4sw.OxmValueMask{Value: []byte{2}}
