@@ -41,19 +41,17 @@ func makeLwapp(dot11pkt, mac []byte, fragmentId uint8) ([]byte, error) {
 type oxmExperimenter struct {
 	Experimenter uint32
 	Field        uint8
-	Type         uint16
 	Value        []byte
 }
 
 func (self oxmExperimenter) Bytes() []byte {
-	buf := make([]byte, 10+len(self.Value))
+	buf := make([]byte, 8+len(self.Value))
 	hdr := uint32(0xffff0000)
 	hdr |= uint32(self.Field) << 9
-	hdr |= uint32(6 + len(self.Value))
+	hdr |= uint32(4 + len(self.Value))
 	binary.BigEndian.PutUint32(buf, hdr)
 	binary.BigEndian.PutUint32(buf[4:], self.Experimenter)
-	binary.BigEndian.PutUint16(buf[8:], self.Type)
-	copy(buf[10:], self.Value)
+	copy(buf[8:], self.Value)
 	return buf
 }
 
@@ -66,8 +64,7 @@ func fetchOxmExperimenter(buf []byte) []oxmExperimenter {
 			ret = append(ret, oxmExperimenter{
 				Experimenter: binary.BigEndian.Uint32(buf[4:]),
 				Field:        uint8(hdr >> 9),
-				Type:         binary.BigEndian.Uint16(buf[8:]),
-				Value:        buf[10 : 4+length],
+				Value:        buf[8 : 4+length],
 			})
 		}
 		buf = buf[4+length:]

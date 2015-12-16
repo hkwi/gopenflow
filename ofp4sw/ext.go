@@ -92,6 +92,20 @@ func (self *OxmValueMask) Merge(vm OxmValueMask) error {
 	}
 }
 
+func (self OxmValueMask) Set(value []byte) error {
+	if len(self.Value) != len(value) {
+		return fmt.Errorf("field length mismatch")
+	}
+	if len(self.Mask) > 0 {
+		for i,v := range value {
+			value[i] = (v &^ self.Mask[i]) | (self.Value[i] & self.Mask[i])
+		}
+	} else {
+		copy(value, self.Value)
+	}
+	return nil
+}
+
 // oxm types for OFPXMC_EXPERIMENTER
 
 type OxmKeyExp struct {
