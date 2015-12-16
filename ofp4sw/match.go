@@ -13,6 +13,10 @@ var oxmBasicHandler oxmBasic
 
 var _ = OxmHandler(oxmBasicHandler)
 
+var oxmNxmHandler oxmNxm
+
+var _ = OxmHandler(oxmNxmHandler)
+
 /*
 oxm_type without oxm_has_mask and oxm_length for OFPXMC_EXPERIMENTER.
 */
@@ -30,8 +34,11 @@ func (self match) Match(data Frame) bool {
 		var handler OxmHandler
 		switch k := oxmKey.(type) {
 		case OxmKeyBasic:
-			if oxm.Header(k).Class() == ofp4.OFPXMC_OPENFLOW_BASIC {
+			switch oxm.Header(k).Class() {
+			case ofp4.OFPXMC_OPENFLOW_BASIC:
 				handler = oxmBasicHandler
+			case ofp4.OFPXMC_NXM_0, OFPXMC_NXM_1:
+				handler = oxmNxmHandler
 			}
 		default:
 			handler = oxmHandlers[oxmKeys[oxmKey]]

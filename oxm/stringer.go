@@ -30,209 +30,486 @@ type single []byte
 
 func (oxm single) String() string {
 	s := "?"
+	p := oxm[4:]
 	hdr := Oxm(oxm).Header()
-	switch hdr.Class() {
-	case OFPXMC_OPENFLOW_BASIC:
-		p := oxm[4:]
-
-		switch hdr.Field() {
-		case OFPXMT_OFB_IN_PORT:
-			s = fmt.Sprintf("in_port=%v", Port(binary.BigEndian.Uint32(p)))
-		case OFPXMT_OFB_IN_PHY_PORT:
-			s = fmt.Sprintf("in_phy_port=%v", Port(binary.BigEndian.Uint32(p)))
-		case OFPXMT_OFB_METADATA:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("metadata=0x%x/0x%x",
-					binary.BigEndian.Uint64(p),
-					binary.BigEndian.Uint64(p[8:]))
-			} else {
-				s = fmt.Sprintf("metadata=0x%x",
-					binary.BigEndian.Uint64(p))
-			}
-		case OFPXMT_OFB_ETH_DST:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("eth_dst=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
-			} else {
-				s = fmt.Sprintf("eth_dst=%v", net.HardwareAddr(p))
-			}
-		case OFPXMT_OFB_ETH_SRC:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("eth_src=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
-			} else {
-				s = fmt.Sprintf("eth_src=%v", net.HardwareAddr(p))
-			}
-		case OFPXMT_OFB_ETH_TYPE:
-			s = fmt.Sprintf("eth_type=0x%04x", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_VLAN_VID:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("vlan_vid=0x%x/0x%x",
-					binary.BigEndian.Uint16(p),
-					binary.BigEndian.Uint16(p[2:]))
-			} else {
-				s = fmt.Sprintf("vlan_vid=0x%x",
-					binary.BigEndian.Uint16(p))
-			}
-		case OFPXMT_OFB_VLAN_PCP:
-			s = fmt.Sprintf("vlan_pcp=%d", p[0])
-		case OFPXMT_OFB_IP_DSCP:
-			s = fmt.Sprintf("ip_dscp=0x%x", p[0])
-		case OFPXMT_OFB_IP_ECN:
-			s = fmt.Sprintf("ip_ecn=0x%x", p[0])
-		case OFPXMT_OFB_IP_PROTO:
-			s = fmt.Sprintf("ip_proto=%d", p[0])
-		case OFPXMT_OFB_IPV4_SRC:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv4_src=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
-			} else {
-				s = fmt.Sprintf("ipv4_src=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_IPV4_DST:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv4_dst=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
-			} else {
-				s = fmt.Sprintf("ipv4_dst=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_TCP_SRC:
-			s = fmt.Sprintf("tcp_src=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_TCP_DST:
-			s = fmt.Sprintf("tcp_dst=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_UDP_SRC:
-			s = fmt.Sprintf("udp_src=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_UDP_DST:
-			s = fmt.Sprintf("udp_dst=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_SCTP_SRC:
-			s = fmt.Sprintf("sctp_src=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_SCTP_DST:
-			s = fmt.Sprintf("sctp_dst=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_ICMPV4_TYPE:
-			s = fmt.Sprintf("icmpv4_type=%d", p[0])
-		case OFPXMT_OFB_ICMPV4_CODE:
-			s = fmt.Sprintf("icmpv4_code=%d", p[0])
-		case OFPXMT_OFB_ARP_OP:
-			s = fmt.Sprintf("arp_op=%d", binary.BigEndian.Uint16(p))
-		case OFPXMT_OFB_ARP_SPA:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_spa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
-			} else {
-				s = fmt.Sprintf("arp_spa=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_ARP_TPA:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_tpa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
-			} else {
-				s = fmt.Sprintf("arp_tpa=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_ARP_SHA:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_sha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
-			} else {
-				s = fmt.Sprintf("arp_sha=%v", net.HardwareAddr(p))
-			}
-		case OFPXMT_OFB_ARP_THA:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("arp_tha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
-			} else {
-				s = fmt.Sprintf("arp_tha=%v", net.HardwareAddr(p))
-			}
-		case OFPXMT_OFB_IPV6_SRC:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_src=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
-			} else {
-				s = fmt.Sprintf("ipv6_src=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_IPV6_DST:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_dst=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
-			} else {
-				s = fmt.Sprintf("ipv6_dst=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_IPV6_FLABEL:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_flabel=0x%x/0x%x",
-					binary.BigEndian.Uint32(p),
-					binary.BigEndian.Uint32(p[4:]))
-			} else {
-				s = fmt.Sprintf("ipv6_flabel=0x%x",
-					binary.BigEndian.Uint32(p))
-			}
-		case OFPXMT_OFB_ICMPV6_TYPE:
-			s = fmt.Sprintf("icmpv6_type=%d", p[0])
-		case OFPXMT_OFB_ICMPV6_CODE:
-			s = fmt.Sprintf("icmpv6_code=%d", p[0])
-		case OFPXMT_OFB_IPV6_ND_TARGET:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_nd_target=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
-			} else {
-				s = fmt.Sprintf("ipv6_nd_target=%v", net.IP(p))
-			}
-		case OFPXMT_OFB_IPV6_ND_SLL:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_nd_sll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
-			} else {
-				s = fmt.Sprintf("ipv6_nd_sll=%v", net.HardwareAddr(p))
-			}
-		case OFPXMT_OFB_IPV6_ND_TLL:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_nd_tll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
-			} else {
-				s = fmt.Sprintf("ipv6_nd_tll=%v", net.HardwareAddr(p))
-			}
-		case OFPXMT_OFB_MPLS_LABEL:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("mpls_label=0x%x/0x%x",
-					binary.BigEndian.Uint32(p),
-					binary.BigEndian.Uint32(p[4:]))
-			} else {
-				s = fmt.Sprintf("mpls_label=0x%x",
-					binary.BigEndian.Uint32(p))
-			}
-		case OFPXMT_OFB_MPLS_TC:
-			s = fmt.Sprintf("mpls_tc=%d", p[0])
-		case OFPXMT_OFB_MPLS_BOS:
-			s = fmt.Sprintf("mpls_bos=%d", p[0])
-		case OFPXMT_OFB_PBB_ISID:
-			s = fmt.Sprintf("pbb_isid=0x%x",
-				uint32(p[0])<<16|uint32(p[1])<<8|uint32(p[2]))
-		case OFPXMT_OFB_TUNNEL_ID:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("tunnel_id=0x%x/0x%x",
-					binary.BigEndian.Uint64(p),
-					binary.BigEndian.Uint64(p[8:]))
-			} else {
-				s = fmt.Sprintf("tunnel_id=0x%x",
-					binary.BigEndian.Uint64(p))
-			}
-		case OFPXMT_OFB_IPV6_EXTHDR:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("ipv6_exthdr=0x%x/0x%x",
-					binary.BigEndian.Uint16(p),
-					binary.BigEndian.Uint16(p[2:]))
-			} else {
-				s = fmt.Sprintf("ipv6_exthdr=0x%x",
-					binary.BigEndian.Uint16(p))
-			}
-		case OFPXMT_OFB_PBB_UCA:
-			s = fmt.Sprintf("pbb_uca=%d", p[0])
-		case OFPXMT_OFB_TCP_FLAGS:
-			if hdr.HasMask() {
-				s = fmt.Sprintf("tcp_flags=0x%04x/0x%04x",
-					binary.BigEndian.Uint16(p),
-					binary.BigEndian.Uint16(p[2:]))
-			} else {
-				s = fmt.Sprintf("tcp_flags=0x%04x",
-					binary.BigEndian.Uint16(p))
-			}
-		case OFPXMT_OFB_ACTSET_OUTPUT:
-			s = fmt.Sprintf("actset_output=%d",
-				binary.BigEndian.Uint32(p))
-		case OFPXMT_OFB_PACKET_TYPE:
-			s = fmt.Sprintf("packet_type=0x%x:0x%x",
+	switch hdr.Type() {
+	case OXM_OF_IN_PORT:
+		s = fmt.Sprintf("in_port=%v", Port(binary.BigEndian.Uint32(p)))
+	case NXM_OF_IN_PORT:
+		s = fmt.Sprintf("nxm_in_port=%v", Port(binary.BigEndian.Uint16(p)))
+	case OXM_OF_IN_PHY_PORT:
+		s = fmt.Sprintf("in_phy_port=%v", Port(binary.BigEndian.Uint32(p)))
+	case OXM_OF_METADATA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("metadata=0x%x/0x%x",
+				binary.BigEndian.Uint64(p),
+				binary.BigEndian.Uint64(p[8:]))
+		} else {
+			s = fmt.Sprintf("metadata=0x%x",
+				binary.BigEndian.Uint64(p))
+		}
+	case OXM_OF_ETH_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("eth_dst=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("eth_dst=%v", net.HardwareAddr(p))
+		}
+	case NXM_OF_ETH_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_eth_dst=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("nxm_eth_dst=%v", net.HardwareAddr(p))
+		}
+	case OXM_OF_ETH_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("eth_src=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("eth_src=%v", net.HardwareAddr(p))
+		}
+	case NXM_OF_ETH_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_eth_src=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("nxm_eth_src=%v", net.HardwareAddr(p))
+		}
+	case OXM_OF_ETH_TYPE:
+		s = fmt.Sprintf("eth_type=0x%04x", binary.BigEndian.Uint16(p))
+	case NXM_OF_ETH_TYPE:
+		s = fmt.Sprintf("nxm_eth_type=0x%04x", binary.BigEndian.Uint16(p))
+	case OXM_OF_VLAN_VID:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("vlan_vid=0x%x/0x%x",
 				binary.BigEndian.Uint16(p),
 				binary.BigEndian.Uint16(p[2:]))
+		} else {
+			s = fmt.Sprintf("vlan_vid=0x%x",
+				binary.BigEndian.Uint16(p))
 		}
-	case OFPXMC_EXPERIMENTER:
-		if handler, ok := stringers[binary.BigEndian.Uint32(oxm[4:])]; ok {
-			s = handler.FromOxm(oxm)
+	case OXM_OF_VLAN_PCP:
+		s = fmt.Sprintf("vlan_pcp=%d", p[0])
+	case NXM_OF_VLAN_TCI:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_vlan_tci=0x%x/0x%x",
+				binary.BigEndian.Uint16(p),
+				binary.BigEndian.Uint16(p[2:]))
+		} else {
+			s = fmt.Sprintf("nxm_vlan_tci=0x%x",
+				binary.BigEndian.Uint16(p))
+		}
+	case NXM_OF_IP_TOS:
+		s = fmt.Sprintf("nxm_ip_tos=0x%x", p[0])
+	case OXM_OF_IP_DSCP:
+		s = fmt.Sprintf("ip_dscp=0x%x", p[0])
+	case OXM_OF_IP_ECN:
+		s = fmt.Sprintf("ip_ecn=0x%x", p[0])
+	case NXM_NX_IP_ECN:
+		s = fmt.Sprintf("nxm_ip_ecn=0x%x", p[0])
+	case OXM_OF_IP_PROTO:
+		s = fmt.Sprintf("ip_proto=%d", p[0])
+	case NXM_OF_IP_PROTO:
+		s = fmt.Sprintf("nxm_ip_proto=%d", p[0])
+	case OXM_OF_IPV4_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv4_src=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
+		} else {
+			s = fmt.Sprintf("ipv4_src=%v", net.IP(p))
+		}
+	case NXM_OF_IP_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_ip_src=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
+		} else {
+			s = fmt.Sprintf("nxm_ip_src=%v", net.IP(p))
+		}
+	case OXM_OF_IPV4_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv4_dst=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
+		} else {
+			s = fmt.Sprintf("ipv4_dst=%v", net.IP(p))
+		}
+	case NXM_OF_IP_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_ip_dst=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
+		} else {
+			s = fmt.Sprintf("nxm_ip_dst=%v", net.IP(p))
+		}
+	case OXM_OF_TCP_SRC:
+		s = fmt.Sprintf("tcp_src=%d", binary.BigEndian.Uint16(p))
+	case NXM_OF_TCP_SRC:
+		s = fmt.Sprintf("nxm_tcp_src=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_TCP_DST:
+		s = fmt.Sprintf("tcp_dst=%d", binary.BigEndian.Uint16(p))
+	case NXM_OF_TCP_DST:
+		s = fmt.Sprintf("nxm_tcp_dst=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_UDP_SRC:
+		s = fmt.Sprintf("udp_src=%d", binary.BigEndian.Uint16(p))
+	case NXM_OF_UDP_SRC:
+		s = fmt.Sprintf("nxm_udp_src=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_UDP_DST:
+		s = fmt.Sprintf("udp_dst=%d", binary.BigEndian.Uint16(p))
+	case NXM_OF_UDP_DST:
+		s = fmt.Sprintf("nxm_udp_dst=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_SCTP_SRC:
+		s = fmt.Sprintf("sctp_src=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_SCTP_DST:
+		s = fmt.Sprintf("sctp_dst=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_ICMPV4_TYPE:
+		s = fmt.Sprintf("icmpv4_type=%d", p[0])
+	case NXM_OF_ICMP_TYPE:
+		s = fmt.Sprintf("nxm_icmp_type=%d", p[0])
+	case OXM_OF_ICMPV4_CODE:
+		s = fmt.Sprintf("icmpv4_code=%d", p[0])
+	case NXM_OF_ICMP_CODE:
+		s = fmt.Sprintf("nxm_icmp_code=%d", p[0])
+	case OXM_OF_ARP_OP:
+		s = fmt.Sprintf("arp_op=%d", binary.BigEndian.Uint16(p))
+	case NXM_OF_ARP_OP:
+		s = fmt.Sprintf("nxm_arp_op=%d", binary.BigEndian.Uint16(p))
+	case OXM_OF_ARP_SPA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("arp_spa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
+		} else {
+			s = fmt.Sprintf("arp_spa=%v", net.IP(p))
+		}
+	case NXM_OF_ARP_SPA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_arp_spa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_arp_spa=%v", net.IP(p))
+		}
+	case OXM_OF_ARP_TPA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("arp_tpa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
+		} else {
+			s = fmt.Sprintf("arp_tpa=%v", net.IP(p))
+		}
+	case NXM_OF_ARP_TPA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_arp_tpa=%v/%v", net.IP(p[:4]), net.IP(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_arp_tpa=%v", net.IP(p))
+		}
+	case OXM_OF_ARP_SHA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("arp_sha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("arp_sha=%v", net.HardwareAddr(p))
+		}
+	case NXM_NX_ARP_SHA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_arp_sha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("nxm_arp_sha=%v", net.HardwareAddr(p))
+		}
+	case OXM_OF_ARP_THA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("arp_tha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("arp_tha=%v", net.HardwareAddr(p))
+		}
+	case NXM_NX_ARP_THA:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_arp_tha=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("nxm_arp_tha=%v", net.HardwareAddr(p))
+		}
+	case OXM_OF_IPV6_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_src=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
+		} else {
+			s = fmt.Sprintf("ipv6_src=%v", net.IP(p))
+		}
+	case NXM_NX_IPV6_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_ipv6_src=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
+		} else {
+			s = fmt.Sprintf("nxm_ipv6_src=%v", net.IP(p))
+		}
+	case OXM_OF_IPV6_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_dst=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
+		} else {
+			s = fmt.Sprintf("ipv6_dst=%v", net.IP(p))
+		}
+	case NXM_NX_IPV6_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_ipv6_dst=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
+		} else {
+			s = fmt.Sprintf("nxm_ipv6_dst=%v", net.IP(p))
+		}
+	case OXM_OF_IPV6_FLABEL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_flabel=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("ipv6_flabel=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_IPV6_LABEL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_ipv6_label=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_ipv6_label=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case OXM_OF_ICMPV6_TYPE:
+		s = fmt.Sprintf("icmpv6_type=%d", p[0])
+	case NXM_NX_ICMPV6_TYPE:
+		s = fmt.Sprintf("nxm_icmpv6_type=%d", p[0])
+	case OXM_OF_ICMPV6_CODE:
+		s = fmt.Sprintf("icmpv6_code=%d", p[0])
+	case NXM_NX_ICMPV6_CODE:
+		s = fmt.Sprintf("nxm_icmpv6_code=%d", p[0])
+	case OXM_OF_IPV6_ND_TARGET:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_nd_target=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
+		} else {
+			s = fmt.Sprintf("ipv6_nd_target=%v", net.IP(p))
+		}
+	case NXM_NX_ND_TARGET:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_nd_target=%v/%v", net.IP(p[:16]), net.IP(p[16:]))
+		} else {
+			s = fmt.Sprintf("nxm_nd_target=%v", net.IP(p))
+		}
+	case OXM_OF_IPV6_ND_SLL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_nd_sll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("ipv6_nd_sll=%v", net.HardwareAddr(p))
+		}
+	case NXM_NX_ND_SLL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_nd_sll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("nxm_nd_sll=%v", net.HardwareAddr(p))
+		}
+	case OXM_OF_IPV6_ND_TLL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_nd_tll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("ipv6_nd_tll=%v", net.HardwareAddr(p))
+		}
+	case NXM_NX_ND_TLL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_nd_tll=%v/%v", net.HardwareAddr(p[:6]), net.HardwareAddr(p[6:]))
+		} else {
+			s = fmt.Sprintf("nxm_nd_tll=%v", net.HardwareAddr(p))
+		}
+	case OXM_OF_MPLS_LABEL:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("mpls_label=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("mpls_label=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case OXM_OF_MPLS_TC:
+		s = fmt.Sprintf("mpls_tc=%d", p[0])
+	case OXM_OF_MPLS_BOS:
+		s = fmt.Sprintf("mpls_bos=%d", p[0])
+	case OXM_OF_PBB_ISID:
+		s = fmt.Sprintf("pbb_isid=0x%x",
+			uint32(p[0])<<16|uint32(p[1])<<8|uint32(p[2]))
+	case OXM_OF_TUNNEL_ID:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("tunnel_id=0x%x/0x%x",
+				binary.BigEndian.Uint64(p),
+				binary.BigEndian.Uint64(p[8:]))
+		} else {
+			s = fmt.Sprintf("tunnel_id=0x%x",
+				binary.BigEndian.Uint64(p))
+		}
+	case NXM_NX_TUN_ID:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_tun_id=0x%x/0x%x",
+				binary.BigEndian.Uint64(p),
+				binary.BigEndian.Uint64(p[8:]))
+		} else {
+			s = fmt.Sprintf("nxm_tun_id=0x%x",
+				binary.BigEndian.Uint64(p))
+		}
+	case OXM_OF_IPV6_EXTHDR:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("ipv6_exthdr=0x%x/0x%x",
+				binary.BigEndian.Uint16(p),
+				binary.BigEndian.Uint16(p[2:]))
+		} else {
+			s = fmt.Sprintf("ipv6_exthdr=0x%x",
+				binary.BigEndian.Uint16(p))
+		}
+	case OXM_OF_PBB_UCA:
+		s = fmt.Sprintf("pbb_uca=%d", p[0])
+	case OXM_OF_TCP_FLAGS:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("tcp_flags=0x%04x/0x%04x",
+				binary.BigEndian.Uint16(p),
+				binary.BigEndian.Uint16(p[2:]))
+		} else {
+			s = fmt.Sprintf("tcp_flags=0x%04x",
+				binary.BigEndian.Uint16(p))
+		}
+	case NXM_NX_TCP_FLAGS:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_tcp_flags=0x%04x/0x%04x",
+				binary.BigEndian.Uint16(p),
+				binary.BigEndian.Uint16(p[2:]))
+		} else {
+			s = fmt.Sprintf("nxm_tcp_flags=0x%04x",
+				binary.BigEndian.Uint16(p))
+		}
+	case OXM_OF_ACTSET_OUTPUT:
+		s = fmt.Sprintf("actset_output=%d",
+			binary.BigEndian.Uint32(p))
+	case OXM_OF_PACKET_TYPE:
+		s = fmt.Sprintf("packet_type=0x%x:0x%x",
+			binary.BigEndian.Uint16(p),
+			binary.BigEndian.Uint16(p[2:]))
+	case NXM_NX_REG0:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg0=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg0=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG1:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg1=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg1=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG2:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg2=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg2=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG3:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg3=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg3=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG4:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg4=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg4=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG5:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg5=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg5=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG6:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg6=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg6=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_REG7:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_reg7=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_reg7=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_IP_FRAG:
+		s = fmt.Sprintf("nxm_ip_frag=%d", p[0])
+	case NXM_NX_IP_TTL:
+		s = fmt.Sprintf("nxm_ip_ttl=%d", p[0])
+	case NXM_NX_TUN_IPV4_SRC:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_tun_ipv4_src=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
+		} else {
+			s = fmt.Sprintf("nxm_tun_ipv4_src=%v", net.IP(p))
+		}
+	case NXM_NX_TUN_IPV4_DST:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_tun_ipv4_dst=%v/%v", net.IP(p[0:4]), net.IP(p[4:8]))
+		} else {
+			s = fmt.Sprintf("nxm_tun_ipv4_dst=%v", net.IP(p))
+		}
+	case NXM_NX_PKT_MARK:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_pkt_mark=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[4:]))
+		} else {
+			s = fmt.Sprintf("nxm_pkt_mark=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_DP_HASH:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_dp_hash=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[2:]))
+		} else {
+			s = fmt.Sprintf("nxm_dp_hash=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_RECIRC_ID:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_recirc_id=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[2:]))
+		} else {
+			s = fmt.Sprintf("nxm_recirc_id=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_CONJ_ID:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_conj_id=0x%x/0x%x",
+				binary.BigEndian.Uint32(p),
+				binary.BigEndian.Uint32(p[2:]))
+		} else {
+			s = fmt.Sprintf("nxm_conj_id=0x%x",
+				binary.BigEndian.Uint32(p))
+		}
+	case NXM_NX_TUN_GBP_ID:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_tun_gbp_id=0x%x/0x%x", p[0], p[1])
+		} else {
+			s = fmt.Sprintf("nxm_tun_gbp_id=0x%x", p[0])
+		}
+	case NXM_NX_TUN_GBP_FLAGS:
+		if hdr.HasMask() {
+			s = fmt.Sprintf("nxm_tun_gbp_flags=0x%x/0x%x", p[0], p[1])
+		} else {
+			s = fmt.Sprintf("nxm_tun_gbp_flags=0x%x", p[0])
+		}
+	default:
+		switch hdr.Class() {
+		case OFPXMC_EXPERIMENTER:
+			if handler, ok := stringers[binary.BigEndian.Uint32(oxm[4:])]; ok {
+				s = handler.FromOxm(oxm)
+			}
 		}
 	}
 	return s

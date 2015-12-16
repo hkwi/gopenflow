@@ -97,35 +97,29 @@ func (self *OxmValueMask) Merge(vm OxmValueMask) error {
 type OxmKeyExp struct {
 	Experimenter uint32
 	Field        uint8
-	Type         uint16
 }
 
 var _ = OxmKey(OxmKeyExp{}) // check for implementation
 
 func (self OxmKeyExp) Bytes(payload OxmPayload) []byte {
 	hdr := oxm.Header(oxm.OFPXMC_EXPERIMENTER<<oxm.OXM_CLASS_SHIFT | uint32(self.Field)<<oxm.OXM_FIELD_SHIFT)
-	var buf []byte
-	setCommon := func(payloadLength int) {
-		buf = make([]byte, 4+payloadLength)
-		hdr.SetLength(payloadLength)
-		binary.BigEndian.PutUint32(buf, uint32(hdr))
-		binary.BigEndian.PutUint32(buf[4:], self.Experimenter)
-		binary.BigEndian.PutUint16(buf[8:], self.Type)
-	}
+	var value, mask []byte
 	switch p := payload.(type) {
 	case OxmValueMask:
-		if len(p.Mask) > 0 {
-			hdr.SetMask(true)
-		}
-		setCommon(6 + len(p.Value) + len(p.Mask))
-		copy(buf[10:], p.Value)
-		copy(buf[10+len(p.Value):], p.Mask)
+		value = p.Value
+		mask = p.Mask
 	case []byte:
-		setCommon(6 + len(p))
-		copy(buf[10:], p)
-	case nil:
-		setCommon(6)
+		value = p
 	}
+	if len(mask) > 0 {
+		hdr.SetMask(true)
+	}
+	buf = make([]byte, 8+len(value)+len(mask))
+	hdr.SetLength(4 + len(value) + len(mask))
+	binary.BigEndian.PutUint32(buf, uint32(hdr))
+	binary.BigEndian.PutUint32(buf[4:], self.Experimenter)
+	copy(buf[8:], value)
+	copy(buf[8+len(value):], mask)
 	return buf
 }
 
@@ -159,6 +153,8 @@ type OxmHandler interface {
 	Match(Frame, OxmKey, OxmPayload) (bool, error)
 	SetField(*Frame, OxmKey, OxmPayload) error
 
+	// XXX: logic below will be broken by NXM/OXM definition overlap.
+	// XXX: We need to create another framework.
 	// Fits returns true if narrow oxm could be matched by wide oxm.
 	Fit(key OxmKey, narrow, wide OxmPayload) (bool, error)
 	// Conflict will be used to check OFPFMFC_OVERLAP

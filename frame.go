@@ -84,15 +84,13 @@ func FrameFromRadiotap(rt *layers.RadioTap, mac []byte, fragmentId uint8) (Frame
 	}
 	oob := oxmExperimenter{
 		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
-		Field:        oxm.STRATOS_OXM_FIELD_BASIC,
-		Type:         oxm.STROXM_BASIC_DOT11,
+		Field:        oxm.STROXM_BASIC_DOT11,
 		Value:        []byte{1},
 	}.Bytes()
-	radiotapAdd := func(expType uint16, value []byte) {
+	radiotapAdd := func(expType uint8, value []byte) {
 		oob = append(oob, oxmExperimenter{
 			Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
-			Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
-			Type:         expType,
+			Field:        expType,
 			Value:        value,
 		}.Bytes()...)
 	}
@@ -216,15 +214,13 @@ func FrameFromNlAttr(attrs nlgo.AttrMap, mac []byte, fragmentId uint8) (Frame, e
 
 	oob := oxmExperimenter{
 		Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
-		Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
-		Type:         oxm.STROXM_RADIOTAP_CHANNEL,
+		Field:        oxm.STROXM_RADIOTAP_CHANNEL,
 		Value:        freqValue,
 	}.Bytes()
 	if t := attrs.Get(nlgo.NL80211_ATTR_RX_SIGNAL_DBM); t != nil {
 		oob = append(oob, oxmExperimenter{
 			Experimenter: oxm.STRATOS_EXPERIMENTER_ID,
-			Field:        oxm.STRATOS_OXM_FIELD_RADIOTAP,
-			Type:         oxm.STROXM_RADIOTAP_DBM_ANTSIGNAL,
+			Field:        oxm.STROXM_RADIOTAP_DBM_ANTSIGNAL,
 			Value:        []byte{uint8(t.(nlgo.U32))},
 		}.Bytes()...)
 	}
